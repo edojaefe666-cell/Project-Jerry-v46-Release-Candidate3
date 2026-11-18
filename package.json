@@ -1,0 +1,51 @@
+{
+  "name": "react-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "start": "tsx server.ts",
+    "build": "vite build",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test src/lib/jerryEngine.test.ts src/lib/securityStore.test.ts src/lib/walletPolicy.test.ts src/middleware/auth.test.ts src/db/tenant-isolation.integration.test.ts src/lib/capabilityRegression.test.ts src/lib/clientStateResurrectionRegression.test.ts src/lib/ledgerReconciliationRegression.test.ts src/lib/bitcoinSettlement.test.ts src/lib/doubleEntryJournal.test.ts src/lib/journalPostingEngineRegression.test.ts src/db/journal.integration.test.ts src/lib/releaseSecurityRegression.test.ts src/db/walletJournal.test.ts src/lib/financialReconciliation.test.ts src/lib/financialAtomicityRegression.test.ts src/lib/goalExecutionControlPlane.test.ts src/lib/productEngineering.test.ts src/lib/browserAgent.test.ts src/lib/engineeringControlPlane.test.ts src/lib/handsFreeEngine.test.ts src/lib/orchestration/orchestrator.test.mjs",
+    "db:test:push": "drizzle-kit push --config=src/db/drizzle.config.ts --force && bun run db:migrate",
+    "verify:release": "bun run check:release-lock && bun run lint && bun run build && bun run test",
+    "test:firebase": "node --import tsx --test src/lib/firebase.integration.test.ts",
+    "test:tenant": "node --import tsx --test src/db/tenant-isolation.integration.test.ts",
+    "db:migrate": "node --import tsx scripts/apply-sql-migrations.ts",
+    "check:release-lock": "node scripts/check-release-lock-consistency.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "^3.3.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/pg": "^8.23.1",
+    "@vitejs/plugin-react": "^6.1.1",
+    "dotenv": "^17.2.3",
+    "drizzle-kit": "^0.31.11",
+    "drizzle-orm": "^0.45.4",
+    "express": "^4.21.2",
+    "firebase": "^13.3.0",
+    "firebase-admin": "^14.5.1",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "pg": "^8.23.1",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "recharts": "^3.10.1",
+    "vite": "^8.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2",
+    "@types/express": "^4.17.21"
+  }
+}

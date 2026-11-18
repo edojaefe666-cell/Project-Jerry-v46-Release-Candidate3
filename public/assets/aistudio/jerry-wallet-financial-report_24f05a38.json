@@ -1,0 +1,167 @@
+{
+  "generatedAt": "2026-11-13T05:06:52.015Z",
+  "unifiedBalanceUsd": 23760.59,
+  "builtInBalanceUsd": 13837.59,
+  "externalBalanceUsd": 9923,
+  "monthlyNetProfitUsd": 5856,
+  "assets": [
+    {
+      "id": "asset-btc",
+      "symbol": "BTC",
+      "network": "Bitcoin Mainnet",
+      "balance": 0.044819999999999985,
+      "usdPrice": 88400,
+      "source": "Jerry Built-in",
+      "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+    },
+    {
+      "id": "asset-eth",
+      "symbol": "ETH",
+      "network": "Ethereum Mainnet",
+      "balance": 2.35,
+      "usdPrice": 3180,
+      "source": "MetaMask",
+      "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
+    },
+    {
+      "id": "asset-usdc",
+      "symbol": "USDC",
+      "network": "Base",
+      "balance": 9875.5,
+      "usdPrice": 1,
+      "source": "Jerry Built-in",
+      "address": "0x94A1B5CdB22c43faab4AbEb5c4019973715F128A"
+    },
+    {
+      "id": "asset-usdt",
+      "symbol": "USDT",
+      "network": "Polygon",
+      "balance": 2450,
+      "usdPrice": 1,
+      "source": "Trust Wallet",
+      "address": "0x4B20993Bc481177ec7E8f571ceCaE8A9e22C02db"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "tx-1794546346944",
+      "timestamp": "2026-11-13T05:05:46.944Z",
+      "type": "outgoing",
+      "asset": "BTC",
+      "network": "Bitcoin Mainnet",
+      "amount": 0.1,
+      "fee": 0.00018,
+      "counterparty": "31iZy4sWKLYM4gvoGu2mu6k5TxAYwYr9Sf",
+      "status": "confirmed",
+      "note": "Goods"
+    },
+    {
+      "id": "tx-rev-way-1794539024140-42",
+      "timestamp": "2026-11-13T03:03:44.139Z",
+      "type": "business_revenue",
+      "asset": "USDC",
+      "network": "Base",
+      "amount": 360,
+      "fee": 0.04,
+      "counterparty": "New Way Execution · Zero-Touch Retainer Onboarding & Auto-Billing Link",
+      "status": "confirmed",
+      "note": "Executed Automation Template (Send 1-page pre-scoped retainer link -> auto-provision API workspace key -> collect day-1 milestone settlement.) · Saved to Profit Reserve separate from investment principal."
+    },
+    {
+      "id": "tx-rev-way-1794539022325-683",
+      "timestamp": "2026-11-13T03:03:42.324Z",
+      "type": "business_revenue",
+      "asset": "USDC",
+      "network": "Base",
+      "amount": 425,
+      "fee": 0.04,
+      "counterparty": "New Way Execution · One-Click Freight Bill Variance Packager",
+      "status": "confirmed",
+      "note": "Executed Productized Service (Run batch carrier OCR schema check -> export PDF variance summary -> issue $295 fixed-fee USDC invoice automatically.) · Saved to Profit Reserve separate from investment principal."
+    },
+    {
+      "id": "tx-rev-1794538845239",
+      "timestamp": "2026-11-13T03:00:45.238Z",
+      "type": "business_revenue",
+      "asset": "USDC",
+      "network": "Base",
+      "amount": 1125,
+      "fee": 0.04,
+      "counterparty": "Task Settlement: Top-Most Priority Daily Task: Generate & Save $1,000+ Minimum Net Profit (Non-Investment Reserve)",
+      "status": "confirmed",
+      "note": "Executed \"Top-Most Priority Daily Task: Generate & Save $1,000+ Minimum Net Profit (Non-Investment Reserve)\" cleanly. Generated client deliverable, verified invoice settlement criteria, and credited $1,125 USDC revenue to Jerry Wallet."
+    },
+    {
+      "id": "tx-rev-way-1794538741404-826",
+      "timestamp": "2026-11-13T02:59:01.402Z",
+      "type": "business_revenue",
+      "asset": "USDC",
+      "network": "Base",
+      "amount": 425,
+      "fee": 0.04,
+      "counterparty": "New Way Execution · One-Click Freight Bill Variance Packager",
+      "status": "confirmed",
+      "note": "Executed Productized Service (Run batch carrier OCR schema check -> export PDF variance summary -> issue $295 fixed-fee USDC invoice automatically.) · Saved to Profit Reserve separate from investment principal."
+    },
+    {
+      "id": "tx-rev-way-1794538741404-40",
+      "timestamp": "2026-11-13T02:59:01.402Z",
+      "type": "business_revenue",
+      "asset": "USDC",
+      "network": "Base",
+      "amount": 360,
+      "fee": 0.04,
+      "counterparty": "New Way Execution · Zero-Touch Retainer Onboarding & Auto-Billing Link",
+      "status": "confirmed",
+      "note": "Executed Automation Template (Send 1-page pre-scoped retainer link -> auto-provision API workspace key -> collect day-1 milestone settlement.) · Saved to Profit Reserve separate from investment principal."
+    },
+    {
+      "id": "tx-rev-way-1794538741404-553",
+      "timestamp": "2026-11-13T02:59:01.402Z",
+      "type": "business_revenue",
+      "asset": "USDC",
+      "network": "Base",
+      "amount": 340,
+      "fee": 0.04,
+      "counterparty": "New Way Execution · Compliance Invoice Anomaly Webhook Micro-Tool",
+      "status": "confirmed",
+      "note": "Executed AI Micro-Tool (Deploy reusable JSON validator schema -> charge $0.18/document overage automatically settled weekly.) · Saved to Profit Reserve separate from investment principal."
+    },
+    {
+      "id": "tx-1",
+      "timestamp": "2026-11-12T11:20:00Z",
+      "type": "business_revenue",
+      "asset": "USDC",
+      "network": "Base",
+      "amount": 1450,
+      "fee": 0.04,
+      "counterparty": "NorthStar Logistics LLC",
+      "status": "confirmed",
+      "note": "Q4 Automation & Extraction Retainer Settlement"
+    },
+    {
+      "id": "tx-2",
+      "timestamp": "2026-11-10T16:45:00Z",
+      "type": "incoming",
+      "asset": "ETH",
+      "network": "Ethereum Mainnet",
+      "amount": 0.45,
+      "fee": 0.0018,
+      "counterparty": "0x88E1...92C1",
+      "status": "confirmed",
+      "note": "API licensing milestone payout"
+    },
+    {
+      "id": "tx-3",
+      "timestamp": "2026-11-12T14:22:00Z",
+      "type": "outgoing",
+      "asset": "USDC",
+      "network": "Base",
+      "amount": 600,
+      "fee": 0.85,
+      "counterparty": "0x33D9...84A2 (Newsletter Ad Desk)",
+      "status": "pending_approval",
+      "note": "Awaiting explicit owner authorization for Q4 freight newsletter pilot"
+    }
+  ]
+}
