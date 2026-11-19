@@ -1078,7 +1078,7 @@ export function executeLearnedDiscovery(
   referenceDateIso?: string
 ): {
   updatedDiscovery: DailyMoneyDiscovery;
-  revenueTransaction: WalletTransaction;
+  revenueTransaction: WalletTransaction | null;
   earnedUsd: number;
 } {
   const nowIso = referenceDateIso ?? new Date().toISOString();

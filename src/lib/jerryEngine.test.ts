@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { WalletTransaction } from './types.ts';
 import {
   auditSelfProgrammedCode,
   buildDailyProfitPlan,

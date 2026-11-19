@@ -301,7 +301,7 @@ export class SecurityStore {
   }
 
   listContacts(ownerUid: string): ApprovedContact[] {
-    return this.db.prepare('SELECT id,name,email,purpose,status,created_at AS createdAt,updated_at AS updatedAt,owner_uid AS ownerUid FROM approved_contacts WHERE owner_uid=? ORDER BY created_at DESC').all(ownerUid) as ApprovedContact[];
+    return this.db.prepare('SELECT id,name,email,purpose,status,created_at AS createdAt,updated_at AS updatedAt,owner_uid AS ownerUid FROM approved_contacts WHERE owner_uid=? ORDER BY created_at DESC').all(ownerUid) as unknown as ApprovedContact[];
   }
 
   setContactStatus(id: string, status: 'active' | 'revoked', actorUid: string): ApprovedContact | null {
