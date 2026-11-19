@@ -228,7 +228,7 @@ export class SecurityStore {
 
   getApproval(id: string, ownerUid: string): ApprovalRequest | null {
     const row = this.db.prepare('SELECT id,action,summary,amount_usd AS amountUsd,scope_json AS scopeJson,scope_hash AS scopeHash,status,created_at AS createdAt,decided_at AS decidedAt,decided_by AS decidedBy,consumed_at AS consumedAt,owner_uid AS ownerUid FROM approvals WHERE id=? AND owner_uid=?')
-      .get(id, ownerUid) as ApprovalRequest | undefined;
+      .get(id, ownerUid) as { id: string; action: HighImpactAction; summary: string; amountUsd?: number; scopeJson?: string; scopeHash?: string; status: 'pending' | 'approved' | 'rejected'; createdAt: string; decidedAt?: string; decidedBy?: string; consumedAt?: string; ownerUid?: string } | undefined;
     if (!row) return null;
     return { ...row, scope: row.scopeJson ? JSON.parse(row.scopeJson) : undefined, scopeHash: row.scopeHash } as ApprovalRequest;
   }
@@ -310,7 +310,7 @@ export class SecurityStore {
     const updatedAt = now();
     this.db.prepare('UPDATE approved_contacts SET status=?,updated_at=? WHERE id=? AND owner_uid=?').run(status, updatedAt, id, actorUid);
     this.audit(actorUid, 'approved_contact.status_changed', { id, status });
-    return this.db.prepare('SELECT id,name,email,purpose,status,created_at AS createdAt,updated_at AS updatedAt FROM approved_contacts WHERE id=? AND owner_uid=?').get(id, actorUid) as ApprovedContact;
+    return this.db.prepare('SELECT id,name,email,purpose,status,created_at AS createdAt,updated_at AS updatedAt FROM approved_contacts WHERE id=? AND owner_uid=?').get(id, actorUid) as unknown as ApprovedContact;
   }
 
   getContact(id: string, ownerUid: string): ApprovedContact | null {
