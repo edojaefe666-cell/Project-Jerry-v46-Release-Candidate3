@@ -514,7 +514,7 @@ export function auditSelfProgrammedCode(code: string): {
 export function canDeploySelfUpgrade(proposal: {
   securityAuditPassed: boolean;
   testStatus: 'pending' | 'passed' | 'failed';
-  approvalStatus: 'awaiting_permission' | 'approved_deployed' | 'rejected';
+  approvalStatus: 'awaiting_permission' | 'approved' | 'approved_deployed' | 'rejected';
 }): { allowed: boolean; reason?: string } {
   if (!proposal.securityAuditPassed) {
     return {
