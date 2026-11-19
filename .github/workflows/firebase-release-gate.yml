@@ -8,13 +8,47 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Extract v46 release candidate
+        run: |
+          set -euo pipefail
+
+          ZIP="$(find . -maxdepth 2 -type f -name '*.zip' | head -n 1)"
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: No release-candidate ZIP found."
+            exit 1
+          fi
+
+          echo "Using release candidate: $ZIP"
+          mkdir -p release-candidate
+          unzip -q "$ZIP" -d release-candidate
+
+          PACKAGE_JSON="$(find release-candidate -type f -name package.json | head -n 1)"
+
+          if [ -z "$PACKAGE_JSON" ]; then
+            echo "ERROR: No package.json found inside release candidate."
+            find release-candidate -maxdepth 4 -type f | sort | head -200
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$PACKAGE_JSON")"
+          echo "Jerry project directory: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
-      - run: bun install --frozen-lockfile
+
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: bun install --frozen-lockfile
+
       - name: Verify real Firebase authentication and revocation
+        working-directory: ${{ env.PROJECT_DIR }}
         env:
           JERRY_FIREBASE_INTEGRATION: "1"
           JERRY_FIREBASE_PROJECT_ID: ${{ secrets.JERRY_FIREBASE_PROJECT_ID }}
@@ -22,11 +56,22 @@ jobs:
           JERRY_FIREBASE_TEST_EMAIL: ${{ secrets.JERRY_FIREBASE_TEST_EMAIL }}
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-service-account.json
           JERRY_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.JERRY_FIREBASE_SERVICE_ACCOUNT_JSON }}
+
         run: |
           set -euo pipefail
           umask 077
           trap 'rm -f "$GOOGLE_APPLICATION_CREDENTIALS"' EXIT
-          test -n "$JERRY_FIREBASE_SERVICE_ACCOUNT_JSON" || { echo 'Missing JERRY_FIREBASE_SERVICE_ACCOUNT_JSON secret' >&2; exit 1; }
-          printf '%s' "$JERRY_FIREBASE_SERVICE_ACCOUNT_JSON" > "$GOOGLE_APPLICATION_CREDENTIALS"
-          node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "$GOOGLE_APPLICATION_CREDENTIALS"
+
+          test -n "$JERRY_FIREBASE_SERVICE_ACCOUNT_JSON" || {
+            echo "Missing JERRY_FIREBASE_SERVICE_ACCOUNT_JSON secret" >&2
+            exit 1
+          }
+
+          printf '%s' "$JERRY_FIREBASE_SERVICE_ACCOUNT_JSON" \
+            > "$GOOGLE_APPLICATION_CREDENTIALS"
+
+          node -e \
+            'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' \
+            "$GOOGLE_APPLICATION_CREDENTIALS"
+
           bun run test:firebase
