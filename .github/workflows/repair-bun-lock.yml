@@ -40,12 +40,17 @@ jobs:
           bun install --frozen-lockfile
           node scripts/check-release-lock-consistency.mjs
 
-      - name: Repackage corrected release candidate
+      - name: Repackage corrected release candidate without dependencies
         shell: bash
         run: |
           set -euo pipefail
           cd extracted
-          zip -qr "$GITHUB_WORKSPACE/Jerry-v46-corrected-release-candidate.zip" .
+          zip -qr "$GITHUB_WORKSPACE/Jerry-v46-corrected-release-candidate.zip" . -x '*/node_modules/*' 'node_modules/*'
+          if unzip -Z1 "$GITHUB_WORKSPACE/Jerry-v46-corrected-release-candidate.zip" | grep -Eq '(^|/)node_modules(/|$)'; then
+            echo "ERROR: node_modules was included in the corrected release ZIP"
+            exit 1
+          fi
+          echo "Verified: corrected release ZIP contains no node_modules directory."
 
       - uses: actions/upload-artifact@v4
         with:
