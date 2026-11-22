@@ -1,0 +1,55 @@
+name: Jerry Repair Bun Lockfile
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/repair-bun-lock.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  repair-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate and extract release candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="$(find . -maxdepth 2 -type f -name '*.zip' | head -n 1)"
+          test -n "$ZIP" || { echo "No release-candidate ZIP found"; exit 1; }
+          mkdir -p extracted
+          unzip -q "$ZIP" -d extracted
+          PACKAGE_JSON="$(find extracted -type f -name package.json | head -n 1)"
+          test -n "$PACKAGE_JSON" || { echo "No package.json found in ZIP"; exit 1; }
+          PROJECT_DIR="$(dirname "$PACKAGE_JSON")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Regenerate lockfile and verify frozen installation
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          bun install
+          bun install --frozen-lockfile
+          node scripts/check-release-lock-consistency.mjs
+
+      - name: Repackage corrected release candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd extracted
+          zip -qr "$GITHUB_WORKSPACE/Jerry-v46-corrected-release-candidate.zip" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jerry-v46-corrected-release-candidate
+          path: Jerry-v46-corrected-release-candidate.zip
+          if-no-files-found: error
+          retention-days: 7
