@@ -114,3 +114,18 @@ Browser and engineering control-plane SQLite stores do not carry owner UID tenan
 ## Overall verdict
 
 **Not release-ready as a fully autonomous Jerry.** The archive contains a meaningful authenticated application, tested financial/security foundations, planning interfaces and several useful isolated control-plane modules. It does not yet deliver the complete unified Hybrid Intelligence roadmap. The most urgent risks are owner identity enforcement, simulated task completion, demo financial figures, and disconnected control-plane modules. Preserve the working BTC/security foundations; integrate and extend them rather than replacing them.
+
+
+## Stage 1 safety patch prepared after the audit
+
+A local patched archive has been prepared from the exact audited ZIP. These changes are staged in that downloadable archive; they have **not** yet been merged into the GitHub application source because the repository currently stores the application as a ZIP rather than an extracted source tree.
+
+- Added production single-owner enforcement through `JERRY_OWNER_UID`. Production access fails closed if the UID is not configured and rejects every other authenticated Firebase UID. The UID belongs in the deployment environment, not in chat.
+- Added unit tests for missing owner configuration, non-owner denial and owner admission.
+- Replaced the simulated task-completion endpoint with an explicit HTTP 501 response until a verified execution adapter exists. It does not start a task, mark it complete, or attribute revenue. The task UI now labels execution as unavailable.
+- Changed self-upgrade verification so syntax parsing is not called a test pass. JavaScript/TypeScript and unsupported languages remain pending until assertions are run in a real isolated runner.
+- Added `createFreshJerryState()` for new workspaces and resets. It starts with no sample ventures, revenue, sales, reserve, goals, tasks, messages, memories or wallet balance; the old `INITIAL_JERRY_STATE` remains a test fixture so existing unit tests retain their fixtures.
+
+### Post-patch test evidence
+
+The selected source test batch was rerun after these changes: **172 passed, 0 failed** using Node 22.16.0 TypeScript stripping. `server.ts` passed Node's syntax check, and the clean workspace initializer was inspected at runtime. Full Bun typecheck/build, PostgreSQL integration and live Firebase verification remain outstanding.
