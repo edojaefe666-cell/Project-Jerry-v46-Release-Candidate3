@@ -8,9 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Extract v46 release candidate
         run: |
@@ -47,28 +48,29 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         run: bun install --frozen-lockfile
 
-      - name: Verify real Firebase authentication and revocation
-        working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          JERRY_FIREBASE_INTEGRATION: "1"
-          JERRY_FIREBASE_PROJECT_ID: ${{ secrets.JERRY_FIREBASE_PROJECT_ID }}
-          JERRY_FIREBASE_WEB_API_KEY: ${{ secrets.JERRY_FIREBASE_WEB_API_KEY }}
-          JERRY_FIREBASE_TEST_EMAIL: ${{ secrets.JERRY_FIREBASE_TEST_EMAIL }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-service-account.json
-          JERRY_FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.JERRY_FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 }}
+      - name: Authenticate to Google Cloud with GitHub OIDC
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ secrets.JERRY_FIREBASE_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
 
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Retrieve Firebase Admin credentials from Secret Manager
+        env:
+          JERRY_FIREBASE_PROJECT_ID: ${{ secrets.JERRY_FIREBASE_PROJECT_ID }}
         run: |
           set -euo pipefail
-          umask 077
-          trap 'rm -f "$GOOGLE_APPLICATION_CREDENTIALS"' EXIT
-
-          test -n "$JERRY_FIREBASE_SERVICE_ACCOUNT_JSON_BASE64" || {
-            echo "Missing JERRY_FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 secret" >&2
-            exit 1
-          }
-
-          printf '%s' "$JERRY_FIREBASE_SERVICE_ACCOUNT_JSON_BASE64" \
-            | base64 --decode > "$GOOGLE_APPLICATION_CREDENTIALS"
+          CREDENTIAL_FILE="$RUNNER_TEMP/firebase-service-account.json"
+          chmod 700 "$RUNNER_TEMP"
+          gcloud secrets versions access latest \
+            --secret="jerry-firebase-admin-key" \
+            --project="$JERRY_FIREBASE_PROJECT_ID" \
+            --out-file="$CREDENTIAL_FILE"
+          chmod 600 "$CREDENTIAL_FILE"
 
           node -e '
             const fs = require("node:fs");
@@ -76,9 +78,21 @@ jobs:
             const required = ["type", "project_id", "client_email", "private_key"];
             const missing = required.filter((key) => !credentials[key]);
             if (credentials.type !== "service_account" || missing.length) {
-              console.error("Invalid service-account JSON structure; required fields: type=service_account, project_id, client_email, private_key.");
+              console.error("Secret Manager value is not a valid Firebase service-account JSON document.");
               process.exit(1);
             }
-          ' "$GOOGLE_APPLICATION_CREDENTIALS"
+          ' "$CREDENTIAL_FILE"
 
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$CREDENTIAL_FILE" >> "$GITHUB_ENV"
+
+      - name: Verify real Firebase authentication and revocation
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          JERRY_FIREBASE_INTEGRATION: "1"
+          JERRY_FIREBASE_PROJECT_ID: ${{ secrets.JERRY_FIREBASE_PROJECT_ID }}
+          JERRY_FIREBASE_WEB_API_KEY: ${{ secrets.JERRY_FIREBASE_WEB_API_KEY }}
+          JERRY_FIREBASE_TEST_EMAIL: ${{ secrets.JERRY_FIREBASE_TEST_EMAIL }}
+        run: |
+          set -euo pipefail
+          trap 'rm -f "$GOOGLE_APPLICATION_CREDENTIALS"' EXIT
           bun run test:firebase
