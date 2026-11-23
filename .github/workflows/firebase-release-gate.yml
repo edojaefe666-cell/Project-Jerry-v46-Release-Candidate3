@@ -11,7 +11,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Extract v46 release candidate
         run: |
@@ -55,35 +55,7 @@ jobs:
           project_id: ${{ secrets.JERRY_FIREBASE_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
-
-      - name: Set up Google Cloud CLI
-        uses: google-github-actions/setup-gcloud@v3
-
-      - name: Retrieve Firebase Admin credentials from Secret Manager
-        env:
-          JERRY_FIREBASE_PROJECT_ID: ${{ secrets.JERRY_FIREBASE_PROJECT_ID }}
-        run: |
-          set -euo pipefail
-          CREDENTIAL_FILE="$RUNNER_TEMP/firebase-service-account.json"
-          chmod 700 "$RUNNER_TEMP"
-          gcloud secrets versions access latest \
-            --secret="jerry-firebase-admin-key" \
-            --project="$JERRY_FIREBASE_PROJECT_ID" \
-            --out-file="$CREDENTIAL_FILE"
-          chmod 600 "$CREDENTIAL_FILE"
-
-          node -e '
-            const fs = require("node:fs");
-            const credentials = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-            const required = ["type", "project_id", "client_email", "private_key"];
-            const missing = required.filter((key) => !credentials[key]);
-            if (credentials.type !== "service_account" || missing.length) {
-              console.error("Secret Manager value is not a valid Firebase service-account JSON document.");
-              process.exit(1);
-            }
-          ' "$CREDENTIAL_FILE"
-
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$CREDENTIAL_FILE" >> "$GITHUB_ENV"
+          create_credentials_file: true
 
       - name: Verify real Firebase authentication and revocation
         working-directory: ${{ env.PROJECT_DIR }}
@@ -94,5 +66,12 @@ jobs:
           JERRY_FIREBASE_TEST_EMAIL: ${{ secrets.JERRY_FIREBASE_TEST_EMAIL }}
         run: |
           set -euo pipefail
-          trap 'rm -f "$GOOGLE_APPLICATION_CREDENTIALS"' EXIT
+          test -n "$GOOGLE_APPLICATION_CREDENTIALS" || {
+            echo "Google Application Default Credentials were not configured."
+            exit 1
+          }
+          test -s "$GOOGLE_APPLICATION_CREDENTIALS" || {
+            echo "Federated credential configuration file is missing or empty."
+            exit 1
+          }
           bun run test:firebase
