@@ -16,26 +16,20 @@ jobs:
       - name: Extract v46 release candidate
         run: |
           set -euo pipefail
-
           ZIP="$(find . -maxdepth 2 -type f -name '*.zip' | head -n 1)"
-
           if [ -z "$ZIP" ]; then
             echo "ERROR: No release-candidate ZIP found."
             exit 1
           fi
-
           echo "Using release candidate: $ZIP"
           mkdir -p release-candidate
           unzip -q "$ZIP" -d release-candidate
-
           PACKAGE_JSON="$(find release-candidate -type f -name package.json | head -n 1)"
-
           if [ -z "$PACKAGE_JSON" ]; then
             echo "ERROR: No package.json found inside release candidate."
             find release-candidate -maxdepth 4 -type f | sort | head -200
             exit 1
           fi
-
           PROJECT_DIR="$(dirname "$PACKAGE_JSON")"
           echo "Jerry project directory: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
@@ -55,23 +49,42 @@ jobs:
           project_id: ${{ secrets.JERRY_FIREBASE_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
-          create_credentials_file: true
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Retrieve Firebase Admin key from Secret Manager
+        env:
+          JERRY_FIREBASE_PROJECT_ID: ${{ secrets.JERRY_FIREBASE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          CREDENTIAL_FILE="$RUNNER_TEMP/firebase-admin-service-account.json"
+          gcloud secrets versions access latest \
+            --secret="jerry-firebase-admin-key" \
+            --project="$JERRY_FIREBASE_PROJECT_ID" \
+            --out-file="$CREDENTIAL_FILE"
+          chmod 600 "$CREDENTIAL_FILE"
+          node -e '
+            const fs = require("node:fs");
+            const c = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const required = ["type", "project_id", "client_email", "private_key"];
+            const missing = required.filter((k) => !c[k]);
+            if (c.type !== "service_account" || missing.length) {
+              console.error("Secret Manager value is not a valid service-account JSON document.");
+              process.exit(1);
+            }
+          ' "$CREDENTIAL_FILE"
+          echo "Firebase Admin credential retrieved and structurally validated."
 
       - name: Verify real Firebase authentication and revocation
         working-directory: ${{ env.PROJECT_DIR }}
         env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-admin-service-account.json
           JERRY_FIREBASE_INTEGRATION: "1"
           JERRY_FIREBASE_PROJECT_ID: ${{ secrets.JERRY_FIREBASE_PROJECT_ID }}
           JERRY_FIREBASE_WEB_API_KEY: ${{ secrets.JERRY_FIREBASE_WEB_API_KEY }}
           JERRY_FIREBASE_TEST_EMAIL: ${{ secrets.JERRY_FIREBASE_TEST_EMAIL }}
         run: |
           set -euo pipefail
-          test -n "$GOOGLE_APPLICATION_CREDENTIALS" || {
-            echo "Google Application Default Credentials were not configured."
-            exit 1
-          }
-          test -s "$GOOGLE_APPLICATION_CREDENTIALS" || {
-            echo "Federated credential configuration file is missing or empty."
-            exit 1
-          }
+          trap 'rm -f "$GOOGLE_APPLICATION_CREDENTIALS"' EXIT
           bun run test:firebase
