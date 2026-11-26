@@ -53,6 +53,7 @@ export function MemoryAndSystem({
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    setPersistentSearchResults(null);
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams();
       if (query.trim()) params.set('q', query.trim());
