@@ -15,6 +15,7 @@ export interface IsolatedTestRunnerOptions {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   requestId?: string;
+  signal?: AbortSignal;
 }
 
 interface RunnerResponse {
@@ -106,6 +107,9 @@ export async function runIsolatedSelfUpgradeTests(
   };
   const rawRequest = JSON.stringify(payload);
   const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) abortFromCaller();
+  else options.signal?.addEventListener('abort', abortFromCaller, { once: true });
   const timeout = setTimeout(() => controller.abort(), Math.min(Math.max(options.timeoutMs ?? 10_000, 1_000), 15_000));
   try {
     const response = await (options.fetchImpl ?? fetch)(endpoint.toString(), {
@@ -183,5 +187,6 @@ export async function runIsolatedSelfUpgradeTests(
     };
   } finally {
     clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', abortFromCaller);
   }
 }
