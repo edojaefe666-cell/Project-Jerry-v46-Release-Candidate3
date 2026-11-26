@@ -9,10 +9,10 @@ android {
 
     defaultConfig {
         applicationId = "com.projectjerry.android"
-        minSdk = 29 // Android 10 baseline requested for Joshua's Infinix
+        minSdk = 29
         targetSdk = 35
         versionCode = 1
-        versionName = "2.12.1-foundation"
+        versionName = "2.12.2-native-shell"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -27,6 +27,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.webkit:webkit:1.12.1")
     implementation("com.google.android.material:material:1.12.0")
     testImplementation("junit:junit:4.13.2")
 }
