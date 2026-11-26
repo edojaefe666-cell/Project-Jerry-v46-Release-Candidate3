@@ -1,7 +1,6 @@
 package com.projectjerry.android.ui
 
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
@@ -10,7 +9,6 @@ import android.webkit.WebView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
-import com.projectjerry.android.permissions.JerryPermissionManager
 
 /**
  * Hosts the bundled Jerry React application. Cloud API calls use the HTTPS
