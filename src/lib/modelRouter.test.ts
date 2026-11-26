@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import test from 'node:test';
+import assert from 'node:assert/strict';
 import { resolveModelRoute, type ProviderConfiguration } from './modelRouter';
 
-describe('resolveModelRoute', () => {
   const providers: ProviderConfiguration = {
     google: { apiKey: 'server-google-key', model: 'gemini-test' },
     openai: { apiKey: 'server-openai-key', model: 'gpt-test' },
@@ -9,35 +9,30 @@ describe('resolveModelRoute', () => {
     local: { enabled: true, baseUrl: 'http://127.0.0.1:11434', model: 'local-test' },
   };
 
-  it('selects the coding-specialized provider first', () => {
-    expect(resolveModelRoute('coding', providers).map((route) => route.provider))
-      .toEqual(['anthropic', 'openai', 'google', 'local']);
+test('selects the coding-specialized provider first', () => {
+  assert.deepEqual(resolveModelRoute('coding', providers).map((route) => route.provider), ['anthropic', 'openai', 'google', 'local']);
   });
 
-  it('honours an owner preference only when it is suitable for the task', () => {
-    expect(resolveModelRoute('planning', providers, 'openai')[0].provider).toBe('openai');
-    expect(resolveModelRoute('vision', providers, 'anthropic')[0].provider).toBe('google');
+test('honours an owner preference only when it is suitable for the task', () => {
+  assert.equal(resolveModelRoute('planning', providers, 'openai')[0].provider, 'openai');
+  assert.equal(resolveModelRoute('vision', providers, 'anthropic')[0].provider, 'google');
   });
 
-  it('excludes providers without server credentials', () => {
-    expect(resolveModelRoute('chat', { google: { apiKey: '  ' }, openai: { apiKey: 'ok' } })
-      .map((route) => route.provider)).toEqual(['openai']);
+test('excludes providers without server credentials', () => {
+  assert.deepEqual(resolveModelRoute('chat', { google: { apiKey: '  ' }, openai: { apiKey: 'ok' } }).map((route) => route.provider), ['openai']);
   });
 
-  it('excludes local endpoints unless enabled and safely configured', () => {
-    expect(resolveModelRoute('chat', { local: { enabled: true, baseUrl: 'javascript:alert(1)' } }))
-      .toEqual([]);
-    expect(resolveModelRoute('chat', { local: { enabled: true, baseUrl: 'https://user:pass@example.com' } }))
-      .toEqual([]);
+test('excludes local endpoints unless enabled and safely configured', () => {
+  assert.deepEqual(resolveModelRoute('chat', { local: { enabled: true, baseUrl: 'javascript:alert(1)' } }), []);
+  assert.deepEqual(resolveModelRoute('chat', { local: { enabled: true, baseUrl: 'https://user:pass@example.com' } }), []);
   });
 
-  it('never returns provider credential material', () => {
+test('never returns provider credential material', () => {
     const routes = resolveModelRoute('chat', providers);
-    expect(JSON.stringify(routes)).not.toContain('server-google-key');
-    expect(JSON.stringify(routes)).not.toContain('server-openai-key');
+  assert.equal(JSON.stringify(routes).includes('server-google-key'), false);
+  assert.equal(JSON.stringify(routes).includes('server-openai-key'), false);
   });
 
-  it('returns an empty route list when no provider is configured', () => {
-    expect(resolveModelRoute('research', {})).toEqual([]);
-  });
+test('returns an empty route list when no provider is configured', () => {
+  assert.deepEqual(resolveModelRoute('research', {}), []);
 });
