@@ -20,7 +20,7 @@ export class ExecutionRegistry {
     }
   }
 
-  register(): { signal: AbortSignal; release: () => void } {
+  register(): { signal: AbortSignal; cancel: (reason?: string) => void; release: () => void } {
     const controller = new AbortController();
     this.active.add(controller);
     // Register first, then inspect the latch. This closes the check/register
@@ -29,6 +29,9 @@ export class ExecutionRegistry {
     let released = false;
     return {
       signal: controller.signal,
+      cancel: (reason = 'Jerry execution cancelled') => {
+        if (!controller.signal.aborted) controller.abort(new Error(reason));
+      },
       release: () => {
         if (released) return;
         released = true;
