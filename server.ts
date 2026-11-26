@@ -391,7 +391,7 @@ async function startServer() {
         entries,
       });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : 'Memory export failed.' });
+      res.status(500).json({ error: 'Memory export failed. Please try again.' });
     }
   });
 
