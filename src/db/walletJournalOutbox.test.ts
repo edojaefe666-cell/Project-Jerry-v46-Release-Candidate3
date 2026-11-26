@@ -111,11 +111,19 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
     [user.id, `duplicate-delivery-replay:${suffix}`, duplicateDeliveryTx.id, JSON.stringify(duplicateDeliveryTx)],
   );
 
-  const concurrentDrains = await Promise.all(
-    Array.from({ length: 8 }, () => drainWalletJournalOutbox(uid, 1)),
-  );
-  assert.equal(concurrentDrains.reduce((sum, result) => sum + result.processed, 0), 4,
-    'Concurrent workers must process pending, stale, and duplicate-delivery events.');
+  // SKIP LOCKED workers may legitimately return no work while another
+  // worker owns the only eligible row in its claim window. Run bounded waves
+  // until all four rows have been claimed instead of assuming one wave drains
+  // more rows than its workers actually acquired.
+  let totalProcessed = 0;
+  for (let wave = 0; wave < 8 && totalProcessed < 4; wave++) {
+    const concurrentDrains = await Promise.all(
+      Array.from({ length: 8 }, () => drainWalletJournalOutbox(uid, 1)),
+    );
+    totalProcessed += concurrentDrains.reduce((sum, result) => sum + result.processed, 0);
+  }
+  assert.equal(totalProcessed, 4,
+    'Concurrent workers must eventually process pending, stale, and duplicate-delivery events.');
 
   const eventKeys = [getWalletJournalEventKey(concurrentTx), getWalletJournalEventKey(staleTx), getWalletJournalEventKey(duplicateDeliveryTx), `duplicate-delivery-replay:${suffix}`];
   const outboxRows = await pool.query(
