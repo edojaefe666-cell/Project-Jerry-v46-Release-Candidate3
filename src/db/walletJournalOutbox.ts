@@ -49,7 +49,7 @@ export async function enqueueWalletJournalEvent(
   );
 }
 
-export async function drainWalletJournalOutbox(uid?: string, limit = 50): Promise<{
+export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?: AbortSignal): Promise<{
   processed: number;
   retried: number;
   failed: number;
@@ -84,13 +84,36 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50): Promis
       uid ? [uid, limit] : [limit],
     );
 
-    for (const row of picked.rows as Array<{
+    const claimedRows = picked.rows as Array<{
       id: number;
       user_id: number;
       event_key: string;
       tx_ref: string;
       payload_json: WalletTransaction;
-    }>) {
+    }>;
+
+    for (let index = 0; index < claimedRows.length; index++) {
+      const row = claimedRows[index];
+
+      // Claimed rows are durable work, not disposable queue messages. If the
+      // owner stops Jerry, return unstarted rows to pending without deleting
+      // their payload or audit history.
+      if (signal?.aborted) {
+        const remainingIds = claimedRows.slice(index).map((item) => item.id);
+        if (remainingIds.length > 0) {
+          await client.query(
+            `UPDATE wallet_journal_outbox
+                SET status = 'pending',
+                    available_at = now(),
+                    last_error = 'Paused by Jerry emergency stop',
+                    updated_at = now()
+              WHERE id = ANY($1::bigint[]) AND status = 'processing'`,
+            [remainingIds],
+          );
+        }
+        break;
+      }
+
       try {
         const user = await client.query(
           'SELECT uid FROM users WHERE id = $1',
@@ -105,6 +128,33 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50): Promis
           user.rows[0].uid,
           row.payload_json,
         );
+
+        // The journal operation may have completed while stop was engaged.
+        // Keep the outbox retryable; journal idempotency makes replay safe.
+        if (signal?.aborted) {
+          await client.query(
+            `UPDATE wallet_journal_outbox
+                SET status = 'pending',
+                    available_at = now(),
+                    last_error = 'Paused by Jerry emergency stop after journal operation',
+                    updated_at = now()
+              WHERE id = $1 AND status = 'processing'`,
+            [row.id],
+          );
+          const remainingIds = claimedRows.slice(index + 1).map((item) => item.id);
+          if (remainingIds.length > 0) {
+            await client.query(
+              `UPDATE wallet_journal_outbox
+                  SET status = 'pending',
+                      available_at = now(),
+                      last_error = 'Paused by Jerry emergency stop',
+                      updated_at = now()
+                WHERE id = ANY($1::bigint[]) AND status = 'processing'`,
+              [remainingIds],
+            );
+          }
+          break;
+        }
 
         await client.query(
           `UPDATE wallet_journal_outbox
