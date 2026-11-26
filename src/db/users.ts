@@ -377,7 +377,7 @@ export async function startTaskExecution(
     if (mustHaveApproval) {
       const consumedApprovals = consumeAutonomousTaskApproval(approvals, taskId, approvalId);
       if (!consumedApprovals) {
-        throw new Error('A fresh, approved, unused task authorization is required to start execution.');
+        throw new Error('A currently approved task authorization is required to start execution; it must be fresh and unused.');
       }
       approvals = consumedApprovals;
     }
