@@ -67,7 +67,7 @@ test('security records are isolated by Firebase owner UID', () => {
 
 test('financial commitment approval stores an explicit USD limit', () => {
   const store = new SecurityStore(':memory:');
-  const approval = store.createApproval({ action: 'financial_commitment', summary: 'Scoped action', amountUsd: 250, ownerUid: 'owner-scope' });
+  const approval = store.createApproval({ action: 'financial_commitment', summary: 'Scoped action', amountUsd: 250, scope: { recipient: 'Approved vendor Ltd', purpose: 'Purchase approved project equipment' }, ownerUid: 'owner-scope' });
   assert.equal(approval.amountUsd, 250);
   assert.equal(store.decideApproval(approval.id, 'approved', 'owner-scope')?.amountUsd, 250);
 });
@@ -145,5 +145,44 @@ test('approval decision is single-use and an expired pending approval cannot be 
   } finally {
     store.close();
     rmSync(path.dirname(file), { recursive: true, force: true });
+  }
+});
+
+
+test('financial commitment approvals reject missing or incomplete scopes', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    assert.throws(
+      () => store.createApproval({ action: 'financial_commitment', summary: 'Unscoped financial action', amountUsd: 250, ownerUid: 'owner-scope' }),
+      /explicit, immutable action scope/,
+    );
+    assert.throws(
+      () => store.createApproval({ action: 'purchase', summary: 'Incomplete purchase', amountUsd: 100, scope: { recipient: 'Vendor only' }, ownerUid: 'owner-scope' }),
+      /exact recipient or destination, and a clear purpose/,
+    );
+    const valid = store.createApproval({
+      action: 'purchase', summary: 'Scoped purchase', amountUsd: 100,
+      scope: { recipient: 'Vendor Ltd', purpose: 'Purchase project materials' },
+      ownerUid: 'owner-scope',
+    });
+    assert.equal(valid.scopeHash?.length, 64);
+  } finally {
+    store.close();
+  }
+});
+
+test('Bitcoin transfer approvals reject incomplete or imprecise scope', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    assert.throws(
+      () => store.createApproval({
+        action: 'bitcoin_transfer', summary: 'Bad transfer',
+        scope: { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qexample', amount: 0.01, fee: 0.0001 },
+        ownerUid: 'owner-btc',
+      }),
+      /valid destination address/,
+    );
+  } finally {
+    store.close();
   }
 });
