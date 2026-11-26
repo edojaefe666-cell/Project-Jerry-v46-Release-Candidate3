@@ -413,7 +413,7 @@ export class SecurityStore {
 
   restoreSnapshotWithApproval(snapshot: any, actorUid: string, approvalId: string): void {
     this.validateSnapshot(snapshot);
-    const expectedScopeHash = hashScope({ operation: 'security_backup_restore' });
+    const expectedScopeHash = hashScope({ operation: 'security_backup_restore' })!;
     const consumedAt = now();
     const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
     this.db.exec('BEGIN IMMEDIATE');
