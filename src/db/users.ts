@@ -1,6 +1,6 @@
 import { eq, desc, sql } from 'drizzle-orm';
 import { db } from './index.ts';
-import { enqueueWalletJournalEvent } from './walletJournalOutbox.ts';
+import { enqueueWalletJournalEvent, isEligibleWalletJournalEvent } from './walletJournalOutbox.ts';
 import { dailySummaryReports, idempotencyKeys, ledgerTransactions, taskExecutions, users, workspaces } from './schema.ts';
 import type { DailySummaryReport, JerryState, WalletTransaction } from '../lib/types.ts';
 import crypto from 'node:crypto';
@@ -88,7 +88,8 @@ export async function recordLedgerTransactionsForUser(
     const toInsert = txs.filter((tx) => !seen.has(tx.id));
     if (toInsert.length === 0) return;
 
-    await db.insert(ledgerTransactions).values(
+    await db.transaction(async (tx) => {
+      await tx.insert(ledgerTransactions).values(
       toInsert.map((tx) => ({
         userId: user.id,
         txRef: tx.id,
@@ -131,6 +132,10 @@ export async function recordLedgerTransactionsForUser(
         verifiedBlockHeight: sql`excluded.verified_block_height`,
         verifiedBlockHash: sql`excluded.verified_block_hash`,
       },
+      });
+      for (const txRow of txs) {
+        if (isEligibleWalletJournalEvent(txRow)) await enqueueWalletJournalEvent(tx, user.id, txRow);
+      }
     });
   } catch (error) {
     console.error('Database ledger sync failed:', error);
@@ -214,6 +219,9 @@ export async function updateWorkspaceForUserAtomic(
             verifiedBlockHash: txRow.verifiedBlockHash ?? null,
           },
         });
+      }
+      for (const txRow of next.transactions ?? []) {
+        if (isEligibleWalletJournalEvent(txRow)) await enqueueWalletJournalEvent(tx, user.id, txRow);
       }
       return next;
     });
@@ -325,8 +333,7 @@ export async function runIdempotentWorkspaceCommand<T extends object>(
       });
     }
     for (const txRow of state.transactions ?? []) {
-      if (txRow.asset === 'BTC' && txRow.network === 'Bitcoin Mainnet' &&
-          ((txRow.status === 'confirmed' && txRow.isVerifiedOnChain) || txRow.status === 'reorged')) {
+      if (isEligibleWalletJournalEvent(txRow)) {
         await enqueueWalletJournalEvent(tx, user.id, txRow);
       }
     }
