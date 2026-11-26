@@ -412,12 +412,12 @@ export interface DailySummaryReport {
   notificationRead: boolean;
   modelUsed: string;
   metrics: {
-    todayProfitUsd: number;
-    previousDayProfitUsd: number;
+    todayProfitUsd: number | null;
+    previousDayProfitUsd: number | null;
     activeTasksCount: number;
     completedTasksCount: number;
     newRevenueInsightsCount: number;
-    internetAuthorityScore: number;
+    internetAuthorityScore: number | null;
   };
   chartSeries: Array<{
     label: string;
@@ -428,6 +428,7 @@ export interface DailySummaryReport {
     name: string;
     count: number;
   }>;
+  financialDataStatus: 'unavailable_not_loaded_from_verified_ledger';
 }
 
 export interface JerryState {
