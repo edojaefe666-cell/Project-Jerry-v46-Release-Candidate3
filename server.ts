@@ -496,18 +496,38 @@ async function startServer() {
       res.status(400).json({ error: 'Unsupported preferred model provider.' });
       return;
     }
+    const execution = executionRegistry.register();
+    const cancelOnDisconnect = () => {
+      if (!res.writableEnded && !execution.signal.aborted) {
+        executionRegistry.setStopped(executionRegistry.isStopped, 'Jerry Brain client disconnected');
+      }
+    };
+    res.once('close', cancelOnDisconnect);
     try {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry execution is stopped.' });
+        return;
+      }
       const result = await generateWithModelFallback({
         task: body.task as 'chat' | 'planning' | 'research' | 'coding' | 'vision' | 'speech' | 'transcription',
         prompt: body.prompt,
         preferredProvider: body.preferredProvider as 'google' | 'openai' | 'anthropic' | 'local' | undefined,
         configuration: providerConfigurationFromEnvironment(process.env),
+        signal: execution.signal,
       });
-      res.json({ ...result });
+      if (!execution.signal.aborted && !isEmergencyStopActive()) res.json({ ...result });
+      else if (!res.headersSent) res.status(423).json({ error: 'Jerry execution stopped before response delivery.' });
     } catch (error) {
+      if (execution.signal.aborted) {
+        if (!res.headersSent) res.status(423).json({ error: 'Jerry Brain request cancelled.' });
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Jerry Brain provider request failed.';
       const unavailable = /No model provider is configured|All configured model providers failed/.test(message);
-      res.status(unavailable ? 503 : 400).json({ error: message });
+      if (!res.headersSent) res.status(unavailable ? 503 : 400).json({ error: message });
+    } finally {
+      res.removeListener('close', cancelOnDisconnect);
+      execution.release();
     }
   });
 
