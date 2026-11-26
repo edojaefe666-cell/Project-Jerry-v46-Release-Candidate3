@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { createPool } from './index.ts';
 import { ensureWalletTransactionJournaled } from './walletJournal.ts';
 import type { WalletTransaction } from '../lib/types.ts';
+import { isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
 
 type PgQueryClient = {
   query: (text: string, values?: unknown[]) => Promise<unknown>;
@@ -13,7 +14,7 @@ type DrizzleSqlExecutor = {
 
 type WalletJournalDbClient = PgQueryClient | DrizzleSqlExecutor;
 
-import { isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
+
 export async function enqueueWalletJournalEvent(
   client: WalletJournalDbClient,
   userId: number,
