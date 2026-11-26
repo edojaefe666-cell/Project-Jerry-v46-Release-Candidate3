@@ -128,6 +128,9 @@ async function startServer() {
   };
   const requireExecutionEnabled = (_req: AuthRequest, res: express.Response, next: express.NextFunction): void => {
     if (isEmergencyStopActive()) {
+      // Synchronize the in-process cancellation registry with the durable latch
+      // and environment hard stop whenever any guarded route observes a stop.
+      executionRegistry.setStopped(true, 'Emergency stop latch observed by guarded route');
       res.status(423).json({ error: 'Jerry emergency stop is engaged. No external execution or transfer staging is permitted.' });
       return;
     }
