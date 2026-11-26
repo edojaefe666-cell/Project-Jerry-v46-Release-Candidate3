@@ -47,3 +47,14 @@
 - The source has now been reconciled into the canonical v46 PR branch under `android-native/` and a dedicated GitHub Actions workflow builds the debug APK, runs unit tests and runs lint.
 - The first Android CI attempts failed during SDK bootstrap because the setup action requested the removed legacy `tools` package. The workflow has been corrected to request `platform-tools`, Android 35 and build-tools 35.0.0 directly; a successful build is still pending.
 - No APK is claimed as built; no phone settings changed; no production deployment performed.
+
+
+## v46 integration increment — native shell and cloud API routing
+
+- The native launcher now hosts the canonical React/Jerry UI through AndroidX WebViewAssetLoader at the HTTPS origin `https://localhost`; it does not load remote executable HTML.
+- Android CI builds the web bundle with `VITE_BASE_PATH=/public/`, copies it into the app's packaged assets, then builds the Android APK and runs native JVM tests and lint.
+- `VITE_API_BASE_URL` is compiled as an HTTPS origin. The shared web API client routes only `/api/*` requests to that origin and continues to attach the Firebase ID token and idempotency key.
+- The build uses a deliberately invalid placeholder backend origin. A real HTTPS backend origin must be configured for an installable connected release; no API key or server secret belongs in the APK.
+- The WebView blocks cleartext traffic, file access, mixed content and non-HTTPS navigation. External HTTPS navigation is handed to the Android browser.
+- No Android runtime permission is automatically requested. Native permission/role checks remain user-mediated and informational.
+- Android CI has been expanded to build the web bundle before Gradle. The latest run must pass before this integration is considered build-verified.
