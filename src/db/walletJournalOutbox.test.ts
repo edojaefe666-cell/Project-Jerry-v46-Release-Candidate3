@@ -117,7 +117,7 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
 
   const journalRows = await pool.query(
     'SELECT idempotency_key FROM journal_entries WHERE user_id = $1 AND idempotency_key = ANY($2::text[]) AND status = \'posted\'',
-    [user.id, eventKeys.map((key) => key.replace(':confirmed:cycle-', ':confirmed:cycle-'))],
+    [user.id, eventKeys],
   );
   assert.equal(journalRows.rowCount, 2, 'Each claimed event must result in exactly one posted journal entry.');
 });
