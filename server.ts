@@ -332,10 +332,7 @@ async function startServer() {
       if (body.confirm !== 'RESTORE_JERRY') { res.status(400).json({ error: 'Restore confirmation is required.' }); return; }
       if (String(body.passphrase ?? '').length < 12) { res.status(400).json({ error: 'Restore passphrase must be at least 12 characters.' }); return; }
       const snapshot = decryptSecurityBackup(String(body.backup ?? ''), String(body.passphrase));
-      securityStore.validateSnapshot(snapshot);
-      const approval = securityStore.consumeApproval(String(body.approvalId ?? '').trim(), 'high_impact_change', req.user!.uid, { operation: 'security_backup_restore' });
-      if (!approval) { res.status(403).json({ error: 'A fresh approved high-impact restore authorization is required.' }); return; }
-      securityStore.importSnapshot(snapshot, req.user!.uid);
+      securityStore.restoreSnapshotWithApproval(snapshot, req.user!.uid, String(body.approvalId ?? '').trim());
       res.json({ restored: true, message: 'Jerry security records restored successfully.' });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to restore Jerry security backup.' });
