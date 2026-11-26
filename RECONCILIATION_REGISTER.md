@@ -57,6 +57,8 @@
 - Atomic workspace updates and idempotent workspace commands also enqueue eligible events inside their existing transaction.
 - Outbox draining now validates its batch limit (1–500) and reclaims rows stuck in `processing` for more than five minutes. Journal posting is designed to be idempotent to make retry after worker interruption safe.
 - Added eligibility tests and included them in the standard test script.
+- Fixed settlement approval lifecycle: approval now promotes a pending BTC business-revenue settlement to confirmed only when the transaction hash and verified block hash are valid 64-character hashes, the network is Bitcoin Mainnet, the transaction is independently verified, and at least six confirmations are recorded. Rejection remains terminal. The existing idempotent workspace command then queues the confirmed event atomically.
+- Added tests for approved/rejected outcomes and missing/insufficient finality evidence.
 
 **Not yet proven:** these changes have not been executed against a live PostgreSQL test database or run through the complete TypeScript/test/build pipeline. The outbox worker's retry and stale-lease behavior still requires integration tests under concurrent workers and simulated crashes. Historical Phase 2.40B parity is not yet established.
 
