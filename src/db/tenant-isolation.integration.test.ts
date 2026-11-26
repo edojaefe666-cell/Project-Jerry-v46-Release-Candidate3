@@ -85,15 +85,38 @@ test('PostgreSQL tenant isolation: workspace, approvals, idempotency, tasks, led
       saveMemoryEntryForUser(userA.uid, userA.email, memoryA),
       saveMemoryEntryForUser(userB.uid, userB.email, memoryB),
     ]);
-    const [memoriesA, memoriesB, queryAFromB] = await Promise.all([
+    const memoryProfileA = {
+      id: `memory-profile-A-${suffix}`, category: 'preference' as const,
+      title: 'Tenant A owner preference', content: 'Owner profile preference must be searchable.',
+      outcome: 'insight' as const, tags: ['owner-profile'], createdAt: new Date().toISOString(),
+    };
+    const memoryProjectA = {
+      id: `memory-project-A-${suffix}`, category: 'goal' as const,
+      title: 'Tenant A project goal', content: 'Mission project goal must be searchable.',
+      outcome: 'insight' as const, tags: ['mission-project'], createdAt: new Date().toISOString(),
+    };
+    await Promise.all([
+      saveMemoryEntryForUser(userA.uid, userA.email, memoryProfileA),
+      saveMemoryEntryForUser(userA.uid, userA.email, memoryProjectA),
+    ]);
+    const [memoriesA, memoriesB, queryAFromB, ownerProfileA, projectsA, knowledgeAFromB] = await Promise.all([
       searchMemoryForUser(userA.uid, userA.email, { query: 'quartz-lighthouse' }),
       searchMemoryForUser(userB.uid, userB.email, { query: 'cobalt-orchid' }),
       searchMemoryForUser(userB.uid, userB.email, { query: 'quartz-lighthouse' }),
+      searchMemoryForUser(userA.uid, userA.email, { area: 'owner_profile' }),
+      searchMemoryForUser(userA.uid, userA.email, { area: 'mission_projects' }),
+      searchMemoryForUser(userB.uid, userB.email, { area: 'knowledge_experience' }),
     ]);
     assert.ok(memoriesA.some((entry) => entry.id === memoryA.id));
     assert.ok(memoriesB.some((entry) => entry.id === memoryB.id));
     assert.equal(queryAFromB.some((entry) => entry.id === memoryA.id), false,
       'Memory search must not expose another tenant entry even when its unique content is queried.');
+    assert.ok(ownerProfileA.some((entry) => entry.id === memoryProfileA.id));
+    assert.equal(ownerProfileA.some((entry) => entry.id === memoryA.id), false);
+    assert.ok(projectsA.some((entry) => entry.id === memoryProjectA.id));
+    assert.equal(projectsA.some((entry) => entry.id === memoryA.id), false);
+    assert.equal(knowledgeAFromB.some((entry) => entry.id === memoryA.id), false,
+      'Area-filtered memory search must remain tenant-scoped.');
 
     await saveWorkspaceForUser(userA.uid, userA.email, makeState('Tenant A', [approval]));
     await saveWorkspaceForUser(userB.uid, userB.email, makeState('Tenant B', [approvalB]));
