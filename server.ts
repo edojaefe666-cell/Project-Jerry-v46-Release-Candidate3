@@ -379,8 +379,16 @@ async function startServer() {
       const email = req.user!.email ?? 'owner@jerry.workspace';
       const query = typeof req.query.q === 'string' ? req.query.q : '';
       const category = typeof req.query.category === 'string' ? req.query.category : 'all';
+      const area = typeof req.query.area === 'string' ? req.query.area : undefined;
+      const allowedAreas = new Set(['owner_profile', 'mission_projects', 'knowledge_experience']);
+      if (area && !allowedAreas.has(area)) {
+        res.status(400).json({ error: 'Memory area is invalid.' });
+        return;
+      }
       const limitRaw = typeof req.query.limit === 'string' ? Number(req.query.limit) : 50;
-      const entries = await searchMemoryForUser(uid, email, { query, category, limit: limitRaw });
+      const entries = await searchMemoryForUser(uid, email, {
+        query, category, area: area as import('./src/lib/types.ts').JerryMemoryArea | undefined, limit: limitRaw,
+      });
       res.json({ entries, count: entries.length });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'Memory search failed.' });
