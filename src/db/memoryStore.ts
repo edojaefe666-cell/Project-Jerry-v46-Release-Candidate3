@@ -72,12 +72,7 @@ export async function searchMemoryForUser(
   const conditions = [eq(memoryEntries.userId, user.id)];
   const query = options.query?.trim().slice(0, 200);
   if (query) {
-    const pattern = `%${query.replace(/[\\%_]/g, '\\    const pattern = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
-    conditions.push(or(
-      ilike(memoryEntries.title, pattern),
-      ilike(memoryEntries.content, pattern),
-      sql`${memoryEntries.tags}::text ILIKE ${pattern}`,
-    )!);')}%`;
+    const pattern = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
     conditions.push(or(
       sql`to_tsvector('simple', coalesce(${memoryEntries.title}, '') || ' ' || coalesce(${memoryEntries.content}, '')) @@ plainto_tsquery('simple', ${query})`,
       sql`${memoryEntries.tags}::text ILIKE ${pattern}`,
