@@ -539,23 +539,51 @@ async function startServer() {
     }
   });
 
-  app.post('/api/state/reset', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/state/reset', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
+    const uid = req.user!.uid;
+    const email = req.user!.email ?? 'owner@jerry.workspace';
+    const approvalId = String((req.body as { approvalId?: string } | undefined)?.approvalId ?? '').trim();
+    if (!approvalId) {
+      res.status(400).json({ error: 'A fresh approved high_impact_change authorization for workspace_reset is required.' });
+      return;
+    }
+    // Reserve the exact, owner-approved reset scope before touching workspace
+    // data. A reservation prevents concurrent sessions or replay from reusing it.
+    const reservationId = randomBytes(32).toString('hex');
+    const approval = securityStore.reserveApproval(
+      approvalId,
+      'high_impact_change',
+      uid,
+      reservationId,
+      { operation: 'workspace_reset' },
+    );
+    if (!approval) {
+      res.status(409).json({ error: 'A fresh, unexpired, unused owner approval scoped exactly to workspace_reset is required.' });
+      return;
+    }
+    let resetCommitted = false;
     try {
-      const uid = req.user!.uid;
-      const email = req.user!.email ?? 'owner@jerry.workspace';
       const current = await getWorkspaceForUser(uid, email);
+      let resetState: JerryState;
       if (!current) {
         await saveWorkspaceForUser(uid, email, INITIAL_JERRY_STATE);
-        res.json(INITIAL_JERRY_STATE);
+        resetState = INITIAL_JERRY_STATE;
+      } else {
+        // Preserve server-owned financial/security records and the durable ledger.
+        resetState = await updateWorkspaceForUserAtomic(uid, email, (latest) =>
+          mergeClientWorkspaceState(latest, INITIAL_JERRY_STATE)
+        );
+      }
+      resetCommitted = true;
+      const consumed = securityStore.finalizeApprovalReservation(approvalId, uid, reservationId);
+      if (!consumed) {
+        // The workspace reset is durable; never pretend the approval was consumed.
+        res.status(503).json({ error: 'Workspace reset completed, but authorization finalization is pending. Contact the owner administrator before retrying.' });
         return;
       }
-      // Reset ordinary workspace content without erasing server-owned financial
-      // and security records or desynchronizing the durable ledger.
-      const resetState = await updateWorkspaceForUserAtomic(uid, email, (latest) =>
-        mergeClientWorkspaceState(latest, INITIAL_JERRY_STATE)
-      );
       res.json(resetState);
     } catch (error) {
+      if (!resetCommitted) securityStore.releaseApprovalReservation(approvalId, uid, reservationId);
       console.error('Internal server error:', error);
       res.status(500).json({ error: 'Internal server error.' });
     }
