@@ -75,7 +75,7 @@ test('financial commitment approval stores an explicit USD limit', () => {
 test('approved bitcoin transfer is bound to exact scope and cannot consume a different transfer', () => {
   const file = tempDb('bitcoin-scope');
   const store = new SecurityStore(file);
-  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qexample', amount: 0.01, fee: 0.0001 };
+  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', amount: 0.01, fee: 0.0001 };
   const approval = store.createApproval({ action: 'bitcoin_transfer', summary: 'Send exact BTC transfer', scope, ownerUid: 'owner-scope' });
   store.decideApproval(approval.id, 'approved', 'owner-scope');
   assert.equal(store.consumeApproval(approval.id, 'bitcoin_transfer', 'owner-scope', { ...scope, amount: 0.02 }), null);
@@ -99,7 +99,7 @@ test('expired approval is not consumed or burned', () => {
 
 test('Bitcoin transfer approval reservation survives PostgreSQL failure safely and can be released', () => {
   const store = new SecurityStore(':memory:');
-  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qexample', amount: 0.01, fee: 0.0001 };
+  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', amount: 0.01, fee: 0.0001 };
   const approval = store.createApproval({ action: 'bitcoin_transfer', summary: 'Reserve then release', scope, ownerUid: 'owner-reserve' });
   store.decideApproval(approval.id, 'approved', 'owner-reserve');
   const reservationId = 'a'.repeat(64);
@@ -113,7 +113,7 @@ test('Bitcoin transfer approval reservation survives PostgreSQL failure safely a
 
 test('Bitcoin transfer approval is consumed only when its reservation is finalized', () => {
   const store = new SecurityStore(':memory:');
-  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qexample', amount: 0.01, fee: 0.0001 };
+  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', amount: 0.01, fee: 0.0001 };
   const approval = store.createApproval({ action: 'bitcoin_transfer', summary: 'Reserve then finalize', scope, ownerUid: 'owner-finalize' });
   store.decideApproval(approval.id, 'approved', 'owner-finalize');
   const reservationId = 'c'.repeat(64);
@@ -177,7 +177,7 @@ test('Bitcoin transfer approvals reject incomplete or imprecise scope', () => {
     assert.throws(
       () => store.createApproval({
         action: 'bitcoin_transfer', summary: 'Bad transfer',
-        scope: { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qexample', amount: 0.01, fee: 0.0001 },
+        scope: { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', amount: 0.01, fee: 0.0001 },
         ownerUid: 'owner-btc',
       }),
       /valid destination address/,
