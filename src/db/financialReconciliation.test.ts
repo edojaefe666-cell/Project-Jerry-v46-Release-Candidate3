@@ -133,3 +133,17 @@ test('legacy reversal key pointing to another confirmation is flagged', () => {
   assert.deepEqual(audit.unmatchedReversalEntries, ['71']);
   assert.equal(audit.reversedOriginalEntryIds.size, 0);
 });
+
+
+test('journal audit flags multiple posted reversals targeting the same confirmation', () => {
+  const generation = ':confirmed:cycle-4:block-' + 'd'.repeat(64);
+  const rows = [
+    { id: '80', idempotency_key: 'wallet-tx:tx-double-reversal' + generation, reversal_of: null, status: 'posted' },
+    { id: '81', idempotency_key: 'wallet-tx:tx-double-reversal:reorg-reversal' + generation, reversal_of: '80', status: 'posted' },
+    { id: '82', idempotency_key: 'wallet-tx:tx-double-reversal:reorg-reversal' + generation + ':retry-2', reversal_of: '80', status: 'posted' },
+  ];
+  const audit = auditWalletJournalEntries(rows);
+  assert.deepEqual(audit.unmatchedReversalEntries, []);
+  assert.deepEqual(audit.duplicateReversalTargets, ['80']);
+  assert.deepEqual([...audit.reversedOriginalEntryIds], ['80']);
+});
