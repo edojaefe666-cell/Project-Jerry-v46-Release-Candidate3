@@ -28,6 +28,7 @@ export type WalletJournalEntryAudit = {
   reversedOriginalEntryIds: Set<string>;
   duplicateConfirmedGenerations: string[];
   unmatchedReversalEntries: string[];
+  duplicateReversalTargets: string[];
 };
 
 export function auditWalletJournalEntries(rows: WalletJournalEntryAuditRow[]): WalletJournalEntryAudit {
@@ -36,6 +37,7 @@ export function auditWalletJournalEntries(rows: WalletJournalEntryAuditRow[]): W
   const generationCounts = new Map<string, number>();
   const reversedOriginalEntryIds = new Set<string>();
   const unmatchedReversalEntries: string[] = [];
+  const reversalCountsByOriginal = new Map<string, number>();
 
   for (const row of rows) {
     if (row.status !== 'posted') continue;
@@ -81,6 +83,7 @@ export function auditWalletJournalEntries(rows: WalletJournalEntryAuditRow[]): W
       continue;
     }
     reversedOriginalEntryIds.add(originalId);
+    reversalCountsByOriginal.set(originalId, (reversalCountsByOriginal.get(originalId) ?? 0) + 1);
   }
 
   return {
@@ -90,6 +93,9 @@ export function auditWalletJournalEntries(rows: WalletJournalEntryAuditRow[]): W
       .filter(([, count]) => count > 1)
       .map(([generation]) => generation),
     unmatchedReversalEntries,
+    duplicateReversalTargets: [...reversalCountsByOriginal.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([originalId]) => originalId),
   };
 }
 
@@ -103,6 +109,7 @@ export type FinancialTruthReport = {
   unreversedReorgedTransactions: string[];
   duplicateConfirmedGenerations: string[];
   unmatchedReversalEntries: string[];
+  duplicateReversalTargets: string[];
   ineligibleJournaledTransactions: string[];
   outboxUnprocessedEvents: number;
   orphanOutboxEvents: number;
@@ -181,6 +188,7 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
     unreversedReorgedTransactions: unreversedReorged,
     duplicateConfirmedGenerations: audit.duplicateConfirmedGenerations,
     unmatchedReversalEntries: audit.unmatchedReversalEntries,
+    duplicateReversalTargets: audit.duplicateReversalTargets,
     ineligibleJournaledTransactions,
     outboxUnprocessedEvents: Number(outbox.rows[0]?.unprocessed_count ?? 0),
     orphanOutboxEvents: Number(outbox.rows[0]?.orphan_count ?? 0),
@@ -189,6 +197,7 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
       Number(outbox.rows[0]?.orphan_count ?? 0) === 0 &&
       audit.duplicateConfirmedGenerations.length === 0 &&
       audit.unmatchedReversalEntries.length === 0 &&
+      audit.duplicateReversalTargets.length === 0 &&
       ineligibleJournaledTransactions.length === 0 &&
       unreversedReorged.length === 0 &&
       [...confirmedIds].every((id) => journaledIds.has(id)),
