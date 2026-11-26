@@ -232,3 +232,32 @@ test('emergency stop prevents atomic reservation of an approved Bitcoin transfer
     store.close();
   }
 });
+
+test('new security store starts with the emergency stop engaged', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    const control = store.getEmergencyStop();
+    assert.equal(control.stopped, true);
+    assert.equal(control.ownerUid, 'system');
+    assert.match(control.reason, /secure first-boot default/i);
+  } finally {
+    store.close();
+  }
+});
+
+test('explicit owner resume is preserved across security store initialization', () => {
+  const file = tempDb('owner-resume-preserved');
+  const first = new SecurityStore(file);
+  first.setEmergencyStop(false, 'owner-uid-1', 'Owner explicitly resumed after checks');
+  first.close();
+  const reopened = new SecurityStore(file);
+  try {
+    const control = reopened.getEmergencyStop();
+    assert.equal(control.stopped, false);
+    assert.equal(control.ownerUid, 'owner-uid-1');
+    assert.equal(control.reason, 'Owner explicitly resumed after checks');
+  } finally {
+    reopened.close();
+    rmSync(path.dirname(file), { recursive: true, force: true });
+  }
+});
