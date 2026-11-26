@@ -94,7 +94,7 @@ export const dailySummaryReports = pgTable('daily_summary_reports', {
   reportDate: text('report_date').notNull(),
   headline: text('headline').notNull(),
   summaryText: text('summary_text').notNull(),
-  dailyProfitUsd: doublePrecision('daily_profit_usd').notNull(),
+  dailyProfitUsd: doublePrecision('daily_profit_usd'),
   activeTasksCount: integer('active_tasks_count').notNull(),
   insightsCount: integer('insights_count').notNull(),
   chartDataJson: jsonb('chart_data_json').notNull(),
