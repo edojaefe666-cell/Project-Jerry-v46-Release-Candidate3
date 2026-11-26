@@ -58,6 +58,12 @@ The authenticated Brain generation route is limited to 20 requests per owner per
 These limits are a local abuse/cost guard, not a distributed quota system. A multi-instance production deployment must also enforce shared rate limits and provider-side spending/usage caps at the gateway or provider account. Provider keys should have least privilege and alerts/limits configured where supported.
 
 
+## Daily business opportunity discovery
+
+`POST /api/jerry/discover-daily-ways` is a research and idea-generation endpoint only. It no longer fabricates offline opportunities, assumes a previous-day profit, imposes a target to beat, or manufactures minimum daily-profit figures. If the research provider is not configured or returns invalid output, the endpoint returns an explicit error and no substitute financial figures.
+
+Any nonzero `estimatedDailyProfitUsd` or `startupCapitalUsd` returned by the model is labelled as an unverified hypothetical scenario, not actual income, a verified forecast, a guarantee, or an approved budget. Validate demand, pricing, costs, customer volume and delivery capacity independently before relying on a scenario. Ideas do not execute tasks, contact customers, publish content, spend money, or authorize commitments.
+
 ## Goal planning and opportunity assessments
 
 The authenticated goal-planning and opportunity-assessment routes use Jerry's provider-neutral server-side model adapters and per-owner rate limits. They return HTTP 503 when no model provider is configured and HTTP 502 when providers fail or return invalid structured output; they no longer present deterministic sample plans or hard-coded commercial projections as generated AI work.
