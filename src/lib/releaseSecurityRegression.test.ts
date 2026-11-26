@@ -86,3 +86,30 @@ test('security backup restore consumes its scoped approval and commits the repla
   assert.doesNotMatch(route, /consumeApproval\(/);
   assert.doesNotMatch(route, /importSnapshot\(/);
 });
+
+
+test('self-upgrade persistence ignores client-supplied security and test pass claims', () => {
+  const start = server.indexOf("app.post('/api/jerry/self-upgrades'");
+  const end = server.indexOf("app.post('/api/jerry/self-upgrades/:id/verify'", start);
+  const route = server.slice(start, end);
+  assert.match(route, /auditSelfProgrammedCode\(String\(proposal\.code\)\)/);
+  assert.match(route, /securityAuditPassed: codeAudit\.passed/);
+  assert.match(route, /testStatus: 'pending'/);
+  assert.doesNotMatch(route, /testStatus: proposal\.testStatus/);
+  assert.doesNotMatch(route, /Boolean\(proposal\.securityAuditPassed\)/);
+});
+
+test('self-upgrade static syntax checks cannot claim runtime tests passed', () => {
+  const start = server.indexOf("app.post('/api/jerry/self-upgrades/:id/verify'");
+  const end = server.indexOf("app.post('/api/jerry/verify-upgrade'", start);
+  const persistedVerify = server.slice(start, end);
+  assert.match(persistedVerify, /testStatus = 'pending'/);
+  assert.doesNotMatch(persistedVerify, /testStatus = 'passed'/);
+  assert.match(persistedVerify, /not executed in an isolated runtime/);
+
+  const directStart = end;
+  const directEnd = server.indexOf("app.post('/api/jerry/execute-task'", directStart);
+  const directVerify = server.slice(directStart, directEnd);
+  assert.match(directVerify, /testStatus: 'pending'/);
+  assert.doesNotMatch(directVerify, /testStatus: 'passed'/);
+});
