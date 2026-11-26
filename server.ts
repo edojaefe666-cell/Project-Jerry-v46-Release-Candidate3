@@ -1802,6 +1802,7 @@ async function startServer() {
               testStatus = 'pending';
               testReport = `${proposal.language} syntax transformation passed via esbuild. Test code was not executed in an isolated runtime; owner approval remains blocked.`;
             } catch (err) {
+              testStatus = 'failed';
               testReport = `Syntax error: ${err instanceof Error ? err.message : 'Invalid JS/TS syntax'}`;
             }
           } else {
