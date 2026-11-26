@@ -499,7 +499,7 @@ async function startServer() {
     const execution = executionRegistry.register();
     const cancelOnDisconnect = () => {
       if (!res.writableEnded && !execution.signal.aborted) {
-        executionRegistry.setStopped(executionRegistry.isStopped, 'Jerry Brain client disconnected');
+        execution.cancel('Jerry Brain client disconnected');
       }
     };
     res.once('close', cancelOnDisconnect);
