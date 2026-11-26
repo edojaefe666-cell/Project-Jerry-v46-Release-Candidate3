@@ -10,6 +10,12 @@ export async function getAuthoritativeWalletBtcSatoshis(uid: string): Promise<bi
   return BigInt(wallet?.netDebitUnits ?? '0');
 }
 
+export function parseWalletJournalEntryKey(value: string): { transactionRef: string; event: 'confirmed' | 'reorg-reversal' } | null {
+  const match = /^wallet-tx:(.+):(confirmed|reorg-reversal)(?::.+)?$/.exec(value);
+  if (!match) return null;
+  return { transactionRef: match[1], event: match[2] as 'confirmed' | 'reorg-reversal' };
+}
+
 export type FinancialTruthReport = {
   legacyWalletSatoshis: string;
   journalWalletSatoshis: string;
@@ -51,10 +57,10 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
   const journaledIds = new Set<string>();
   const reversedIds = new Set<string>();
   for (const row of journaled.rows) {
-    const match = /^wallet-tx:(.+):(confirmed|reorg-reversal)(?::.+)?$/.exec(row.idempotency_key);
-    if (!match) continue;
-    if (match[2] === 'confirmed' && row.status === 'posted') journaledIds.add(match[1]);
-    if (match[2] === 'reorg-reversal' && row.status === 'posted') reversedIds.add(match[1]);
+    const parsed = parseWalletJournalEntryKey(row.idempotency_key);
+    if (!parsed) continue;
+    if (parsed.event === 'confirmed' && row.status === 'posted') journaledIds.add(parsed.transactionRef);
+    if (parsed.event === 'reorg-reversal' && row.status === 'posted') reversedIds.add(parsed.transactionRef);
   }
 
   return {
