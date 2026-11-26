@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { db } from './index.ts';
 import { memoryEntries } from './schema.ts';
 import { getOrCreateUser } from './users.ts';
@@ -85,12 +85,7 @@ export async function searchMemoryForUser(
     )!);
   }
   if (options.area) {
-    const categoriesByArea: Record<JerryMemoryArea, MemoryEntry['category'][]> = {
-      owner_profile: ['preference'],
-      mission_projects: ['goal', 'workflow'],
-      knowledge_experience: ['decision', 'lesson'],
-    };
-    conditions.push(inArray(memoryEntries.category, categoriesByArea[options.area]));
+    conditions.push(eq(memoryEntries.memoryArea, options.area));
   }
   if (options.category && options.category !== 'all') {
     if (!MEMORY_CATEGORIES.has(options.category)) throw new Error('Memory category is invalid.');
