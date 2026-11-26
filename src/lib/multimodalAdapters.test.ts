@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeImageWithModelFallback } from './multimodalAdapters';
+import { analyzeImageWithModelFallback, synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './multimodalAdapters';
 
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 const image = { prompt: 'Read this image', mimeType: 'image/png', base64Data: 'aGVsbG8=', configuration: { google: { apiKey: 'g-key', model: 'gemini-test' } } };
@@ -47,4 +47,46 @@ test('rejects unsupported media and malformed or oversized payloads before netwo
 
 test('fails closed when no vision provider is configured', async () => {
   await assert.rejects(() => analyzeImageWithModelFallback({ ...image, configuration: {} }), /No vision provider/);
+});
+
+test('OpenAI speech synthesis returns actual audio bytes and maps unsupported voice names safely', async () => {
+  let request: any;
+  const result = await synthesizeSpeechWithModelFallback({
+    text: 'Hello from Jerry', voice: 'Charon', configuration: { openai: { apiKey: 'o-key' } },
+    fetchImpl: async (_input, init) => {
+      request = JSON.parse(String(init?.body));
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'audio/mpeg' } });
+    },
+  });
+  assert.equal(request.voice, 'onyx');
+  assert.equal(result.audioBase64, 'AQID');
+  assert.equal(result.mimeType, 'audio/mpeg');
+  assert.equal(result.provider, 'openai');
+});
+
+test('OpenAI transcription sends audio as multipart and returns provider transcript', async () => {
+  let request: RequestInit | undefined;
+  const result = await transcribeAudioWithModelFallback({
+    audioBase64: 'AQIDBA==', mimeType: 'audio/webm', configuration: { openai: { apiKey: 'o-key' } },
+    fetchImpl: async (_input, init) => {
+      request = init;
+      return response({ text: 'Turn on Jerry.' });
+    },
+  });
+  assert.equal(result.transcript, 'Turn on Jerry.');
+  assert.equal(result.provider, 'openai');
+  assert.ok(request?.body instanceof FormData);
+  assert.equal((request?.headers as Record<string,string>).authorization, 'Bearer o-key');
+});
+
+test('transcription rejects invalid media and malformed audio without network access', async () => {
+  let called = false;
+  const fetchImpl = async () => { called = true; return response({ text: 'no' }); };
+  await assert.rejects(() => transcribeAudioWithModelFallback({
+    audioBase64: 'AQID', mimeType: 'text/plain', configuration: { openai: { apiKey: 'o-key' } }, fetchImpl,
+  }), /Unsupported audio/);
+  await assert.rejects(() => transcribeAudioWithModelFallback({
+    audioBase64: 'not base64!', mimeType: 'audio/webm', configuration: { openai: { apiKey: 'o-key' } }, fetchImpl,
+  }), /Invalid or oversized/);
+  assert.equal(called, false);
 });
