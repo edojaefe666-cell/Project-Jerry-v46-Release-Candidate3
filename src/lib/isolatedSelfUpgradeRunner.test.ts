@@ -113,3 +113,18 @@ test('rejects redirects and unreachable runner responses', async () => {
   assert.equal(result.status, 'unavailable');
   assert.match(result.report, /could not be reached/);
 });
+
+
+test('rejects missing or oversized code before contacting the runner', async () => {
+  let called = false;
+  const fetchImpl = (async () => { called = true; return new Response('{}'); }) as typeof fetch;
+  const missing = await runIsolatedSelfUpgradeTests({ ...input, testCode: '' }, {
+    endpoint: 'https://runner.example.test/execute', secret, fetchImpl,
+  });
+  const oversized = await runIsolatedSelfUpgradeTests({ ...input, source: 'x'.repeat(256_001) }, {
+    endpoint: 'https://runner.example.test/execute', secret, fetchImpl,
+  });
+  assert.equal(missing.status, 'unavailable');
+  assert.equal(oversized.status, 'unavailable');
+  assert.equal(called, false);
+});
