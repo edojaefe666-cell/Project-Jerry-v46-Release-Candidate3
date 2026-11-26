@@ -419,8 +419,8 @@ export class SecurityStore {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const consumed = this.db.prepare(
-        "UPDATE approvals SET consumed_at=? WHERE id=? AND owner_uid=? AND action='high_impact_change' AND status='approved' AND consumed_at IS NULL AND reservation_id IS NULL AND created_at>=? AND scope_hash=?"
-      ).run(consumedAt, approvalId, actorUid, cutoff, expectedScopeHash);
+        "UPDATE approvals SET consumed_at=:consumedAt WHERE id=:approvalId AND owner_uid=:actorUid AND action='high_impact_change' AND status='approved' AND consumed_at IS NULL AND reservation_id IS NULL AND created_at>=:cutoff AND scope_hash=:expectedScopeHash"
+      ).run({ consumedAt, approvalId, actorUid, cutoff, expectedScopeHash });
       if (Number(consumed.changes ?? 0) !== 1) {
         throw new Error('A fresh approved high-impact restore authorization is required.');
       }
