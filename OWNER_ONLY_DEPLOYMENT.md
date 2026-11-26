@@ -108,3 +108,6 @@ The execution-task endpoint remains fail-closed with HTTP 501 because no verifie
 The PostgreSQL wallet journal outbox worker is intentionally not disabled by the emergency stop: it only records eligible, already-observed financial events into the internal double-entry journal. Preserving financial evidence and reconciling the ledger must continue during an emergency. It does not broadcast transactions or initiate transfers.
 
 Read-only market/on-chain lookups, research, planning, memory, and security recovery remain available. The stop latch blocks the above execution paths and approval reservation. The independent cloud control-plane and Android-native kill switch are still outstanding; this application middleware alone is not proof of an independent, system-wide kill switch.
+
+
+In-flight isolated verification requests are tracked by the server process. When the owner engages the application emergency stop, Jerry aborts their HTTP requests; the runner adapter propagates that cancellation signal and discards any result returned after cancellation. A remote runner must honor client cancellation and terminate its disposable execution environment. This request cancellation is not a substitute for the remote runner's mandatory process-tree kill, independent network isolation, or infrastructure-level emergency control.
