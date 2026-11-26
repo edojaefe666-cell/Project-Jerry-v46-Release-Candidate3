@@ -45,3 +45,15 @@ test('release is idempotent and does not leak registrations', () => {
   execution.release();
   assert.equal(registry.activeCount, 0);
 });
+
+test('individual cancellation aborts only its own execution', () => {
+  const registry = new ExecutionRegistry(false);
+  const disconnected = registry.register();
+  const unrelated = registry.register();
+  disconnected.cancel('Client disconnected');
+  assert.equal(disconnected.signal.aborted, true);
+  assert.equal(unrelated.signal.aborted, false);
+  assert.equal(registry.isStopped, false);
+  disconnected.release();
+  unrelated.release();
+});
