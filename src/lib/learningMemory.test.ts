@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyLearningEnhancement, createOwnerLearningEntry } from './learningMemory.ts';
+import { applyLearningEnhancement, createOwnerLearningEntry, memoryAreaForCategory } from './learningMemory.ts';
 
 const original = createOwnerLearningEntry(
   'memory-test-1',
@@ -45,4 +45,12 @@ test('caps model-provided title, content and tag count at persistence limits', (
   assert.equal(result.entry.title.length, 240);
   assert.equal(result.entry.content.length, 20_000);
   assert.equal(result.entry.tags.length, 6);
+});
+
+test('maps all legacy categories into Jerry three persistent memory areas', () => {
+  assert.equal(memoryAreaForCategory('preference'), 'owner_profile');
+  assert.equal(memoryAreaForCategory('goal'), 'mission_projects');
+  assert.equal(memoryAreaForCategory('workflow'), 'mission_projects');
+  assert.equal(memoryAreaForCategory('decision'), 'knowledge_experience');
+  assert.equal(memoryAreaForCategory('lesson'), 'knowledge_experience');
 });
