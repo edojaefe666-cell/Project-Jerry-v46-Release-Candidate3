@@ -176,6 +176,17 @@ test('owner emergency stop uses the shared execution registry for in-flight veri
   assert.match(server, /execution\.release\(\)/);
 });
 
+test('Jerry Brain provider requests are cancellable on stop and client disconnect', () => {
+  const start = server.indexOf("app.post('/api/brain/generate'");
+  const end = server.indexOf("// Legacy state routes", start);
+  const route = server.slice(start, end);
+  assert.match(route, /executionRegistry\.register\(\)/);
+  assert.match(route, /signal: execution\.signal/);
+  assert.match(route, /res\.once\('close', cancelOnDisconnect\)/);
+  assert.match(route, /execution\.cancel\('Jerry Brain client disconnected'\)/);
+  assert.match(route, /execution\.release\(\)/);
+});
+
 test('emergency stop blocks model-provider and financial mutation routes', () => {
   const guardedRoutes = [
     '/api/brain/generate', '/api/jerry/chat', '/api/jerry/plan-goal',
