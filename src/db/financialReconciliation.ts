@@ -104,6 +104,8 @@ export type FinancialTruthReport = {
   duplicateConfirmedGenerations: string[];
   unmatchedReversalEntries: string[];
   ineligibleJournaledTransactions: string[];
+  outboxUnprocessedEvents: number;
+  orphanOutboxEvents: number;
   integrityClean: boolean;
   balanced: boolean;
 };
@@ -133,6 +135,18 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
     `SELECT je.id::text, je.idempotency_key, je.reversal_of::text, je.status
        FROM journal_entries je JOIN users u ON u.id = je.user_id
       WHERE u.uid = $1 AND je.idempotency_key LIKE 'wallet-tx:%'`,
+    [uid],
+  );
+  const outbox = await pool.query(
+    `SELECT
+       count(*) FILTER (WHERE o.status <> 'processed')::text AS unprocessed_count,
+       count(*) FILTER (WHERE NOT EXISTS (
+         SELECT 1 FROM ledger_transactions lt
+          WHERE lt.user_id = o.user_id AND lt.tx_ref = o.tx_ref
+       ))::text AS orphan_count
+       FROM wallet_journal_outbox o
+       JOIN users u ON u.id = o.user_id
+      WHERE u.uid = $1`,
     [uid],
   );
   const audit = auditWalletJournalEntries(journaled.rows as WalletJournalEntryAuditRow[]);
@@ -168,7 +182,11 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
     duplicateConfirmedGenerations: audit.duplicateConfirmedGenerations,
     unmatchedReversalEntries: audit.unmatchedReversalEntries,
     ineligibleJournaledTransactions,
-    integrityClean: audit.duplicateConfirmedGenerations.length === 0 &&
+    outboxUnprocessedEvents: Number(outbox.rows[0]?.unprocessed_count ?? 0),
+    orphanOutboxEvents: Number(outbox.rows[0]?.orphan_count ?? 0),
+    integrityClean: Number(outbox.rows[0]?.unprocessed_count ?? 0) === 0 &&
+      Number(outbox.rows[0]?.orphan_count ?? 0) === 0 &&
+      audit.duplicateConfirmedGenerations.length === 0 &&
       audit.unmatchedReversalEntries.length === 0 &&
       ineligibleJournaledTransactions.length === 0 &&
       unreversedReorged.length === 0 &&
