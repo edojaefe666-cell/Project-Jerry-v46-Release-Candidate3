@@ -24,9 +24,7 @@ import {
   saveWorkspaceForUser,
   updateWorkspaceForUserAtomic,
   runIdempotentWorkspaceCommand,
-  startTaskExecution,
-  completeTaskExecution,
-  recoverStaleTaskExecutions,
+    recoverStaleTaskExecutions,
 } from './src/db/users.ts';
 import type {
   BusinessOpportunity,
@@ -2198,110 +2196,15 @@ async function startServer() {
     });
   });
 
-  // Execute Authorized Task & Generate Income — server-owned durable execution lifecycle.
-  app.post('/api/jerry/execute-task', requireAuth, async (req: AuthRequest, res) => {
-    const { taskId, approvalId } = req.body as { taskId?: string; approvalId?: string };
-    const idempotencyKey = String(req.header('Idempotency-Key') ?? '').trim();
-
-    if (!taskId || !idempotencyKey) {
-      res.status(400).json({ error: 'taskId and Idempotency-Key are required.' });
-      return;
-    }
-    const uid = req.user!.uid;
-    const email = req.user!.email ?? 'owner@jerry.workspace';
-    const current = await getWorkspaceForUser(uid, email);
-    const task = current?.tasks.find((item) => item.id === taskId);
-    if (!task) {
-      res.status(404).json({ error: 'Task not found.' });
-      return;
-    }
-
-    const title = task.title;
-    const description = task.description;
-    const category = task.category;
-    const numericRevenue = Math.max(0, Number(task.expectedRevenueUsd ?? task.projectedRevenueUsd ?? 0) || 0);
-    const approvalRequired = task.requiresApproval || numericRevenue > 0 || task.financialImpactUsd > 0 || task.category === 'financial';
-    if (approvalRequired) {
-      if (!approvalId) {
-        res.status(400).json({ error: 'This task requires an approved autonomous_task approvalId before execution.' });
-        return;
-      }
-      const approval = current?.approvals?.find(
-        (item) => item.id === approvalId && item.subjectId === taskId && item.kind === 'autonomous_task'
-      );
-      if (!approval) {
-        res.status(404).json({ error: 'Approval request not found for this task.' });
-        return;
-      }
-      if (approval.decision !== 'approved') {
-        res.status(409).json({ error: `Task execution is blocked until approval is approved (current: ${approval.decision}).` });
-        return;
-      }
-    }
-
-    try {
-      const started = await startTaskExecution(
-        uid,
-        email,
-        taskId,
-        idempotencyKey,
-        approvalId,
-      );
-      if (started.replayed) {
-        if (started.status === 'completed' && started.result) {
-          const replayTask = started.state.tasks.find((item) => item.id === taskId);
-          res.json({ ...(started.result as Record<string, unknown>), replayed: true, executionId: started.executionId, task: replayTask });
-          return;
-        }
-        res.status(202).json({ status: started.status, executionId: started.executionId, replayed: true, message: 'Execution is already in progress; no duplicate execution started.' });
-        return;
-      }
-
-      const buildFallbackOutput = () => ({
-        deliverableOutput:
-          numericRevenue > 0
-            ? `Executed "${title.trim()}" cleanly. Generated client deliverable and recorded $${numericRevenue.toLocaleString()} as projected revenue; no wallet settlement was created.`
-            : `Executed "${title.trim()}" (${category ?? task.category}). Verified completion checks and logged operational output to Jerry Memory.`,
-        revenueGeneratedUsd: numericRevenue,
-        modelUsed: 'Jerry Task Execution Engine',
-      });
-
-      let result = buildFallbackOutput();
-      const ai = getGeminiClient();
-      if (ai) {
-        try {
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Execution summary timeout')), 10000)
-          );
-          const response = await Promise.race([
-            ai.models.generateContent({
-              model: 'gemini-4-hydrogen',
-              contents:
-                `Write a crisp 2-sentence operational deliverable summary (plain text, no markdown, no disclaimers) for the workspace completion log of this task:\n` +
-                `Task Title: "${title.trim()}"\nScope: "${description ?? task.description}"\nCategory: ${category ?? task.category}\n` +
-                `${numericRevenue > 0 ? `Projected revenue estimate: $${numericRevenue} USD; do not treat as settled funds.` : ''}`,
-            }),
-            timeoutPromise,
-          ]);
-          const rawText = response.text?.trim() ?? '';
-          if (rawText && !/cannot verify|no access to operational|draft summary template|do not have access/i.test(rawText)) {
-            result = { ...result, deliverableOutput: rawText, modelUsed: 'gemini-4-hydrogen' };
-          }
-        } catch {
-          // Deterministic fallback completes the same durable execution record.
-        }
-      }
-
-      const next = await completeTaskExecution(uid, email, started.executionId, {
-        deliverableOutput: result.deliverableOutput,
-        projectedRevenueUsd: result.revenueGeneratedUsd,
-      });
-      const updatedTask = next.tasks.find((item) => item.id === taskId);
-      res.json({ ...result, executionId: started.executionId, replayed: false, task: updatedTask });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Task execution failed.';
-      res.status(/not found/i.test(message) ? 404 : /approval|already completed/i.test(message) ? 409 : 400).json({ error: message });
-    }
+  // Task execution is fail-closed until a real, independently verifiable
+  // execution adapter is configured. An LLM-generated summary is not evidence
+  // that an external task ran, so this endpoint must not create an execution
+  // record, consume approval, or mark a task complete.
+  app.post('/api/jerry/execute-task', requireAuth, (_req: AuthRequest, res) => {
+    res.status(501).json({
+      error: 'No verified task execution adapter is configured. No task was started or marked complete.',
+      status: 'not_executed',
+    });
   });
 
   app.post('/api/jerry/tasks/recover', requireAuth, async (req: AuthRequest, res) => {
