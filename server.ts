@@ -371,6 +371,30 @@ async function startServer() {
     lastWalletSyncAt: authoritative.lastWalletSyncAt,
   });
 
+  // Owner-only JSON export of the complete persistent memory set (bounded to 1,000 entries).
+  app.get('/api/memory/export', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const entries = await searchMemoryForUser(
+        req.user!.uid,
+        req.user!.email ?? 'owner@jerry.workspace',
+        { limit: 1000 },
+      );
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="jerry-memory-export.json"');
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        schemaVersion: 1,
+        exportedAt: new Date().toISOString(),
+        ownerUid: req.user!.uid,
+        count: entries.length,
+        truncated: entries.length === 1000,
+        entries,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Memory export failed.' });
+    }
+  });
+
   // Dedicated owner-scoped persistent memory API. Workspace snapshots remain
   // backward compatible; this store provides indexed search and durable entries.
   app.get('/api/memory', requireAuth, async (req: AuthRequest, res) => {
