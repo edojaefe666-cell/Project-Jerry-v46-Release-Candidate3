@@ -184,7 +184,8 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
     ineligibleJournaledTransactions,
     outboxUnprocessedEvents: Number(outbox.rows[0]?.unprocessed_count ?? 0),
     orphanOutboxEvents: Number(outbox.rows[0]?.orphan_count ?? 0),
-    integrityClean: Number(outbox.rows[0]?.unprocessed_count ?? 0) === 0 &&
+    integrityClean: deltaSatoshis === 0n &&
+      Number(outbox.rows[0]?.unprocessed_count ?? 0) === 0 &&
       Number(outbox.rows[0]?.orphan_count ?? 0) === 0 &&
       audit.duplicateConfirmedGenerations.length === 0 &&
       audit.unmatchedReversalEntries.length === 0 &&
