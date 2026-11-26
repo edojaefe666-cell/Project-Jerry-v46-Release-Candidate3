@@ -1,6 +1,7 @@
-import { useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Search, Plus, Upload, ShieldAlert, RotateCcw } from 'lucide-react';
 import { filterMemories } from '../lib/jerryEngine';
+import { apiFetch } from '../lib/apiClient';
 import { memoryAreaForCategory } from '../lib/learningMemory';
 import { ARCHITECTURE_MODULES, DEVELOPMENT_ROADMAP } from '../lib/seedData';
 import type { JerryMemoryArea, MemoryEntry, OwnerProfile, PhoneIntegrationItem } from '../lib/types';
@@ -28,6 +29,8 @@ export function MemoryAndSystem({
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [memoryAreaFilter, setMemoryAreaFilter] = useState<'all' | JerryMemoryArea>('all');
+  const [persistentSearchResults, setPersistentSearchResults] = useState<MemoryEntry[] | null>(null);
+  const [memorySearchStatus, setMemorySearchStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const [memTitle, setMemTitle] = useState('');
   const [memContent, setMemContent] = useState('');
   const [memCategory, setMemCategory] = useState<MemoryEntry['category']>('lesson');
@@ -47,7 +50,40 @@ export function MemoryAndSystem({
   const [identityMessage, setIdentityMessage] = useState<string | null>(null);
   const [resetApprovalId, setResetApprovalId] = useState('');
 
-  const visibleMemories = filterMemories(memories, query, categoryFilter).filter((entry) =>
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams();
+      if (query.trim()) params.set('q', query.trim());
+      if (categoryFilter !== 'all') params.set('category', categoryFilter);
+      if (memoryAreaFilter !== 'all') params.set('area', memoryAreaFilter);
+      params.set('limit', '100');
+      setMemorySearchStatus('loading');
+      apiFetch(`/api/memory?${params.toString()}`, { signal: controller.signal })
+        .then(async (response) => {
+          const payload = await response.json() as { entries?: MemoryEntry[] };
+          if (!response.ok || !Array.isArray(payload.entries)) throw new Error('Persistent memory search is unavailable.');
+          if (active) {
+            setPersistentSearchResults(payload.entries);
+            setMemorySearchStatus('ready');
+          }
+        })
+        .catch(() => {
+          if (active && !controller.signal.aborted) {
+            setPersistentSearchResults(null);
+            setMemorySearchStatus('unavailable');
+          }
+        });
+    }, 220);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query, categoryFilter, memoryAreaFilter]);
+
+  const visibleMemories = persistentSearchResults ?? filterMemories(memories, query, categoryFilter).filter((entry) =>
     memoryAreaFilter === 'all' || (entry.area ?? memoryAreaForCategory(entry.category)) === memoryAreaFilter,
   );
 
@@ -107,6 +143,14 @@ export function MemoryAndSystem({
               Searchable persistent knowledge base storing goals, decisions, lessons learned, and workflow preferences across sessions.
             </p>
           </div>
+
+          <p className="text-xs text-slate-500" role="status">
+            {memorySearchStatus === 'loading'
+              ? 'Searching Jerry’s owner-scoped persistent memory…'
+              : memorySearchStatus === 'ready'
+                ? 'Showing database-backed memory results.'
+                : 'Persistent search is unavailable; showing locally available workspace memories.'}
+          </p>
 
           <div className="flex flex-wrap gap-2" aria-label="Persistent memory areas">
             {([
