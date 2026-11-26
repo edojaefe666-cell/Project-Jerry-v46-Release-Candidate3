@@ -49,6 +49,9 @@ test('PostgreSQL journal posting, idempotency, reversal and tenant isolation', {
   const reversalReplay = await reversePostedJournalEntry({ uid, originalEntryId: first.id, idempotencyKey: `reverse-${suffix}` });
   assert.equal(reversalReplay.id, reversal.id);
   assert.equal(reversalReplay.replayed, true);
+  const alternateKeyReplay = await reversePostedJournalEntry({ uid, originalEntryId: first.id, idempotencyKey: `second-reversal-key-${suffix}` });
+  assert.equal(alternateKeyReplay.id, reversal.id, 'A different idempotency key must not create a second reversal of the same entry.');
+  assert.equal(alternateKeyReplay.replayed, true);
   await assert.rejects(reversePostedJournalEntry({ uid: otherUid, originalEntryId: first.id, idempotencyKey: `cross-tenant-${suffix}` }), /Only an existing posted journal entry/);
   const after = await getJournalAccountBalances(uid);
   assert.ok(after.every((row) => row.netDebitUnits === '0'), 'A complete reversal must return all account net balances to zero.');
