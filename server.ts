@@ -245,6 +245,7 @@ async function startServer() {
   const brainRateLimit = createOwnerRateLimiter({ limit: 20, windowMs: 60_000, maxKeys: 1_000 });
   const chatRateLimit = createOwnerRateLimiter({ limit: 30, windowMs: 60_000, maxKeys: 1_000 });
   const goalPlanRateLimit = createOwnerRateLimiter({ limit: 10, windowMs: 60_000, maxKeys: 1_000 });
+  const opportunityRateLimit = createOwnerRateLimiter({ limit: 10, windowMs: 60_000, maxKeys: 1_000 });
 
   const encryptSecurityBackup = (payload: unknown, passphrase: string): string => {
     const salt = randomBytes(16);
@@ -1281,337 +1282,152 @@ async function startServer() {
     }
   });
 
-  // Jerry Goal Engine: Generate 8-Level Plan
+  // Jerry Goal Engine: Generate an owner-reviewed 8-level plan using configured providers.
   app.post('/api/jerry/plan-goal', requireAuth, goalPlanRateLimit, async (req: AuthRequest, res) => {
     const { objective, availableCapitalUsd = 1000, weeklyHours = 10 } = req.body as {
       objective?: string;
       availableCapitalUsd?: number;
       weeklyHours?: number;
     };
-
-    if (!objective || !objective.trim()) {
-      res.status(400).json({ error: 'Goal objective is required.' });
+    if (typeof objective !== 'string' || !objective.trim() || objective.trim().length > 4_000) {
+      res.status(400).json({ error: 'Goal objective must contain 1–4,000 characters.' });
       return;
     }
-
-    const ai = getGeminiClient();
-    if (!ai) {
-      const fallbackGoal = buildDeterministicGoalPlan(objective, Number(availableCapitalUsd), Number(weeklyHours));
-      res.json({ goal: fallbackGoal, modelUsed: 'Jerry Goal Engine (Offline Planner)' });
+    const capital = Number(availableCapitalUsd);
+    const hours = Number(weeklyHours);
+    if (!Number.isFinite(capital) || capital < 0 || capital > 1_000_000_000 ||
+        !Number.isFinite(hours) || hours < 1 || hours > 168) {
+      res.status(400).json({ error: 'Available capital must be between 0 and 1,000,000,000; weekly hours must be between 1 and 168.' });
       return;
     }
 
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Create a realistic, commercially grounded 8-level execution plan for this objective: "${objective.trim()}". Available capital: $${availableCapitalUsd}. Weekly hours: ${weeklyHours}. Distinguish estimates clearly and never guarantee profits.`,
-        config: {
-          systemInstruction:
-            'You are Jerry Goal Engine. Decompose the objective into a complete 8-level plan: Level 1 Goal, Level 2 Strategy, Level 3 Project Phases (2 phases), Level 4 Milestones, Level 5 Tasks, Level 6 Subtasks, Level 7 Action Steps, Level 8 Execution Details (tools, resources, instructions, dependencies, deadline, completionCheck).',
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              strategy: { type: Type.STRING },
-              category: { type: Type.STRING },
-              requiredSkills: { type: Type.STRING },
-              technologyStack: { type: Type.STRING },
-              marketDemandSummary: { type: Type.STRING },
-              profitabilityPotential: { type: Type.STRING },
-              phases: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    title: { type: Type.STRING },
-                    milestones: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          title: { type: Type.STRING },
-                          targetDate: { type: Type.STRING },
-                          tasks: {
-                            type: Type.ARRAY,
-                            items: {
-                              type: Type.OBJECT,
-                              properties: {
-                                title: { type: Type.STRING },
-                                subtasks: {
-                                  type: Type.ARRAY,
-                                  items: {
-                                    type: Type.OBJECT,
-                                    properties: {
-                                      title: { type: Type.STRING },
-                                      actionSteps: {
-                                        type: Type.ARRAY,
-                                        items: {
-                                          type: Type.OBJECT,
-                                          properties: {
-                                            title: { type: Type.STRING },
-                                            tools: { type: Type.ARRAY, items: { type: Type.STRING } },
-                                            resources: { type: Type.ARRAY, items: { type: Type.STRING } },
-                                            instructions: { type: Type.STRING },
-                                            dependencies: { type: Type.ARRAY, items: { type: Type.STRING } },
-                                            deadline: { type: Type.STRING },
-                                            completionCheck: { type: Type.STRING },
-                                          },
-                                        },
-                                      },
-                                    },
-                                  },
-                                },
-                              },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+      const result = await generateWithModelFallback({
+        task: 'planning',
+        systemInstruction: 'You are Jerry Goal Engine. Return only valid JSON. Build a complete eight-level plan: Level 1 Goal; Level 2 Strategy; Level 3 Project Phases (at least two); Level 4 Milestones; Level 5 Tasks; Level 6 Subtasks; Level 7 Action Steps; Level 8 Execution Details (tools, resources, instructions, dependencies, deadline, completionCheck). Be commercially realistic. Treat available capital as a hard planning ceiling, not permission to spend. Never claim market research was performed unless evidence is supplied. Label all projections as estimates, never guarantees. Do not authorize or execute purchases, outreach, contracts or financial commitments.',
+        prompt: `Objective: ${objective.trim()}\nAvailable capital ceiling (USD): ${capital}\nOwner time available (hours/week): ${hours}\nReturn a JSON object with title, strategy, category (Revenue, Product, Automation, or Investment), requiredSkills, technologyStack, marketDemandSummary, profitabilityPotential, and phases. Each phase must contain milestones; milestones contain tasks; tasks contain subtasks; subtasks contain actionSteps; each action step contains title, tools, resources, instructions, dependencies, deadline (YYYY-MM-DD), and completionCheck.`,
+        configuration: providerConfigurationFromEnvironment(process.env),
       });
-
-      const parsed = JSON.parse((response.text ?? '{}').trim()) as {
-        title?: string;
-        strategy?: string;
-        category?: string;
-        requiredSkills?: string;
-        technologyStack?: string;
-        marketDemandSummary?: string;
-        profitabilityPotential?: string;
-        phases?: Array<{
-          title?: string;
-          milestones?: Array<{
-            title?: string;
-            targetDate?: string;
-            tasks?: Array<{
-              title?: string;
-              subtasks?: Array<{
-                title?: string;
-                actionSteps?: Array<{
-                  title?: string;
-                  tools?: string[];
-                  resources?: string[];
-                  instructions?: string;
-                  dependencies?: string[];
-                  deadline?: string;
-                  completionCheck?: string;
-                }>;
-              }>;
-            }>;
-          }>;
-        }>;
+      const raw = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      const parsed = JSON.parse(raw) as {
+        title?: string; strategy?: string; category?: string; requiredSkills?: string;
+        technologyStack?: string; marketDemandSummary?: string; profitabilityPotential?: string;
+        phases?: Array<{ title?: string; milestones?: Array<{ title?: string; targetDate?: string;
+          tasks?: Array<{ title?: string; subtasks?: Array<{ title?: string; actionSteps?: Array<{
+            title?: string; tools?: string[]; resources?: string[]; instructions?: string;
+            dependencies?: string[]; deadline?: string; completionCheck?: string;
+          }> }> }> }> }>;
       };
-
-      const uid = `goal-${Date.now()}`;
-      const allowedCategories = new Set(['Revenue', 'Product', 'Automation', 'Investment']);
-      const normalizedCategory = allowedCategories.has(parsed.category ?? '')
-        ? (parsed.category as Goal['category'])
-        : 'Revenue';
-
-      const goal: Goal = {
-        id: uid,
-        title: parsed.title || objective.trim(),
-        strategy: parsed.strategy || 'Incremental validation before scaling capital commitments.',
-        category: normalizedCategory,
-        status: 'proposed',
-        origin: 'jerry_recommended',
-        createdAt: new Date().toISOString(),
-        evaluation: {
-          availableCapitalUsd: Number(availableCapitalUsd),
-          requiredSkills: parsed.requiredSkills || 'Product strategy, execution, customer outreach',
-          weeklyHoursRequired: Number(weeklyHours),
-          technologyStack: parsed.technologyStack || 'TypeScript, Web APIs, Automation pipelines',
-          marketDemandSummary: parsed.marketDemandSummary || 'Validate demand through pilot customer discovery.',
-          profitabilityPotential: parsed.profitabilityPotential || 'Estimate only — contingent on pilot conversion.',
-        },
-        phases: (parsed.phases ?? []).map((p, pIdx) => ({
-          id: `${uid}-p${pIdx}`,
-          title: p.title || `Phase ${pIdx + 1}`,
-          milestones: (p.milestones ?? []).map((m, mIdx) => ({
-            id: `${uid}-p${pIdx}-m${mIdx}`,
-            title: m.title || `Milestone ${mIdx + 1}`,
-            targetDate: m.targetDate || '2026-12-15',
-            tasks: (m.tasks ?? []).map((t, tIdx) => ({
-              id: `${uid}-p${pIdx}-m${mIdx}-t${tIdx}`,
-              title: t.title || `Task ${tIdx + 1}`,
-              subtasks: (t.subtasks ?? []).map((st, stIdx) => ({
-                id: `${uid}-p${pIdx}-m${mIdx}-t${tIdx}-st${stIdx}`,
-                title: st.title || `Subtask ${stIdx + 1}`,
-                actionSteps: (st.actionSteps ?? []).map((as, asIdx) => ({
-                  id: `${uid}-p${pIdx}-m${mIdx}-t${tIdx}-st${stIdx}-as${asIdx}`,
-                  title: as.title || `Action step ${asIdx + 1}`,
-                  execution: {
-                    tools: as.tools?.length ? as.tools : ['Jerry Brain'],
-                    resources: as.resources?.length ? as.resources : ['Workspace brief'],
-                    instructions: as.instructions || 'Execute step and verify completion check.',
-                    dependencies: as.dependencies?.length ? as.dependencies : ['None'],
-                    deadline: as.deadline || '2026-12-01',
-                    completionCheck: as.completionCheck || 'Deliverable verified and logged.',
-                    completed: false,
-                  },
-                })),
+      if (!Array.isArray(parsed.phases) || parsed.phases.length < 2) {
+        res.status(502).json({ error: 'The selected model did not return a complete eight-level plan. Please retry.' });
+        return;
+      }
+      const id = `goal-${Date.now()}`;
+      const allowed = new Set(['Revenue', 'Product', 'Automation', 'Investment']);
+      const category = allowed.has(parsed.category ?? '') ? parsed.category as Goal['category'] : 'Revenue';
+      const phases = parsed.phases.map((phase, p) => ({
+        id: `${id}-p${p}`,
+        title: phase.title?.trim() || `Phase ${p + 1}`,
+        milestones: (phase.milestones ?? []).map((milestone, m) => ({
+          id: `${id}-p${p}-m${m}`,
+          title: milestone.title?.trim() || `Milestone ${m + 1}`,
+          targetDate: /^\d{4}-\d{2}-\d{2}$/.test(milestone.targetDate ?? '') ? milestone.targetDate! : new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
+          tasks: (milestone.tasks ?? []).map((task, t) => ({
+            id: `${id}-p${p}-m${m}-t${t}`,
+            title: task.title?.trim() || `Task ${t + 1}`,
+            subtasks: (task.subtasks ?? []).map((subtask, s) => ({
+              id: `${id}-p${p}-m${m}-t${t}-s${s}`,
+              title: subtask.title?.trim() || `Subtask ${s + 1}`,
+              actionSteps: (subtask.actionSteps ?? []).map((step, a) => ({
+                id: `${id}-p${p}-m${m}-t${t}-s${s}-a${a}`,
+                title: step.title?.trim() || `Action step ${a + 1}`,
+                execution: {
+                  tools: Array.isArray(step.tools) ? step.tools.filter((v): v is string => typeof v === 'string').slice(0, 20) : [],
+                  resources: Array.isArray(step.resources) ? step.resources.filter((v): v is string => typeof v === 'string').slice(0, 20) : [],
+                  instructions: typeof step.instructions === 'string' ? step.instructions.slice(0, 4_000) : '',
+                  dependencies: Array.isArray(step.dependencies) ? step.dependencies.filter((v): v is string => typeof v === 'string').slice(0, 30) : [],
+                  deadline: /^\d{4}-\d{2}-\d{2}$/.test(step.deadline ?? '') ? step.deadline! : new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
+                  completionCheck: typeof step.completionCheck === 'string' ? step.completionCheck.slice(0, 1_000) : '',
+                  completed: false,
+                },
               })),
             })),
           })),
         })),
+      }));
+      const levelCounts = phases.reduce((count, phase) => count + phase.milestones.reduce((mCount, milestone) =>
+        mCount + milestone.tasks.reduce((tCount, task) =>
+          tCount + task.subtasks.reduce((sCount, subtask) => sCount + subtask.actionSteps.length, 0), 0), 0), 0);
+      if (levelCounts === 0 || phases.some((phase) => phase.milestones.length === 0)) {
+        res.status(502).json({ error: 'The selected model returned an incomplete plan structure. Please retry.' });
+        return;
+      }
+      const goal: Goal = {
+        id, title: parsed.title?.trim() || objective.trim(),
+        strategy: parsed.strategy?.trim() || 'Validate each phase before scaling.',
+        category, status: 'proposed', origin: 'jerry_recommended', createdAt: new Date().toISOString(),
+        evaluation: {
+          availableCapitalUsd: capital,
+          requiredSkills: parsed.requiredSkills || 'To be confirmed during planning',
+          weeklyHoursRequired: hours,
+          technologyStack: parsed.technologyStack || 'To be selected after technical validation',
+          marketDemandSummary: parsed.marketDemandSummary || 'Not independently researched; validate demand before committing resources.',
+          profitabilityPotential: parsed.profitabilityPotential || 'No revenue forecast supplied; validate with customer evidence.',
+        },
+        phases,
       };
-
-      if (goal.phases.length === 0) {
-        const fallback = buildDeterministicGoalPlan(objective, Number(availableCapitalUsd), Number(weeklyHours));
-        res.json({ goal: fallback, modelUsed: 'gemini-4-hydrogen (structured fallback)' });
-        return;
-      }
-
-      res.json({ goal, modelUsed: 'gemini-4-hydrogen' });
+      res.json({ goal, modelUsed: `${result.provider}:${result.model}`, evidenceStatus: 'model_generated_not_independently_verified' });
     } catch (error) {
-      if (isQuotaError(error)) {
-        const fallbackGoal = buildDeterministicGoalPlan(
-          objective,
-          Number(availableCapitalUsd),
-          Number(weeklyHours)
-        );
-        res.json({
-          goal: fallbackGoal,
-          modelUsed: 'Jerry Goal Engine (Local Planner — Gemini quota reached; check Settings > Secrets)',
-        });
-        return;
-      }
-      res.status(502).json({ error: `Jerry Goal Engine error: ${formatCleanError(error, 'Failed to generate 8-level plan')}` });
+      const message = error instanceof Error ? error.message : '';
+      const unconfigured = message.includes('No model provider is configured');
+      res.status(unconfigured ? 503 : 502).json({
+        error: unconfigured ? 'Jerry Goal Engine has no configured model provider.' : 'Jerry Goal Engine could not produce a valid plan. Please retry.',
+      });
     }
   });
 
-  // Jerry Business: Responsible Opportunity Assessment
-  app.post('/api/jerry/assess-opportunity', requireAuth, async (req: AuthRequest, res) => {
+  // Jerry Business: model-assisted opportunity assessment. No live research is implied.
+  app.post('/api/jerry/assess-opportunity', requireAuth, opportunityRateLimit, async (req: AuthRequest, res) => {
     const { idea } = req.body as { idea?: string };
-    if (!idea || !idea.trim()) {
-      res.status(400).json({ error: 'Business idea or market topic is required.' });
+    if (typeof idea !== 'string' || !idea.trim() || idea.trim().length > 4_000) {
+      res.status(400).json({ error: 'Business idea or market topic must contain 1–4,000 characters.' });
       return;
     }
-
-    const ai = getGeminiClient();
-    if (!ai) {
-      const offlineOpp: BusinessOpportunity = {
-        id: `opp-${Date.now()}`,
-        title: idea.trim(),
-        sector: 'Digital Services & Automation',
-        startupCostUsd: 450,
-        marketDemand: 'Moderate',
-        competition: 'Moderate',
-        estimatedMonthlyReturn: '$1,500–$3,800/mo after 60–90 days (estimate, not guaranteed)',
-        riskLevel: 'Moderate',
-        evidenceType: 'Model Estimate',
-        verifiedFacts: [
-          'Service-first pilots avoid upfront inventory or heavy fixed overhead.',
-        ],
-        estimatesAndAssumptions: [
-          'Assumes 3–5 pilot clients paying $500–$800/mo with <10 hours/week fulfillment effort.',
-        ],
-        legalAndEthicalNotes:
-          'Ensure transparent client agreements, privacy compliance for handled records, and zero exaggerated revenue claims.',
-        saferAlternative:
-          'Validate with a 2-week paid diagnostic offer before committing capital to custom software.',
-        status: 'investigating',
-      };
-      res.json({ opportunity: offlineOpp, modelUsed: 'Jerry Business Heuristic' });
-      return;
-    }
-
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Conduct a responsible business opportunity assessment for: "${idea.trim()}". Evaluate startup cost, demand, competition, estimated return (never guarantee profits), risk level, verified facts vs estimates/assumptions, legal/ethical considerations, and a safer alternative.`,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              sector: { type: Type.STRING },
-              startupCostUsd: { type: Type.NUMBER },
-              marketDemand: { type: Type.STRING },
-              competition: { type: Type.STRING },
-              estimatedMonthlyReturn: { type: Type.STRING },
-              riskLevel: { type: Type.STRING },
-              verifiedFacts: { type: Type.ARRAY, items: { type: Type.STRING } },
-              estimatesAndAssumptions: { type: Type.ARRAY, items: { type: Type.STRING } },
-              legalAndEthicalNotes: { type: Type.STRING },
-              saferAlternative: { type: Type.STRING },
-            },
-          },
-        },
+      const result = await generateWithModelFallback({
+        task: 'research',
+        systemInstruction: 'You are Jerry, a cautious commercial analyst. Return only valid JSON. You have not browsed the web and must not claim current market facts, verified sources, or performed research. Put all market statements, numbers, costs, and revenue projections in estimatesAndAssumptions. Leave verifiedFacts empty. Clearly state unknowns, risks, local legal checks and a low-cost validation step. Never guarantee profit or recommend committing funds.',
+        prompt: `Assess this business idea for an owner in Nigeria unless the idea specifies another market: ${idea.trim()}\nReturn JSON fields: title, sector, startupCostUsd (numeric estimate or 0 if unknown), marketDemand, competition, estimatedMonthlyReturn (explicitly labelled estimate or "Not estimated"), riskLevel, estimatesAndAssumptions (array), legalAndEthicalNotes, saferAlternative. Do not invent sources or verified facts.`,
+        configuration: providerConfigurationFromEnvironment(process.env),
       });
-
-      const parsed = JSON.parse((response.text ?? '{}').trim()) as Partial<BusinessOpportunity>;
-      const opp: BusinessOpportunity = {
+      const raw = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      const parsed = JSON.parse(raw) as Partial<BusinessOpportunity>;
+      const cost = Number(parsed.startupCostUsd ?? 0);
+      const opportunity: BusinessOpportunity = {
         id: `opp-${Date.now()}`,
-        title: parsed.title || idea.trim(),
-        sector: parsed.sector || 'Commercial Opportunity',
-        startupCostUsd: Number(parsed.startupCostUsd ?? 500),
-        marketDemand:
-          parsed.marketDemand === 'High' || parsed.marketDemand === 'Emerging'
-            ? parsed.marketDemand
-            : 'Moderate',
-        competition:
-          parsed.competition === 'Low' || parsed.competition === 'High'
-            ? parsed.competition
-            : 'Moderate',
-        estimatedMonthlyReturn:
-          parsed.estimatedMonthlyReturn || '$1,000–$3,000/mo (estimate, not guaranteed)',
-        riskLevel:
-          parsed.riskLevel === 'Low' || parsed.riskLevel === 'Elevated'
-            ? parsed.riskLevel
-            : 'Moderate',
+        title: typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : idea.trim(),
+        sector: typeof parsed.sector === 'string' ? parsed.sector.slice(0, 120) : 'Unclassified',
+        startupCostUsd: Number.isFinite(cost) && cost >= 0 ? cost : 0,
+        marketDemand: parsed.marketDemand === 'High' || parsed.marketDemand === 'Emerging' ? parsed.marketDemand : 'Moderate',
+        competition: parsed.competition === 'Low' || parsed.competition === 'High' ? parsed.competition : 'Moderate',
+        estimatedMonthlyReturn: typeof parsed.estimatedMonthlyReturn === 'string' ? parsed.estimatedMonthlyReturn.slice(0, 300) : 'Not estimated',
+        riskLevel: parsed.riskLevel === 'Low' || parsed.riskLevel === 'Elevated' ? parsed.riskLevel : 'Moderate',
         evidenceType: 'Model Estimate',
-        verifiedFacts: parsed.verifiedFacts?.length
-          ? parsed.verifiedFacts
-          : ['Requires direct customer discovery calls to verify willingness to pay.'],
-        estimatesAndAssumptions: parsed.estimatesAndAssumptions?.length
-          ? parsed.estimatesAndAssumptions
-          : ['Projected figures are model estimates, not guaranteed revenue.'],
-        legalAndEthicalNotes:
-          parsed.legalAndEthicalNotes || 'Verify local licensing, tax obligations, and customer data privacy.',
-        saferAlternative:
-          parsed.saferAlternative || 'Launch a pre-sold pilot before investing significant capital.',
+        verifiedFacts: [],
+        estimatesAndAssumptions: Array.isArray(parsed.estimatesAndAssumptions)
+          ? parsed.estimatesAndAssumptions.filter((v): v is string => typeof v === 'string').slice(0, 20)
+          : ['No independently verified market evidence supplied.'],
+        legalAndEthicalNotes: typeof parsed.legalAndEthicalNotes === 'string' ? parsed.legalAndEthicalNotes.slice(0, 1_000) : 'Verify licensing, tax, privacy and consumer-protection requirements before launch.',
+        saferAlternative: typeof parsed.saferAlternative === 'string' ? parsed.saferAlternative.slice(0, 1_000) : 'Validate demand with interviews and a no-cost prototype before spending.',
         status: 'investigating',
       };
-      res.json({ opportunity: opp, modelUsed: 'gemini-4-hydrogen' });
+      res.json({ opportunity, modelUsed: `${result.provider}:${result.model}`, evidenceStatus: 'model_estimate_no_live_sources' });
     } catch (error) {
-      if (isQuotaError(error)) {
-        const offlineOpp: BusinessOpportunity = {
-          id: `opp-${Date.now()}`,
-          title: idea.trim(),
-          sector: 'Digital Services & Automation',
-          startupCostUsd: 450,
-          marketDemand: 'Moderate',
-          competition: 'Moderate',
-          estimatedMonthlyReturn: '$1,500–$3,800/mo after 60–90 days (estimate, not guaranteed)',
-          riskLevel: 'Moderate',
-          evidenceType: 'Model Estimate',
-          verifiedFacts: [
-            'Service-first pilots avoid upfront inventory or heavy fixed overhead.',
-          ],
-          estimatesAndAssumptions: [
-            'Assumes 3–5 pilot clients paying $500–$800/mo with <10 hours/week fulfillment effort.',
-          ],
-          legalAndEthicalNotes:
-            'Ensure transparent client agreements, privacy compliance for handled records, and zero exaggerated revenue claims.',
-          saferAlternative:
-            'Validate with a 2-week paid diagnostic offer before committing capital to custom software.',
-          status: 'investigating',
-        };
-        res.json({
-          opportunity: offlineOpp,
-          modelUsed: 'Jerry Business Local Engine (Gemini quota reached; check Settings > Secrets)',
-        });
-        return;
-      }
-      res.status(502).json({ error: `Jerry Business error: ${formatCleanError(error, 'Opportunity assessment failed')}` });
+      const message = error instanceof Error ? error.message : '';
+      const unconfigured = message.includes('No model provider is configured');
+      res.status(unconfigured ? 503 : 502).json({
+        error: unconfigured ? 'Jerry Business has no configured model provider.' : 'Jerry Business could not produce a valid assessment. Please retry.',
+      });
     }
   });
 
