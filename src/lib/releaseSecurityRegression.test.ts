@@ -141,8 +141,8 @@ test('self-upgrade deployment gate requires explicit owner approval, not merely 
 
 
 test('emergency stop blocks every isolated self-upgrade test execution path', () => {
-  const persisted = server.split('\\n').find((line) => line.includes("app.post('/api/jerry/self-upgrades/:id/verify'"));
-  const direct = server.split('\\n').find((line) => line.includes("app.post('/api/jerry/verify-upgrade'"));
+  const persisted = server.split('\n').find((line) => line.includes("app.post('/api/jerry/self-upgrades/:id/verify'"));
+  const direct = server.split('\n').find((line) => line.includes("app.post('/api/jerry/verify-upgrade'"));
   assert.ok(persisted, 'persisted proposal verification route must exist');
   assert.ok(direct, 'direct verification route must exist');
   assert.match(persisted, /requireAuth, requireExecutionEnabled/);
