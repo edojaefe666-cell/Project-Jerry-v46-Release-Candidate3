@@ -4,6 +4,7 @@ import { enqueueWalletJournalEvent } from './walletJournalOutbox.ts';
 import { isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
 import { dailySummaryReports, idempotencyKeys, ledgerTransactions, taskExecutions, users, workspaces } from './schema.ts';
 import type { DailySummaryReport, JerryState, WalletTransaction } from '../lib/types.ts';
+import { consumeAutonomousTaskApproval } from '../lib/taskApproval.ts';
 import crypto from 'node:crypto';
 
 export async function getOrCreateUser(uid: string, email: string) {
@@ -363,25 +364,29 @@ export async function startTaskExecution(
     const task = current.tasks.find((item) => item.id === taskId);
     if (!task) throw new Error('Task not found.');
     if (task.status === 'completed') throw new Error('Task is already completed.');
+    if (task.status === 'running' || task.status === 'interrupted') {
+      throw new Error('Task execution is already active or interrupted; reconcile the prior external operation before retrying.');
+    }
 
     // Re-check authorization inside the same per-user transaction/lock that
     // creates the durable execution. This closes the race where an approval
     // could be revoked after the HTTP handler's earlier read but before start.
     const taskRevenue = Math.max(0, Number(task.expectedRevenueUsd ?? task.projectedRevenueUsd ?? 0) || 0);
     const mustHaveApproval = task.requiresApproval || taskRevenue > 0 || task.financialImpactUsd > 0 || task.category === 'financial';
+    let approvals = current.approvals ?? [];
     if (mustHaveApproval) {
-      const approval = (current.approvals ?? []).find((item) =>
-        item.id === approvalId && item.subjectId === taskId && item.kind === 'autonomous_task'
-      );
-      if (!approval || approval.decision !== 'approved') {
-        throw new Error('A currently approved task authorization is required to start execution.');
+      const consumedApprovals = consumeAutonomousTaskApproval(approvals, taskId, approvalId);
+      if (!consumedApprovals) {
+        throw new Error('A fresh, approved, unused task authorization is required to start execution.');
       }
+      approvals = consumedApprovals;
     }
 
     const executionId = `exec-${crypto.randomUUID()}`;
     const now = new Date();
     const next: JerryState = {
       ...current,
+      approvals,
       tasks: current.tasks.map((item) => item.id === taskId ? {
         ...item,
         status: 'running',
