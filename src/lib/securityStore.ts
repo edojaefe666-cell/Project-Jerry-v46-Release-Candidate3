@@ -411,6 +411,43 @@ export class SecurityStore {
     verify(snapshot.audit);
   }
 
+  restoreSnapshotWithApproval(snapshot: any, actorUid: string, approvalId: string): void {
+    this.validateSnapshot(snapshot);
+    const expectedScopeHash = hashScope({ operation: 'security_backup_restore' });
+    const consumedAt = now();
+    const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const consumed = this.db.prepare(
+        "UPDATE approvals SET consumed_at=? WHERE id=? AND owner_uid=? AND action='high_impact_change' AND status='approved' AND consumed_at IS NULL AND reservation_id IS NULL AND created_at>=? AND scope_hash=?"
+      ).run(consumedAt, approvalId, actorUid, cutoff, expectedScopeHash);
+      if (Number(consumed.changes ?? 0) !== 1) {
+        throw new Error('A fresh approved high-impact restore authorization is required.');
+      }
+
+      this.db.prepare('DELETE FROM approvals WHERE owner_uid=?').run(actorUid);
+      this.db.prepare('DELETE FROM approved_contacts WHERE owner_uid=?').run(actorUid);
+      this.db.prepare('DELETE FROM audit_log WHERE owner_uid=?').run(actorUid);
+      this.db.prepare('DELETE FROM idempotency WHERE actor_uid=?').run(actorUid);
+      const approvalStmt = this.db.prepare('INSERT INTO approvals(id,action,summary,amount_usd,scope_json,scope_hash,status,created_at,decided_at,decided_by,consumed_at,owner_uid) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');
+      for (const a of snapshot.approvals) approvalStmt.run(a.id,a.action,a.summary,a.amountUsd ?? null,a.scopeJson ?? (a.scope ? JSON.stringify(canonicalize(a.scope)) : null),a.scopeHash ?? hashScope(a.scope),a.status,a.createdAt,a.decidedAt ?? null,a.decidedBy ?? null,a.consumedAt ?? null,actorUid);
+      const contactStmt = this.db.prepare('INSERT INTO approved_contacts(id,name,email,purpose,status,created_at,updated_at,owner_uid) VALUES(?,?,?,?,?,?,?,?)');
+      for (const contact of snapshot.contacts) contactStmt.run(contact.id,contact.name,contact.email,contact.purpose,contact.status,contact.createdAt,contact.updatedAt,actorUid);
+      const auditStmt = this.db.prepare('INSERT INTO audit_log(actor_uid,event,details,created_at,owner_uid,previous_hash,entry_hash) VALUES(?,?,?,?,?,?,?)');
+      for (const entry of snapshot.audit) auditStmt.run(entry.actorUid ?? null,entry.event,typeof entry.details === 'string' ? entry.details : JSON.stringify(entry.details ?? {}),entry.createdAt,actorUid,entry.previousHash,entry.entryHash);
+      this.audit(actorUid, 'security.backup.restored', {
+        approvalId,
+        approvalConsumedAt: consumedAt,
+        approvalCount: snapshot.approvals.length,
+        contactCount: snapshot.contacts.length,
+      });
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   importSnapshot(snapshot: any, actorUid: string): void {
     this.validateSnapshot(snapshot);
     this.db.exec('BEGIN IMMEDIATE');
