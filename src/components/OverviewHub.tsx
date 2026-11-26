@@ -488,8 +488,10 @@ export function OverviewHub({
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2 border-t border-slate-200 text-xs">
                 <div>
                   <span className="text-slate-500">Today Profit</span>
-                  <p className="font-mono tabular-nums font-semibold text-emerald-700">
-                    ${latestSummary.metrics.todayProfitUsd.toLocaleString()}
+                  <p className="font-mono tabular-nums font-semibold text-slate-600">
+                    {latestSummary.metrics.todayProfitUsd === null
+                      ? 'Not verified'
+                      : `${latestSummary.metrics.todayProfitUsd.toLocaleString()}`}
                   </p>
                 </div>
                 <div>
@@ -512,64 +514,31 @@ export function OverviewHub({
                 </div>
                 <div>
                   <span className="text-slate-500">Internet Authority</span>
-                  <p className="font-mono tabular-nums font-semibold text-slate-900">
-                    {latestSummary.metrics.internetAuthorityScore}%
+                  <p className="font-mono tabular-nums font-semibold text-slate-600">
+                    {latestSummary.metrics.internetAuthorityScore === null
+                      ? 'Not measured'
+                      : `${latestSummary.metrics.internetAuthorityScore}%`}
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="p-4 rounded-lg border border-slate-200 space-y-2">
-                <p className="text-xs font-semibold text-slate-900">
-                  Daily Profit vs. Learned Revenue Insight Potential ($)
-                </p>
-                <div className="h-56 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart
-                      data={latestSummary.chartSeries}
-                      margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
-                      <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
-                      <Tooltip />
-                      <Bar
-                        dataKey="profitUsd"
-                        name="Daily Profit ($)"
-                        fill="#1d4ed8"
-                        radius={[4, 4, 0, 0]}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="insightPotentialUsd"
-                        name="Insight Potential ($)"
-                        stroke="#047857"
-                        strokeWidth={2}
-                      />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-lg border border-slate-200 space-y-2">
-                <p className="text-xs font-semibold text-slate-900">
-                  Autonomous Task Pipeline Breakdown
-                </p>
-                <div className="h-56 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={latestSummary.taskBreakdown}
-                      margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} />
-                      <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} />
-                      <Tooltip />
-                      <Bar dataKey="count" name="Tasks" fill="#0f172a" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+            <div className="rounded-lg border border-slate-200 p-4 space-y-2">
+              <p className="text-xs font-semibold text-slate-900">Financial reporting status</p>
+              <p className="text-xs text-slate-600">
+                Profit and revenue-potential charts are withheld until figures can be loaded from Jerry's verified financial ledger. Revenue ideas are not income, and no historical profit or target is assumed.
+              </p>
+              <p className="text-xs font-medium text-slate-700">Workspace task counts below are a current client snapshot, not an audited execution record.</p>
+              <div className="h-56 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={latestSummary.taskBreakdown} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} />
+                    <Tooltip />
+                    <Bar dataKey="count" name="Workspace tasks" fill="#0f172a" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             </div>
           </div>
