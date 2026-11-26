@@ -17,6 +17,7 @@ import { db } from './src/db/index.ts';
 import { ensureWalletTransactionJournaled } from './src/db/walletJournal.ts';
 import { drainWalletJournalOutbox } from './src/db/walletJournalOutbox.ts';
 import { saveMemoryEntryForUser, searchMemoryForUser } from './src/db/memoryStore.ts';
+import { generateWithModelFallback, providerConfigurationFromEnvironment } from './src/lib/providerAdapters.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
 import { sql } from 'drizzle-orm';
 import {
@@ -494,6 +495,40 @@ async function startServer() {
       res.status(200).json({ entry, persisted: true });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'Memory persistence failed.' });
+    }
+  });
+
+  // Provider-neutral Jerry Brain endpoint. Provider credentials are read only
+  // from server environment variables and never returned to the Android client.
+  app.post('/api/brain/generate', requireAuth, async (req: AuthRequest, res) => {
+    const body = req.body as { prompt?: unknown; task?: unknown; preferredProvider?: unknown };
+    const tasks = new Set(['chat', 'planning', 'research', 'coding', 'vision', 'speech', 'transcription']);
+    const providers = new Set(['google', 'openai', 'anthropic', 'local']);
+    if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 100_000) {
+      res.status(400).json({ error: 'Prompt must contain 1–100000 characters.' });
+      return;
+    }
+    if (typeof body.task !== 'string' || !tasks.has(body.task)) {
+      res.status(400).json({ error: 'Unsupported Jerry Brain task.' });
+      return;
+    }
+    if (body.preferredProvider !== undefined &&
+        (typeof body.preferredProvider !== 'string' || !providers.has(body.preferredProvider))) {
+      res.status(400).json({ error: 'Unsupported preferred model provider.' });
+      return;
+    }
+    try {
+      const result = await generateWithModelFallback({
+        task: body.task as 'chat' | 'planning' | 'research' | 'coding' | 'vision' | 'speech' | 'transcription',
+        prompt: body.prompt,
+        preferredProvider: body.preferredProvider as 'google' | 'openai' | 'anthropic' | 'local' | undefined,
+        configuration: providerConfigurationFromEnvironment(process.env),
+      });
+      res.json({ ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Jerry Brain provider request failed.';
+      const unavailable = /No model provider is configured|All configured model providers failed/.test(message);
+      res.status(unavailable ? 503 : 400).json({ error: message });
     }
   });
 
