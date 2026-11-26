@@ -57,7 +57,7 @@ export function auditWalletJournalEntries(rows: WalletJournalEntryAuditRow[]): W
     const originalParsed = original && original.status === 'posted'
       ? parseWalletJournalEntryKey(original.idempotency_key)
       : null;
-    if (!originalParsed || originalParsed.event !== 'confirmed' ||
+    if (!original || !originalParsed || originalParsed.event !== 'confirmed' ||
         originalParsed.transactionRef !== parsed.transactionRef) {
       unmatchedReversalEntries.push(String(row.id));
       continue;
