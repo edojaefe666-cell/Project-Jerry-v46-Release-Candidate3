@@ -27,12 +27,12 @@ test('eligible: reorged Bitcoin mainnet transaction queues reversal handling', (
 });
 
 test('ineligible: pending or unverified confirmed Bitcoin transaction', () => {
-  assert.equal(isEligibleWalletJournalEvent(transaction({ status: 'pending' })), false);
+  assert.equal(isEligibleWalletJournalEvent(transaction({ status: 'pending_approval' })), false);
   assert.equal(isEligibleWalletJournalEvent(transaction({ isVerifiedOnChain: false })), false);
 });
 
 test('ineligible: non-Bitcoin assets and non-mainnet networks', () => {
-  assert.equal(isEligibleWalletJournalEvent(transaction({ asset: 'ETH' })), false);
+  assert.equal(isEligibleWalletJournalEvent(transaction({ asset: 'ETH' as unknown as 'BTC' })), false);
   assert.equal(isEligibleWalletJournalEvent(transaction({ network: 'Bitcoin Testnet' })), false);
 });
 
