@@ -45,9 +45,10 @@ export function auditWalletJournalEntries(rows: WalletJournalEntryAuditRow[]): W
       .map((row) => parseWalletJournalEntryKey(row.idempotency_key))
       .filter((parsed): parsed is NonNullable<typeof parsed> => parsed?.event === 'confirmed')
       .map((parsed) => parsed.transactionRef)
-      .filter((txRef) => legacy.rows.some((row) =>
-        row.tx_ref === txRef && !(row.status === 'confirmed' && row.is_verified_on_chain === true)
-      ))
+      .filter((txRef) => {
+        const source = legacy.rows.find((row) => row.tx_ref === txRef);
+        return !source || !(source.status === 'confirmed' && source.is_verified_on_chain === true);
+      })
   )];
 
   return {
