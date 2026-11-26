@@ -20,12 +20,18 @@ This control does not replace action-level approvals, audit logging, tenant isol
 ## Emergency stop
 
 - The owner-only API exposes `GET /api/security/emergency-stop` and `POST /api/security/emergency-stop`.
+- A new security store starts with the emergency stop engaged. A legacy untouched system-default latch is also migrated to stopped; an explicit owner resume is preserved across restarts. The owner must review recovery conditions and explicitly resume before transfer staging can be enabled.
 - To stop, submit `{ "action": "stop", "reason": "..." }`. This latches the stop in the local security SQLite store and records an audit event.
 - Outgoing Bitcoin transfer staging is blocked with HTTP 423 while the latch is active.
 - To resume, submit `{ "action": "resume", "reason": "...", "confirmation": "RESUME_JERRY_EXECUTION" }`. Recovery is an explicit owner action and is recorded in the audit chain.
 - The independent deployment/operator hard stop is `JERRY_EMERGENCY_STOP=1`. The application API cannot clear this environment-level switch; an operator must remove it through the deployment control plane.
 - If the security control store cannot be read, the application fails closed and blocks transfer staging.
 - This is an application-side stop for the currently implemented outgoing-transfer staging boundary. No Bitcoin broadcast implementation exists in this branch. Future external execution adapters must enforce the same stop independently at their own execution boundary before they are enabled.
+
+
+## Android build connectivity
+
+The Android CI workflow currently uses `https://jerry-backend.invalid` as a deliberate non-routable placeholder. Its APK is a build-verification artifact, not a connected release APK. Before a usable APK is produced, configure a real HTTPS backend origin through the protected build environment, verify Firebase owner authentication and database migrations against that deployment, and rebuild. Never put provider credentials or owner UID values in Vite variables or APK assets.
 
 
 ## Jerry Brain model providers
