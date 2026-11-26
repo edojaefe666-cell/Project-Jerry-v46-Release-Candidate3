@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isEligibleWalletJournalEvent } from './walletJournalOutbox.ts';
+import { isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
 import type { WalletTransaction } from '../lib/types.ts';
 
 const transaction = (overrides: Partial<WalletTransaction> = {}): WalletTransaction => ({
