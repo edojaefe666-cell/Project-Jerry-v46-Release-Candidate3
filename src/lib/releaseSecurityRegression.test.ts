@@ -119,3 +119,10 @@ test('self-upgrade static syntax checks cannot claim runtime tests passed', () =
 test('security UI creates restore approvals with the exact immutable operation scope', () => {
   assert.match(securityUi, /action === 'high_impact_change' \? \{ scope: \{ operation: 'security_backup_restore' \} \}/);
 });
+
+
+test('self-upgrade verification uses the signed isolated runner rather than syntax-only checks', () => {
+  assert.match(server, /runIsolatedSelfUpgradeTests\(/);
+  assert.match(server, /isolated\.status === 'passed' \? 'passed'/);
+  assert.doesNotMatch(server, /syntax transformation passed via esbuild/);
+});
