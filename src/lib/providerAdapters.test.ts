@@ -50,7 +50,7 @@ test('aborts the active provider request and never falls back after emergency st
   const pendingFetch = (_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
     calls += 1;
     init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
-    controller.abort(new Error('owner stop'));
+    queueMicrotask(() => controller.abort(new Error('owner stop')));
   });
   await assert.rejects(() => generateWithModelFallback({
     task: 'chat', prompt: 'hello',
