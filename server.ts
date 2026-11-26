@@ -19,6 +19,7 @@ import { drainWalletJournalOutbox } from './src/db/walletJournalOutbox.ts';
 import { saveMemoryEntryForUser, searchMemoryForUser } from './src/db/memoryStore.ts';
 import { generateWithModelFallback, providerConfigurationFromEnvironment } from './src/lib/providerAdapters.ts';
 import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
+import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createOwnerRateLimiter } from './src/lib/requestRateLimit.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
 import { sql } from 'drizzle-orm';
@@ -1369,124 +1370,51 @@ async function startServer() {
     }
   });
 
-  // Jerry Voice TTS (gemini-3.8-flash-lite-tts / Voice Design — mature adult male ~50 yrs default)
+  // Jerry Voice TTS. Browser speech is offered only when no server provider is configured.
   app.post('/api/jerry/tts', requireAuth, async (req: AuthRequest, res) => {
-    const {
-      text,
-      voiceName = 'Charon',
-      voiceStyle = 'Adult male, 50 years old — calm, warm, authoritative baritone executive partner',
-    } = req.body as { text?: string; voiceName?: string; voiceStyle?: string };
-    if (!text || !text.trim()) {
-      res.status(400).json({ error: 'Text is required for speech synthesis.' });
-      return;
-    }
-
-    const ai = getGeminiClient();
-    if (!ai) {
-      res.json({
-        fallback: 'browser_speech',
-        voiceName,
-        voiceStyle,
-        note: 'Using browser mature adult male speech synthesis.',
-      });
-      return;
-    }
-
-    const cleanText = text.trim().slice(0, 800);
-    const trySynthesize = async (model: string, withSpeechConfig: boolean) => {
-      const response = await ai.models.generateContent({
-        model,
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              withSpeechConfig
-                ? {
-                    text: cleanText,
-                    speechMetadata: { style: voiceStyle },
-                  }
-                : {
-                    text: `Speak in this persona (${voiceStyle}): ${cleanText}`,
-                  },
-            ],
-          },
-        ],
-        config: withSpeechConfig
-          ? {
-              responseModalities: ['AUDIO'],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName },
-                },
-              },
-            }
-          : {
-              responseModalities: ['AUDIO'],
-            },
-      });
-      return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const { text, voiceName = 'Charon', voiceStyle = 'Calm, warm, confident adult male voice' } = req.body as {
+      text?: string; voiceName?: string; voiceStyle?: string;
     };
-
+    if (typeof text !== 'string' || !text.trim() || text.length > 8_000) {
+      res.status(400).json({ error: 'Text is required and must not exceed 8000 characters.' }); return;
+    }
+    const configuration = providerConfigurationFromEnvironment(process.env);
+    if (!configuration.google?.apiKey && !configuration.openai?.apiKey) {
+      res.json({ fallback: 'browser_speech', voiceName, voiceStyle, note: 'No server speech provider is configured; use device speech synthesis.' }); return;
+    }
     try {
-      let base64Audio: string | undefined;
-      try {
-        base64Audio = await trySynthesize('gemini-3.8-flash-lite-tts', true);
-      } catch {
-        base64Audio = await trySynthesize('gemini-3.8-flash-lite-tts', false);
-      }
-
-      if (!base64Audio) {
-        res.json({
-          fallback: 'browser_speech',
-          voiceName,
-          voiceStyle,
-          note: 'No server audio returned; using browser mature adult male speech synthesis.',
-        });
-        return;
-      }
-
-      res.json({ audioBase64: base64Audio, mimeType: 'audio/wav', voiceName, voiceStyle });
-    } catch {
-      res.json({
-        fallback: 'browser_speech',
-        voiceName,
-        voiceStyle,
-        note: 'Server TTS unavailable or quota reached; using browser mature adult male speech synthesis.',
+      const result = await synthesizeSpeechWithModelFallback({
+        text, voice: voiceName, style: voiceStyle, configuration,
+        googleModel: process.env.JERRY_GOOGLE_TTS_MODEL,
+        openaiModel: process.env.JERRY_OPENAI_TTS_MODEL,
       });
+      res.json({ audioBase64: result.audioBase64, mimeType: result.mimeType, voiceName, voiceStyle, provider: result.provider, modelUsed: result.model });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Speech synthesis failed.';
+      res.status(503).json({ error: `Jerry speech synthesis unavailable: ${message.slice(0, 240)}` });
     }
   });
 
-  // Jerry Voice Audio Transcription (gemini-3.5-transcribe)
+  // Jerry Voice transcription. Audio is processed only by configured providers.
   app.post('/api/jerry/transcribe', requireAuth, async (req: AuthRequest, res) => {
-    const { audioBase64, mimeType = 'audio/webm' } = req.body as {
-      audioBase64?: string;
-      mimeType?: string;
-    };
-    if (!audioBase64) {
-      res.status(400).json({ error: 'Audio payload is required.' });
-      return;
+    const { audioBase64, mimeType = 'audio/webm' } = req.body as { audioBase64?: string; mimeType?: string };
+    if (typeof audioBase64 !== 'string' || !audioBase64) {
+      res.status(400).json({ error: 'Audio payload is required.' }); return;
     }
-
-    const ai = getGeminiClient();
-    if (!ai) {
-      res.status(503).json({ error: 'GEMINI_API_KEY not configured for server transcription.' });
-      return;
+    const configuration = providerConfigurationFromEnvironment(process.env);
+    if (!configuration.google?.apiKey && !configuration.openai?.apiKey) {
+      res.status(503).json({ error: 'No compatible server-side transcription provider is configured. Audio was not transcribed.' }); return;
     }
-
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.5-transcribe',
-        contents: {
-          parts: [
-            { inlineData: { mimeType, data: audioBase64 } },
-            { text: 'Transcribe this spoken instruction accurately.' },
-          ],
-        },
+      const result = await transcribeAudioWithModelFallback({
+        audioBase64, mimeType, configuration,
+        googleModel: process.env.JERRY_GOOGLE_TRANSCRIPTION_MODEL,
+        openaiModel: process.env.JERRY_OPENAI_TRANSCRIPTION_MODEL,
       });
-      res.json({ transcript: response.text ?? '' });
+      res.json({ transcript: result.transcript, provider: result.provider, modelUsed: result.model, evidenceStatus: 'machine_transcription_not_human_verified' });
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Transcription failed';
-      res.status(502).json({ error: `Jerry Voice Transcription error: ${msg}` });
+      const message = error instanceof Error ? error.message : 'Transcription failed.';
+      res.status(502).json({ error: `Jerry transcription failed: ${message.slice(0, 240)} Audio was not accepted as transcribed.` });
     }
   });
 
