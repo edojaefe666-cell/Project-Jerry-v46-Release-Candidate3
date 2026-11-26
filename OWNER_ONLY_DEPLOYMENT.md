@@ -92,3 +92,19 @@ Until that separate service exists and passes an independent security review, ve
 The route reserves that authorization before changing workspace state and finalizes (consumes) it only after the reset is durably saved. Missing, pending, rejected, expired, wrong-owner, wrong-scope, already-reserved, consumed, or replayed approvals are rejected. If the workspace update fails before commit, the reservation is released. Server-owned financial and security records are not erased by this workspace reset.
 
 Create and approve the scoped request through the owner security approval endpoints; do not reuse an approval intended for a different action. A reset that commits but encounters a later authorization-finalization storage failure returns an explicit HTTP 503 and must be reconciled before another reset is attempted.
+
+
+## Emergency-stop execution boundary coverage
+
+The application emergency-stop middleware is applied to every implemented action that can stage an outgoing Bitcoin transfer or invoke the isolated self-upgrade test runner:
+
+- POST /api/state/reset — destructive workspace reset.
+- POST /api/wallet/commands/submit-transfer — outgoing transfer staging.
+- POST /api/jerry/self-upgrades/:id/verify — isolated verification of a persisted code proposal.
+- POST /api/jerry/verify-upgrade — direct isolated code verification.
+
+The execution-task endpoint remains fail-closed with HTTP 501 because no verified task execution adapter exists. Do not interpret task recovery or journal recovery as task execution or money movement.
+
+The PostgreSQL wallet journal outbox worker is intentionally not disabled by the emergency stop: it only records eligible, already-observed financial events into the internal double-entry journal. Preserving financial evidence and reconciling the ledger must continue during an emergency. It does not broadcast transactions or initiate transfers.
+
+Read-only market/on-chain lookups, research, planning, memory, and security recovery remain available. The stop latch blocks the above execution paths and approval reservation. The independent cloud control-plane and Android-native kill switch are still outstanding; this application middleware alone is not proof of an independent, system-wide kill switch.
