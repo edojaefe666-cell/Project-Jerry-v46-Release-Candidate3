@@ -326,3 +326,36 @@ test('failed security backup restore rolls back approval consumption and all rec
     store.close();
   }
 });
+
+
+test('workspace reset approval is exact-scope, reserved once, and consumed on finalization', () => {
+  const store = new SecurityStore(':memory:');
+  const ownerUid = 'owner-reset';
+  store.setEmergencyStop(false, ownerUid, 'Test explicitly resumes execution for reset approval');
+  const scope = { operation: 'workspace_reset' };
+  const approval = store.createApproval({
+    action: 'high_impact_change',
+    summary: 'Reset Jerry workspace',
+    scope,
+    ownerUid,
+  });
+  store.decideApproval(approval.id, 'approved', ownerUid);
+
+  assert.equal(
+    store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'a'.repeat(64), { operation: 'delete_account' }),
+    null,
+  );
+  assert.ok(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'b'.repeat(64), scope));
+  assert.equal(
+    store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'c'.repeat(64), scope),
+    null,
+  );
+  assert.equal(store.finalizeApprovalReservation(approval.id, ownerUid, 'b'.repeat(64))?.consumedAt != null, true);
+  assert.equal(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'd'.repeat(64), scope), null);
+  assert.equal(store.verifyAuditChain(ownerUid).ok, true);
+  assert.equal(
+    store.listAudit(20, ownerUid).find((entry) => entry.event === 'approval.consumed')?.details.action,
+    'high_impact_change',
+  );
+  store.close();
+});
