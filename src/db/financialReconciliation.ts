@@ -32,48 +32,23 @@ export type WalletJournalEntryAudit = {
 
 export function auditWalletJournalEntries(rows: WalletJournalEntryAuditRow[]): WalletJournalEntryAudit {
   const byId = new Map(rows.map((row) => [String(row.id), row]));
-  const confirmedEntriesByTransaction = new Map<string, string[]>();
-  const generationCounts = new Map<string, number>();
-  const reversedOriginalEntryIds = new Set<string>();
-  const unmatchedReversalEntries: string[] = [];
-
-  for (const row of rows) {
-    if (row.status !== 'posted') continue;
-    const parsed = parseWalletJournalEntryKey(row.idempotency_key);
-    if (!parsed) continue;
-    if (parsed.event === 'confirmed') {
-      const entries = confirmedEntriesByTransaction.get(parsed.transactionRef) ?? [];
-      entries.push(String(row.id));
-      confirmedEntriesByTransaction.set(parsed.transactionRef, entries);
-      const prefix = `wallet-tx:${parsed.transactionRef}:confirmed`;
-      const generation = row.idempotency_key.slice(prefix.length) || ':legacy';
-      const generationKey = `${parsed.transactionRef}${generation}`;
-      generationCounts.set(generationKey, (generationCounts.get(generationKey) ?? 0) + 1);
-      continue;
-    }
-
-    const originalId = row.reversal_of ? String(row.reversal_of) : '';
-    const original = byId.get(originalId);
-    const originalParsed = original && original.status === 'posted'
-      ? parseWalletJournalEntryKey(original.idempotency_key)
-      : null;
-    if (!originalParsed || originalParsed.event !== 'confirmed' ||
-        originalParsed.transactionRef !== parsed.transactionRef) {
-      unmatchedReversalEntries.push(String(row.id));
-      continue;
-    }
-    const reversalPrefix = `wallet-tx:${parsed.transactionRef}:reorg-reversal`;
-    const reversalGeneration = row.idempotency_key.slice(reversalPrefix.length);
-    const originalPrefix = `wallet-tx:${parsed.transactionRef}:confirmed`;
-    const originalGeneration = original.idempotency_key.slice(originalPrefix.length);
-    // Legacy backfill keys bind directly to the original entry ID. Cycle-aware
-    // reversals must also match the exact cycle/block generation they reverse.
-    if (reversalGeneration.startsWith(':cycle-') && reversalGeneration !== originalGeneration) {
-      unmatchedReversalEntries.push(String(row.id));
-      continue;
-    }
-    reversedOriginalEntryIds.add(originalId);
-  }
+  const audit = auditWalletJournalEntries(journaled.rows as WalletJournalEntryAuditRow[]);
+  const confirmedEntriesByTransaction = audit.confirmedEntriesByTransaction;
+  const journaledIds = new Set(confirmedEntriesByTransaction.keys());
+  const unreversedReorged = [...reorgedIds].filter((txRef) => {
+    const postedGenerations = confirmedEntriesByTransaction.get(txRef) ?? [];
+    return postedGenerations.some((entryId) => !audit.reversedOriginalEntryIds.has(entryId));
+  });
+  const ineligibleJournaledTransactions = [...new Set(
+    journaled.rows
+      .filter((row) => row.status === 'posted')
+      .map((row) => parseWalletJournalEntryKey(row.idempotency_key))
+      .filter((parsed): parsed is NonNullable<typeof parsed> => parsed?.event === 'confirmed')
+      .map((parsed) => parsed.transactionRef)
+      .filter((txRef) => legacy.rows.some((row) =>
+        row.tx_ref === txRef && !(row.status === 'confirmed' && row.is_verified_on_chain === true)
+      ))
+  )];
 
   return {
     confirmedEntriesByTransaction,
@@ -93,6 +68,10 @@ export type FinancialTruthReport = {
   journaledTransactions: number;
   unjournaledConfirmedTransactions: string[];
   unreversedReorgedTransactions: string[];
+  duplicateConfirmedGenerations: string[];
+  unmatchedReversalEntries: string[];
+  ineligibleJournaledTransactions: string[];
+  integrityClean: boolean;
   balanced: boolean;
 };
 
@@ -151,6 +130,14 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
     journaledTransactions: [...confirmedIds].filter((id) => journaledIds.has(id)).length,
     unjournaledConfirmedTransactions: [...confirmedIds].filter((id) => !journaledIds.has(id)),
     unreversedReorgedTransactions: unreversedReorged,
+    duplicateConfirmedGenerations: audit.duplicateConfirmedGenerations,
+    unmatchedReversalEntries: audit.unmatchedReversalEntries,
+    ineligibleJournaledTransactions,
+    integrityClean: audit.duplicateConfirmedGenerations.length === 0 &&
+      audit.unmatchedReversalEntries.length === 0 &&
+      ineligibleJournaledTransactions.length === 0 &&
+      unreversedReorged.length === 0 &&
+      [...confirmedIds].every((id) => journaledIds.has(id)),
     balanced: deltaSatoshis === 0n,
   };
 }
