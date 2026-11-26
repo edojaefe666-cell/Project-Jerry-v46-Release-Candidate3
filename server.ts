@@ -1356,14 +1356,8 @@ async function startServer() {
 
     const ai = getGeminiClient();
     if (!ai) {
-      res.json({
-        analysis:
-          'Document parsed via Jerry Vision fallback: Identified structured financial figures, operating expense categories, and margin ratios. Recommended verifying line-item totals against settlement records before approving payouts.',
-        extractedActions: [
-          'Cross-check expense variance against Q3 baseline.',
-          'Archive verified summary into Jerry Memory.',
-        ],
-        modelUsed: 'Jerry Vision Heuristic',
+      res.status(503).json({
+        error: 'Jerry Vision is unavailable: no compatible server-side vision provider is configured. The image has not been analyzed.',
       });
       return;
     }
@@ -1403,15 +1397,7 @@ async function startServer() {
       });
     } catch (error) {
       if (isQuotaError(error)) {
-        res.json({
-          analysis:
-            'Document parsed via Jerry Vision local inspector: Identified structured financial figures, operating expense categories, and margin ratios. Verify line-item totals against settlement records before approving payouts.',
-          extractedActions: [
-            'Cross-check expense variance against prior quarter baseline.',
-            'Archive verified summary into Jerry Memory.',
-          ],
-          modelUsed: 'Jerry Vision Local Inspector (Gemini quota reached)',
-        });
+        res.status(503).json({ error: 'Jerry Vision provider quota is unavailable. The image was not analyzed; retry after provider quota is restored or configure another compatible vision provider.' });
         return;
       }
       res.status(502).json({ error: `Jerry Vision error: ${formatCleanError(error, 'Vision analysis failed')}` });
