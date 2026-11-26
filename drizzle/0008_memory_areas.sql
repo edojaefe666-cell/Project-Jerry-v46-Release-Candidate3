@@ -8,7 +8,7 @@ SET memory_area = CASE
   WHEN category IN ('decision', 'lesson') THEN 'knowledge_experience'
   ELSE 'knowledge_experience'
 END
-WHERE memory_area IS NULL;
+;
 
 ALTER TABLE memory_entries
   ALTER COLUMN memory_area SET DEFAULT 'knowledge_experience',
