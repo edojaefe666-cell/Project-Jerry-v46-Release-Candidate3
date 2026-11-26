@@ -481,13 +481,13 @@ export function OverviewHub({
                   {latestSummary.modelUsed} · {latestSummary.generatedAt.slice(0, 16).replace('T', ' ')} UTC
                 </span>
               </div>
-              <h3 className="text-sm font-semibold text-slate-900">{latestSummary.headline}</h3>
-              <p className="text-xs text-slate-700 leading-relaxed">{latestSummary.summaryText}</p>
+              <h3 className="text-sm font-semibold text-slate-900">{latestSummary.financialDataStatus === 'verified_from_ledger' ? latestSummary.headline : 'Daily Workspace Briefing'}</h3>
+              <p className="text-xs text-slate-700 leading-relaxed">{latestSummary.financialDataStatus === 'verified_from_ledger' ? latestSummary.summaryText : 'This report predates verified-ledger financial reporting or has no ledger-backed figures. Its historical profit claims are withheld; use the wallet journal for verified settlements.'}</p>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2 border-t border-slate-200 text-xs">
                 <div>
                   <span className="text-slate-500">Today Profit</span>
                   <p className="font-mono tabular-nums font-semibold text-slate-600">
-                    {latestSummary.metrics.todayProfitUsd === null
+                    {latestSummary.financialDataStatus !== 'verified_from_ledger' || latestSummary.metrics.todayProfitUsd === null
                       ? 'Not verified'
                       : `${latestSummary.metrics.todayProfitUsd.toLocaleString()}`}
                   </p>
