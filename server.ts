@@ -23,6 +23,7 @@ import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } f
 import { createOwnerRateLimiter } from './src/lib/requestRateLimit.ts';
 import { searchLiveResearch } from './src/lib/liveResearch.ts';
 import { parseOpportunityScan } from './src/lib/opportunityScan.ts';
+import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
 import { applyLearningEnhancement, createOwnerLearningEntry } from './src/lib/learningMemory.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
 import { sql } from 'drizzle-orm';
@@ -1432,20 +1433,15 @@ async function startServer() {
 
   // Jerry Proactive Opportunity Radar. All findings must be grounded in retrieved sources.
   app.post('/api/jerry/scan-opportunities', requireAuth, opportunityRateLimit, async (req: AuthRequest, res) => {
-    const body = req.body as { interests?: unknown; availableCapitalUsd?: unknown };
-    const interests = Array.isArray(body.interests)
-      ? body.interests.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean).slice(0, 5)
-      : [];
-    const availableCapitalUsd = body.availableCapitalUsd === undefined ? 1500 : Number(body.availableCapitalUsd);
-
-    if (interests.length === 0) {
-      res.status(400).json({ error: 'Specify at least one area of interest to scan.' });
+    const parsedRequest = parseOpportunityScanRequest(req.body as {
+      interests?: unknown;
+      availableCapitalUsd?: unknown;
+    });
+    if (!parsedRequest.ok) {
+      res.status(400).json({ error: parsedRequest.error });
       return;
     }
-    if (!Number.isFinite(availableCapitalUsd) || availableCapitalUsd < 0 || availableCapitalUsd > 1_000_000_000) {
-      res.status(400).json({ error: 'Available capital must be a finite amount between 0 and 1,000,000,000 USD.' });
-      return;
-    }
+    const { interests, availableCapitalUsd } = parsedRequest.value;
 
     const researchKey = process.env.TAVILY_API_KEY;
     if (!researchKey) {
