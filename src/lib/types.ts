@@ -216,6 +216,8 @@ export interface WalletTransaction {
   confirmationDepth?: number;
   verifiedBlockHeight?: number;
   verifiedBlockHash?: string;
+  /** Monotonic journal generation; increments only after a reorged tx is reconfirmed. */
+  journalCycle?: number;
   approvalId?: string;
 
 }
