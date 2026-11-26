@@ -16,6 +16,7 @@ import { SecurityStore } from './src/lib/securityStore.ts';
 import { db } from './src/db/index.ts';
 import { ensureWalletTransactionJournaled } from './src/db/walletJournal.ts';
 import { drainWalletJournalOutbox } from './src/db/walletJournalOutbox.ts';
+import { saveMemoryEntryForUser, searchMemoryForUser } from './src/db/memoryStore.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
 import { sql } from 'drizzle-orm';
 import {
@@ -467,6 +468,33 @@ async function startServer() {
     approvals: authoritative.approvals,
     selfUpgrades: authoritative.selfUpgrades,
     lastWalletSyncAt: authoritative.lastWalletSyncAt,
+  });
+
+  // Dedicated owner-scoped persistent memory API. Workspace snapshots remain
+  // backward compatible; this store provides indexed search and durable entries.
+  app.get('/api/memory', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.user!.uid;
+      const email = req.user!.email ?? 'owner@jerry.workspace';
+      const query = typeof req.query.q === 'string' ? req.query.q : '';
+      const category = typeof req.query.category === 'string' ? req.query.category : 'all';
+      const limitRaw = typeof req.query.limit === 'string' ? Number(req.query.limit) : 50;
+      const entries = await searchMemoryForUser(uid, email, { query, category, limit: limitRaw });
+      res.json({ entries, count: entries.length });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Memory search failed.' });
+    }
+  });
+
+  app.post('/api/memory', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.user!.uid;
+      const email = req.user!.email ?? 'owner@jerry.workspace';
+      const entry = await saveMemoryEntryForUser(uid, email, req.body?.entry);
+      res.status(200).json({ entry, persisted: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Memory persistence failed.' });
+    }
   });
 
   // Legacy state routes are retained for older clients, but they are strictly
