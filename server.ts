@@ -1419,111 +1419,33 @@ async function startServer() {
     }
   });
 
-  // Jerry Proactive Opportunity Radar (User-Specified Areas of Interest)
-  app.post('/api/jerry/scan-opportunities', requireAuth, async (req: AuthRequest, res) => {
-    const { interests = [], availableCapitalUsd = 1500 } = req.body as {
-      interests?: string[];
-      availableCapitalUsd?: number;
-    };
+  // Jerry Proactive Opportunity Radar.
+  // This endpoint must never manufacture market findings when live evidence is unavailable.
+  // A provider-neutral, source-grounded research adapter will replace this explicit unavailable state.
+  app.post('/api/jerry/scan-opportunities', requireAuth, opportunityRateLimit, async (req: AuthRequest, res) => {
+    const body = req.body as { interests?: unknown; availableCapitalUsd?: unknown };
+    const interests = Array.isArray(body.interests)
+      ? body.interests.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean).slice(0, 5)
+      : [];
+    const availableCapitalUsd = body.availableCapitalUsd === undefined ? 1500 : Number(body.availableCapitalUsd);
 
-    const topics = interests.map((s) => s.trim()).filter(Boolean).slice(0, 5);
-    if (topics.length === 0) {
+    if (interests.length === 0) {
       res.status(400).json({ error: 'Specify at least one area of interest to scan.' });
       return;
     }
-
-    const buildOfflineAlerts = (): OpportunityAlert[] =>
-      topics.map((topic, idx) => {
-        const isInvestment = /stock|etf|equity|bond|crypto|energy|reit|fund|commodity/i.test(topic);
-        return {
-          id: `alert-${Date.now()}-${idx}`,
-          interestTopic: topic,
-          title: isInvestment
-            ? `${topic}: Cash-Flow Positive Infrastructure & Supply-Chain Leaders`
-            : `${topic}: Automated Workflow & Margin Optimization Micro-Venture`,
-          kind: isInvestment ? 'Investment' : 'Business',
-          summary: `Targeted scan across "${topic}" prioritizing capital efficiency around $${availableCapitalUsd.toLocaleString()} and verifiable demand signals.`,
-          profitabilityAnalysis: isInvestment
-            ? 'Focuses on companies with contracted recurring backlogs and positive free cash flow rather than pre-revenue speculation (estimate, not guaranteed).'
-            : 'Service-first pilot or niche B2B software tooling targeting 70%+ gross margin once 3–5 anchor buyers convert (estimate, not guaranteed).',
-          riskAnalysis: isInvestment
-            ? 'Market valuation drawdowns, interest-rate shifts, and sector cyclicality require position sizing and diversification.'
-            : 'Customer acquisition friction and churn if delivery quality slips; validate willingness to pay before fixed spend.',
-          estimatedCapitalUsd: Math.min(Number(availableCapitalUsd) || 1000, isInvestment ? 1000 : 450),
-          verifiedSources: [],
-          nextAction: isInvestment
-            ? `Review top 3 public balance sheets in "${topic}" and verify free cash flow yield before allocating capital.`
-            : `Interview 5 operators in "${topic}" to validate a fixed-scope paid pilot.`,
-          status: 'new',
-          createdAt: new Date().toISOString(),
-        };
-      });
-
-    const ai = getGeminiClient();
-    if (!ai) {
-      res.json({
-        alerts: buildOfflineAlerts(),
-        modelUsed: 'Jerry Opportunity Radar (Heuristic — configure GEMINI_API_KEY for live Google Search grounding)',
-      });
+    if (!Number.isFinite(availableCapitalUsd) || availableCapitalUsd < 0 || availableCapitalUsd > 1_000_000_000) {
+      res.status(400).json({ error: 'Available capital must be a finite amount between 0 and 1,000,000,000 USD.' });
       return;
     }
 
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents:
-          `You are Jerry, an intelligent commercial and investment research partner. ` +
-          `Research current legitimate business or investment opportunities across these user-specified areas of interest: ${topics.join(', ')}. ` +
-          `Available starter capital context: $${availableCapitalUsd}. ` +
-          `For each topic, identify 1 concrete, realistic opportunity. Distinguish verified market conditions from estimates, never guarantee profits, and provide a clear profitability analysis, risk analysis, estimated capital needed, and immediate next action. ` +
-          `Return ONLY a valid JSON array of objects with keys: interestTopic, title, kind ("Business" or "Investment"), summary, profitabilityAnalysis, riskAnalysis, estimatedCapitalUsd (number), nextAction.`,
-        config: {
-          tools: [{ googleSearch: {} }],
-        },
-      });
-
-      const rawText = (response.text ?? '').trim();
-      const jsonMatch = rawText.match(/\[[\s\S]*\]/);
-      const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
-      const sources = groundingChunks
-        .map((c) => c.web)
-        .filter((w): w is { uri: string; title: string } => Boolean(w?.uri && w?.title))
-        .slice(0, 4);
-
-      if (!jsonMatch) {
-        res.json({ alerts: buildOfflineAlerts(), modelUsed: 'gemini-4-hydrogen (fallback structure)' });
-        return;
-      }
-
-      const parsed = JSON.parse(jsonMatch[0]) as Array<Partial<OpportunityAlert>>;
-      const alerts: OpportunityAlert[] = parsed.map((item, idx) => ({
-        id: `alert-${Date.now()}-${idx}`,
-        interestTopic: item.interestTopic || topics[idx % topics.length],
-        title: item.title || `${topics[idx % topics.length]} Opportunity`,
-        kind: item.kind === 'Investment' ? 'Investment' : 'Business',
-        summary: item.summary || 'Opportunity surfaced via live market scan.',
-        profitabilityAnalysis:
-          item.profitabilityAnalysis || 'Potential margin depends on execution and demand validation (estimate, not guaranteed).',
-        riskAnalysis:
-          item.riskAnalysis || 'Subject to market competition, execution risk, and capital constraints.',
-        estimatedCapitalUsd: Number(item.estimatedCapitalUsd ?? 500),
-        verifiedSources: sources,
-        nextAction: item.nextAction || 'Run initial validation checklist before committing capital.',
-        status: 'new',
-        createdAt: new Date().toISOString(),
-      }));
-
-      res.json({ alerts, modelUsed: 'gemini-4-hydrogen + Google Search' });
-    } catch (error) {
-      if (isQuotaError(error)) {
-        res.json({
-          alerts: buildOfflineAlerts(),
-          modelUsed: 'Jerry Opportunity Radar Local Engine — Gemini quota reached; check Settings > Secrets for live Search grounding',
-        });
-        return;
-      }
-      res.status(502).json({ error: `Opportunity Radar error: ${formatCleanError(error, 'Opportunity scan failed')}` });
-    }
+    res.status(503).json({
+      status: 'unavailable',
+      code: 'LIVE_RESEARCH_NOT_CONFIGURED',
+      alerts: [],
+      interests,
+      availableCapitalUsd,
+      message: 'Jerry has not completed a source-grounded live market scan. No opportunities are being presented as researched or verified.',
+    });
   });
 
   // Jerry Direct Learning & Growth Prompt Box
