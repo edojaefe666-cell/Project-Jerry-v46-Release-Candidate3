@@ -145,6 +145,37 @@ export async function reversePostedJournalEntry(input: {
       [userId, input.originalEntryId],
     );
     if (!original.rowCount || original.rows[0].status !== 'posted') throw new Error('Only an existing posted journal entry owned by this user can be reversed.');
+    // A reversal is unique per original entry, not merely per caller-supplied key.
+    // The original-row lock above serializes competing reversal requests.
+    const priorReversal = await client.query(
+      `SELECT id::text, idempotency_key, description, status, reversal_of::text
+         FROM journal_entries
+        WHERE user_id = $1 AND reversal_of = $2 AND status = 'posted'
+        ORDER BY id
+        LIMIT 1`,
+      [userId, input.originalEntryId],
+    );
+    if (priorReversal.rowCount) {
+      const keyCollision = await client.query(
+        'SELECT id::text FROM journal_entries WHERE user_id = $1 AND idempotency_key = $2',
+        [userId, input.idempotencyKey?.trim()],
+      );
+      if (keyCollision.rowCount && keyCollision.rows[0].id !== priorReversal.rows[0].id) {
+        throw new Error('Journal idempotency key was already used for a different posting.');
+      }
+      const row = priorReversal.rows[0];
+      await client.query('COMMIT');
+      return {
+        id: row.id,
+        userId,
+        idempotencyKey: row.idempotency_key,
+        description: row.description,
+        status: 'posted',
+        reversalOf: row.reversal_of,
+        replayed: true,
+      };
+    }
+
     const sourceLines = await client.query(
       `SELECT a.account_code, l.asset, l.debit_units::text, l.credit_units::text
        FROM journal_lines l JOIN journal_accounts a ON a.user_id = l.user_id AND a.id = l.account_id
