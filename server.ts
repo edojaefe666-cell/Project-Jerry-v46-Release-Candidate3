@@ -9,6 +9,7 @@ import { INITIAL_JERRY_STATE } from './src/lib/seedData';
 import { auditSelfProgrammedCode } from './src/lib/jerryEngine';
 import { btcToSatoshis } from './src/lib/btcUnits.ts';
 import { validateIncomingBitcoinPayment } from './src/lib/bitcoinSettlement.ts';
+import { resolveSettlementApprovalStatus } from './src/lib/settlementApproval.ts';
 import { requireAuth, type AuthRequest } from './src/middleware/auth.ts';
 import { adminAuth } from './src/lib/firebase-admin.ts';
 import { SecurityStore } from './src/lib/securityStore.ts';
@@ -621,7 +622,15 @@ async function startServer() {
         if (target.decision !== 'pending') throw new Error(`Approval already resolved as ${target.decision}.`);
         const decidedAt = new Date().toISOString();
         const updatedApprovals = approvals.map((item) => item.id === approvalId ? { ...item, decision: decision as 'approved' | 'rejected', decidedAt } : item);
-        const transactions = (current.transactions ?? []).map((tx) => tx.approvalId === approvalId && decision === 'rejected' ? { ...tx, status: 'rejected' as const } : tx);
+        const transactions = (current.transactions ?? []).map((tx) =>
+          tx.approvalId !== approvalId
+            ? tx
+            : target.kind === 'settlement'
+              ? { ...tx, status: resolveSettlementApprovalStatus(tx, decision) }
+              : decision === 'rejected'
+                ? { ...tx, status: 'rejected' as const }
+                : tx
+        );
         const tasks = (current.tasks ?? []).map((task) => target.kind === 'autonomous_task' && task.id === target.subjectId ? { ...task, status: decision === 'approved' ? 'queued' as const : 'rejected' as const } : task);
         if (target.kind === 'self_upgrade' && decision === 'approved') {
           const proposal = (current.selfUpgrades ?? []).find((item) => item.id === target.subjectId);
