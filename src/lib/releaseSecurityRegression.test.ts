@@ -6,6 +6,7 @@ import path from 'node:path';
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
 const securityUi = fs.readFileSync(path.join(root, 'src/components/SecurityApprovals.tsx'), 'utf8');
+const jerryEngine = fs.readFileSync(path.join(root, 'src/lib/jerryEngine.ts'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -126,4 +127,13 @@ test('self-upgrade verification uses the signed isolated runner rather than synt
   assert.match(server, /runIsolatedSelfUpgradeTests\(/);
   assert.match(server, /isolated\.status === 'passed' \? 'passed'/);
   assert.doesNotMatch(server, /syntax transformation passed via esbuild/);
+});
+
+
+test('self-upgrade deployment gate requires explicit owner approval, not merely completed tests', () => {
+  const start = jerryEngine.indexOf('export function canDeploySelfUpgrade');
+  const end = jerryEngine.indexOf('export function executeRevenueTask', start);
+  const gate = jerryEngine.slice(start, end);
+  assert.match(gate, /approvalStatus !== 'approved'/);
+  assert.match(gate, /explicit owner approval is required/);
 });
