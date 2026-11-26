@@ -186,7 +186,7 @@ test('PostgreSQL tenant isolation: workspace, approvals, idempotency, tasks, led
       headline: owner, summaryText: `private ${owner} summary`, notificationTitle: owner,
       notificationRead: false, modelUsed: 'integration-test',
       metrics: { todayProfitUsd: 0, previousDayProfitUsd: 0, activeTasksCount: 0, completedTasksCount: 0, newRevenueInsightsCount: 0, internetAuthorityScore: 0 },
-      chartSeries: [], taskBreakdown: [],
+      chartSeries: [], taskBreakdown: [], financialDataStatus: 'unavailable_not_loaded_from_verified_ledger',
     });
     await saveDailySummaryForUser(userA.uid, userA.email, summaryFor('A'));
     await saveDailySummaryForUser(userB.uid, userB.email, summaryFor('B'));
