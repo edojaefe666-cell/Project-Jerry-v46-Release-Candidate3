@@ -70,6 +70,86 @@ test('PostgreSQL journal posting, idempotency, reversal and tenant isolation', {
     'Exactly one competing reversal request may create the posting.');
   assert.ok(competingReversals.every((entry) => entry.reversalOf === concurrentOriginal.id));
   await assert.rejects(reversePostedJournalEntry({ uid: otherUid, originalEntryId: first.id, idempotencyKey: `cross-tenant-${suffix}` }), /Only an existing posted journal entry/);
+
+  // A transaction can be confirmed, reorged, reconfirmed in a new block
+  // generation, and reorged again. Each confirmation must have its own
+  // independently reversible journal posting.
+  const { ensureWalletTransactionJournaled } = await import('./walletJournal.ts');
+  const lifecycleTx = {
+    id: `lifecycle-${suffix}`,
+    timestamp: new Date().toISOString(),
+    type: 'incoming' as const,
+    asset: 'BTC' as const,
+    network: 'Bitcoin Mainnet',
+    amount: 0.001,
+    fee: 0,
+    counterparty: 'disposable-reorg-lifecycle-test',
+    status: 'confirmed' as const,
+    note: 'verified reorg lifecycle fixture',
+    isVerifiedOnChain: true,
+    confirmationDepth: 6,
+    verifiedBlockHeight: 900000,
+    verifiedBlockHash: 'a'.repeat(64),
+    journalCycle: 0,
+  };
+  const firstConfirmation = await ensureWalletTransactionJournaled(uid, lifecycleTx);
+  assert.equal(firstConfirmation.action, 'posted');
+  const firstReorgTx = {
+    ...lifecycleTx,
+    status: 'reorged' as const,
+    isVerifiedOnChain: false,
+  };
+  const firstReversal = await ensureWalletTransactionJournaled(uid, firstReorgTx);
+  const firstReversalReplay = await ensureWalletTransactionJournaled(uid, firstReorgTx);
+  assert.equal(firstReversal.action, 'reversed');
+  assert.equal(firstReversalReplay.journalEntryId, firstReversal.journalEntryId,
+    'Re-delivery of the first reorg must replay the same reversal.');
+
+  const secondConfirmationTx = {
+    ...lifecycleTx,
+    verifiedBlockHeight: 900010,
+    verifiedBlockHash: 'b'.repeat(64),
+    journalCycle: 1,
+  };
+  const secondConfirmation = await ensureWalletTransactionJournaled(uid, secondConfirmationTx);
+  assert.equal(secondConfirmation.action, 'posted',
+    'A reconfirmation in a new block generation must create a new journal posting.');
+  const secondReorgTx = {
+    ...secondConfirmationTx,
+    status: 'reorged' as const,
+    isVerifiedOnChain: false,
+  };
+  const secondReversal = await ensureWalletTransactionJournaled(uid, secondReorgTx);
+  const secondReversalReplay = await ensureWalletTransactionJournaled(uid, secondReorgTx);
+  assert.equal(secondReversal.action, 'reversed');
+  assert.equal(secondReversalReplay.journalEntryId, secondReversal.journalEntryId,
+    'Re-delivery of the second reorg must replay the same reversal.');
+
+  const lifecycleEntries = await pool.query(
+    `SELECT id::text, idempotency_key, reversal_of::text, status
+       FROM journal_entries
+      WHERE user_id = (SELECT id FROM users WHERE uid = $1)
+        AND idempotency_key LIKE $2
+      ORDER BY id`,
+    [uid, `wallet-tx:${lifecycleTx.id}:%`],
+  );
+  const postedConfirmations = lifecycleEntries.rows.filter((row) =>
+    row.status === 'posted' && row.idempotency_key.includes(':confirmed:'));
+  const postedReversals = lifecycleEntries.rows.filter((row) =>
+    row.status === 'posted' && row.idempotency_key.includes(':reorg-reversal:'));
+  assert.equal(postedConfirmations.length, 2,
+    'Both distinct confirmation generations must be posted exactly once.');
+  assert.equal(postedReversals.length, 2,
+    'Both confirmation generations must be reversed exactly once.');
+  assert.deepEqual(
+    new Set(postedReversals.map((row) => row.reversal_of)),
+    new Set(postedConfirmations.map((row) => row.id)),
+    'Each reversal must target its own confirmation generation, never the earlier generation.',
+  );
+  const lifecycleBalances = await getJournalAccountBalances(uid);
+  assert.ok(lifecycleBalances.every((row) => row.netDebitUnits === '0'),
+    'After both reorgs, every lifecycle account balance must be fully reversed.');
+
   const after = await getJournalAccountBalances(uid);
   assert.ok(after.every((row) => row.netDebitUnits === '0'), 'A complete reversal must return all account net balances to zero.');
 });
