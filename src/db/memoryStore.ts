@@ -12,6 +12,7 @@ export function validateMemoryEntry(entry: MemoryEntry): string | null {
   if (!entry || typeof entry !== 'object') return 'A memory entry is required.';
   if (typeof entry.id !== 'string' || !entry.id.trim() || entry.id.length > 160) return 'Memory id is invalid.';
   if (!MEMORY_CATEGORIES.has(entry.category)) return 'Memory category is invalid.';
+  if (entry.area && entry.area !== memoryAreaForCategory(entry.category)) return 'Memory area does not match its category.';
   if (typeof entry.title !== 'string' || !entry.title.trim() || entry.title.length > 240) return 'Memory title must be 1–240 characters.';
   if (typeof entry.content !== 'string' || !entry.content.trim() || entry.content.length > 20000) return 'Memory content must be 1–20,000 characters.';
   if (!Array.isArray(entry.tags) || entry.tags.length > 30 || entry.tags.some((tag) => typeof tag !== 'string' || tag.length > 80)) return 'Memory tags are invalid.';
