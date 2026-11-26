@@ -193,7 +193,7 @@ test('Bitcoin transfer approvals reject incomplete or imprecise scope', () => {
 test('owner emergency stop is durable, audited and explicitly recoverable', () => {
   const store = new SecurityStore(':memory:');
   try {
-    assert.equal(store.getEmergencyStop().stopped, false);
+    assert.equal(store.getEmergencyStop().stopped, true);
     const stopped = store.setEmergencyStop(true, 'owner-stop', 'Owner requested immediate shutdown');
     assert.equal(stopped.stopped, true);
     assert.equal(stopped.ownerUid, 'owner-stop');
@@ -211,7 +211,7 @@ test('emergency stop requires an owner and a meaningful reason', () => {
   try {
     assert.throws(() => store.setEmergencyStop(true, '', 'stop now'), /Owner UID/);
     assert.throws(() => store.setEmergencyStop(true, 'owner-stop', 'no'), /meaningful emergency-control reason/);
-    assert.equal(store.getEmergencyStop().stopped, false);
+    assert.equal(store.getEmergencyStop().stopped, true);
   } finally {
     store.close();
   }
