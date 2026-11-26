@@ -85,7 +85,7 @@ export async function recordLedgerTransactionsForUser(
     // the previous sync. The journal outbox event is committed atomically.
     await db.transaction(async (tx) => {
       await tx.insert(ledgerTransactions).values(
-      txs.map((tx) => ({
+        txs.map((tx) => ({
         userId: user.id,
         txRef: tx.id,
         timestamp: tx.timestamp,
@@ -105,8 +105,8 @@ export async function recordLedgerTransactionsForUser(
         confirmationDepth: tx.confirmationDepth ?? null,
         verifiedBlockHeight: tx.verifiedBlockHeight ?? null,
         verifiedBlockHash: tx.verifiedBlockHash ?? null,
-      }))
-    ).onConflictDoUpdate({
+        }))
+      ).onConflictDoUpdate({
       target: [ledgerTransactions.userId, ledgerTransactions.txRef],
       set: {
         timestamp: sql`excluded.timestamp`,
@@ -126,7 +126,7 @@ export async function recordLedgerTransactionsForUser(
         confirmationDepth: sql`excluded.confirmation_depth`,
         verifiedBlockHeight: sql`excluded.verified_block_height`,
         verifiedBlockHash: sql`excluded.verified_block_hash`,
-      },
+        },
       });
       for (const txRow of txs) {
         if (isEligibleWalletJournalEvent(txRow)) await enqueueWalletJournalEvent(tx, user.id, txRow);
