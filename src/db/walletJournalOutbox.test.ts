@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
+import { getWalletJournalEventKey, isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
 import type { WalletTransaction } from '../lib/types.ts';
 
 const transaction = (overrides: Partial<WalletTransaction> = {}): WalletTransaction => ({
@@ -34,4 +34,15 @@ test('ineligible: pending or unverified confirmed Bitcoin transaction', () => {
 test('ineligible: non-Bitcoin assets and non-mainnet networks', () => {
   assert.equal(isEligibleWalletJournalEvent(transaction({ asset: 'ETH' })), false);
   assert.equal(isEligibleWalletJournalEvent(transaction({ network: 'Bitcoin Testnet' })), false);
+});
+
+test('journal event identity changes across block generations and reorg cycles', () => {
+  const firstConfirmation = transaction({ verifiedBlockHash: 'a'.repeat(64), journalCycle: 0 });
+  const firstReorg = transaction({ status: 'reorged', isVerifiedOnChain: false, verifiedBlockHash: 'a'.repeat(64), journalCycle: 0 });
+  const secondConfirmation = transaction({ verifiedBlockHash: 'b'.repeat(64), journalCycle: 1 });
+  const repeatedBlockAfterReorg = transaction({ verifiedBlockHash: 'a'.repeat(64), journalCycle: 1 });
+  assert.notEqual(getWalletJournalEventKey(firstConfirmation), getWalletJournalEventKey(secondConfirmation));
+  assert.notEqual(getWalletJournalEventKey(firstConfirmation), getWalletJournalEventKey(repeatedBlockAfterReorg));
+  assert.notEqual(getWalletJournalEventKey(firstReorg), getWalletJournalEventKey(firstConfirmation));
+  assert.notEqual(getWalletJournalEventKey(firstConfirmation), getWalletJournalEventKey(transaction({ verifiedBlockHash: 'a'.repeat(64), journalCycle: 1 })));
 });
