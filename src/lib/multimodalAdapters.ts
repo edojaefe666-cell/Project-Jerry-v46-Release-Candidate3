@@ -109,7 +109,7 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
         try {
           const response = await fetchImpl('https://api.openai.com/v1/audio/speech', {
             method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ model, input: text, voice: options.voice || 'onyx', instructions: options.style || 'Speak clearly in a calm, warm, confident tone.', response_format: 'mp3' }),
+            body: JSON.stringify({ model, input: text, voice: ['alloy','ash','ballad','coral','echo','fable','onyx','nova','sage','shimmer','verse','marin','cedar'].includes(options.voice || '') ? options.voice : 'onyx', instructions: options.style || 'Speak clearly in a calm, warm, confident tone.', response_format: 'mp3' }),
             signal: controller.signal,
           });
           if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}.`);
