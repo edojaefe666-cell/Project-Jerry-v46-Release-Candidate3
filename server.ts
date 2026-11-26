@@ -133,6 +133,26 @@ async function startServer() {
     next();
   };
 
+  // Track in-flight isolated code verification requests so an owner stop command
+  // can abort their HTTP requests immediately rather than only blocking new work.
+  const activeIsolatedExecutions = new Set<AbortController>();
+  const runIsolatedTestsWithStop = async (input: { language: string; source: string; testCode: string }) => {
+    if (isEmergencyStopActive()) {
+      return { status: 'unavailable' as const, report: 'Emergency stop is active. Isolated verification was not started.' };
+    }
+    const controller = new AbortController();
+    activeIsolatedExecutions.add(controller);
+    try {
+      const result = await runIsolatedSelfUpgradeTests(input, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return { status: 'unavailable' as const, report: 'Emergency stop interrupted isolated verification; no verified test result was accepted.' };
+      }
+      return result;
+    } finally {
+      activeIsolatedExecutions.delete(controller);
+    }
+  };
+
   // Provider calls consume quota and may incur cost. Apply per-owner limits
   // after Firebase authentication and before parsing/generating model output.
   const brainRateLimit = createOwnerRateLimiter({ limit: 20, windowMs: 60_000, maxKeys: 1_000 });
@@ -260,6 +280,9 @@ async function startServer() {
     }
     try {
       const control = securityStore.setEmergencyStop(body.action === 'stop', req.user!.uid, reason);
+      if (body.action === 'stop') {
+        for (const controller of activeIsolatedExecutions) controller.abort(new Error('Owner emergency stop engaged'));
+      }
       res.json({ ...control, hardStop: process.env.JERRY_EMERGENCY_STOP === '1', executionBlocked: isEmergencyStopActive() });
     } catch {
       res.status(503).json({ error: 'Emergency-stop state could not be safely updated.' });
@@ -1823,7 +1846,7 @@ async function startServer() {
           ? 'Security policy audit passed. Awaiting isolated runtime verification.'
           : `Blocked by security policy: ${audit.notes}`;
         if (audit.passed) {
-          const isolated = await runIsolatedSelfUpgradeTests({
+          const isolated = await runIsolatedTestsWithStop({
             language: proposal.language,
             source: proposal.code,
             testCode: proposal.testCode,
@@ -1863,7 +1886,7 @@ async function startServer() {
       return;
     }
 
-    const isolated = await runIsolatedSelfUpgradeTests({ language, source: code, testCode });
+    const isolated = await runIsolatedTestsWithStop({ language, source: code, testCode });
     res.json({
       securityAuditPassed: true,
       securityAuditNotes: audit.notes,
