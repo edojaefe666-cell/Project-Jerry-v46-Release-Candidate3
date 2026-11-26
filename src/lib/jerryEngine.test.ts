@@ -708,7 +708,8 @@ test('evaluateDailyGrowthProgression tracks beating previous day profit and risi
 });
 
 test('evaluateHumanUnderstandingProgress confirms daily understanding exceeds previous day and grows with new insights', () => {
-  const today = '2026-11-12';
+  // Use a date after the seeded memories so this baseline measures no new daily evidence.
+  const today = '2099-01-01';
   const baseline = evaluateHumanUnderstandingProgress(
     INITIAL_JERRY_STATE.humanInsights,
     INITIAL_JERRY_STATE.memories,
