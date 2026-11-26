@@ -158,3 +158,11 @@ test('emergency stop keeps internal wallet journal recovery separate from extern
   assert.match(worker, /drainWalletJournalOutbox/);
   assert.doesNotMatch(worker, /submit-transfer|broadcast|external execution/i);
 });
+
+
+test('owner emergency stop aborts in-flight isolated verification requests', () => {
+  assert.match(server, /const activeIsolatedExecutions = new Set<AbortController>\(\)/);
+  assert.match(server, /for \(const controller of activeIsolatedExecutions\) controller\.abort/);
+  assert.match(server, /runIsolatedSelfUpgradeTests\(input, \{ signal: controller\.signal \}\)/);
+  assert.match(server, /if \(controller\.signal\.aborted\)/);
+});
