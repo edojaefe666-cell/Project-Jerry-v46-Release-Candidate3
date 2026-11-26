@@ -1744,6 +1744,7 @@ async function startServer() {
       }
       const key = String(req.header('Idempotency-Key') ?? '').trim();
       if (!key) { res.status(400).json({ error: 'Idempotency-Key header is required.' }); return; }
+      const codeAudit = auditSelfProgrammedCode(String(proposal.code));
       const canonical: SelfUpgradeProposal = {
         id: String(proposal.id),
         prompt: String(proposal.prompt).trim(),
@@ -1753,10 +1754,11 @@ async function startServer() {
         summary: String(proposal.summary ?? '').trim(),
         code: String(proposal.code),
         testCode: String(proposal.testCode),
-        securityAuditPassed: Boolean(proposal.securityAuditPassed),
-        securityAuditNotes: String(proposal.securityAuditNotes ?? ''),
-        testStatus: proposal.testStatus === 'passed' || proposal.testStatus === 'failed' ? proposal.testStatus : 'pending',
-        testReport: String(proposal.testReport ?? 'Awaiting test execution prior to owner permission.'),
+        // Never trust browser-supplied security or test results.
+        securityAuditPassed: codeAudit.passed,
+        securityAuditNotes: codeAudit.notes,
+        testStatus: 'pending',
+        testReport: 'Awaiting server-side verification; runtime tests have not been executed.',
         approvalStatus: 'awaiting_permission',
         createdAt: String(proposal.createdAt ?? new Date().toISOString()),
       };
@@ -1787,24 +1789,24 @@ async function startServer() {
         const audit = auditSelfProgrammedCode(proposal.code);
         let securityAuditPassed = audit.passed;
         let securityAuditNotes = audit.notes;
-        let testStatus: SelfUpgradeProposal['testStatus'] = 'failed';
-        let testReport = `Blocked by security policy: ${audit.notes}`;
+        let testStatus: SelfUpgradeProposal['testStatus'] = audit.passed ? 'pending' : 'failed';
+        let testReport = audit.passed
+          ? 'Security policy audit passed. Runtime tests have not been executed; owner approval remains blocked.'
+          : `Blocked by security policy: ${audit.notes}`;
         if (audit.passed) {
           if (/^(typescript|javascript)$/i.test(proposal.language.trim())) {
             try {
               const esbuild = await import('esbuild');
               await esbuild.transform(proposal.code, { loader: /typescript/i.test(proposal.language) ? 'ts' : 'js' });
               if (proposal.testCode.trim()) await esbuild.transform(proposal.testCode, { loader: /typescript/i.test(proposal.language) ? 'ts' : 'js' });
-              testStatus = 'passed';
-              testReport = `${proposal.language} syntax & static transform passed via esbuild; security invariants verified.`;
+              testStatus = 'pending';
+              testReport = `${proposal.language} syntax transformation passed via esbuild. Test code was not executed in an isolated runtime; owner approval remains blocked.`;
             } catch (err) {
               testReport = `Syntax error: ${err instanceof Error ? err.message : 'Invalid JS/TS syntax'}`;
             }
-          } else if (proposal.testCode.trim().length > 8) {
-            testStatus = 'passed';
-            testReport = `${proposal.language} module structure, test assertions, and security policy checks passed.`;
           } else {
-            testReport = 'Test suite must include verifiable assertions before deployment.';
+            testStatus = 'pending';
+            testReport = `No isolated runtime test adapter is configured for ${proposal.language}. Test code was not executed; owner approval remains blocked.`;
           }
         }
         const updated = { ...proposal, securityAuditPassed, securityAuditNotes, testStatus, testReport, approvalStatus: 'awaiting_permission' as const };
@@ -1851,8 +1853,8 @@ async function startServer() {
         res.json({
           securityAuditPassed: true,
           securityAuditNotes: audit.notes,
-          testStatus: 'passed',
-          testReport: `${language} syntax & static transform passed via esbuild; security invariants verified.`,
+          testStatus: 'pending',
+          testReport: `${language} syntax transformation passed via esbuild. Runtime tests were not executed; owner approval remains blocked.`,
         });
         return;
       } catch (err) {
@@ -1866,14 +1868,11 @@ async function startServer() {
       }
     }
 
-    const hasTestAssertions = testCode.trim().length > 8;
     res.json({
       securityAuditPassed: true,
       securityAuditNotes: audit.notes,
-      testStatus: hasTestAssertions ? 'passed' : 'failed',
-      testReport: hasTestAssertions
-        ? `${language} module structure, test assertions, and security policy checks passed.`
-        : 'Test suite must include verifiable assertions before deployment.',
+      testStatus: 'pending',
+      testReport: `No isolated runtime test adapter is configured for ${language}. Test code was not executed; owner approval remains blocked.`,
     });
   });
 
