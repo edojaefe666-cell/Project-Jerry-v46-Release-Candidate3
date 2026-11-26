@@ -18,6 +18,7 @@ import { ensureWalletTransactionJournaled } from './src/db/walletJournal.ts';
 import { drainWalletJournalOutbox } from './src/db/walletJournalOutbox.ts';
 import { saveMemoryEntryForUser, searchMemoryForUser } from './src/db/memoryStore.ts';
 import { generateWithModelFallback, providerConfigurationFromEnvironment } from './src/lib/providerAdapters.ts';
+import { createOwnerRateLimiter } from './src/lib/requestRateLimit.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
 import { sql } from 'drizzle-orm';
 import {
@@ -238,6 +239,12 @@ async function startServer() {
     }
     next();
   };
+
+  // Provider calls consume quota and may incur cost. Apply per-owner limits
+  // after Firebase authentication and before parsing/generating model output.
+  const brainRateLimit = createOwnerRateLimiter({ limit: 20, windowMs: 60_000, maxKeys: 1_000 });
+  const chatRateLimit = createOwnerRateLimiter({ limit: 30, windowMs: 60_000, maxKeys: 1_000 });
+  const goalPlanRateLimit = createOwnerRateLimiter({ limit: 10, windowMs: 60_000, maxKeys: 1_000 });
 
   const encryptSecurityBackup = (payload: unknown, passphrase: string): string => {
     const salt = randomBytes(16);
@@ -500,7 +507,7 @@ async function startServer() {
 
   // Provider-neutral Jerry Brain endpoint. Provider credentials are read only
   // from server environment variables and never returned to the Android client.
-  app.post('/api/brain/generate', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/brain/generate', requireAuth, brainRateLimit, async (req: AuthRequest, res) => {
     const body = req.body as { prompt?: unknown; task?: unknown; preferredProvider?: unknown };
     const tasks = new Set(['chat', 'planning', 'research', 'coding']);
     const providers = new Set(['google', 'openai', 'anthropic', 'local']);
@@ -1219,7 +1226,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/jerry/chat', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/chat', requireAuth, chatRateLimit, async (req: AuthRequest, res) => {
     const { message, history = [], contextSummary = '' } = req.body as {
       message?: unknown;
       history?: Array<{ role?: unknown; content?: unknown }>;
@@ -1275,7 +1282,7 @@ async function startServer() {
   });
 
   // Jerry Goal Engine: Generate 8-Level Plan
-  app.post('/api/jerry/plan-goal', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/plan-goal', requireAuth, goalPlanRateLimit, async (req: AuthRequest, res) => {
     const { objective, availableCapitalUsd = 1000, weeklyHours = 10 } = req.body as {
       objective?: string;
       availableCapitalUsd?: number;
