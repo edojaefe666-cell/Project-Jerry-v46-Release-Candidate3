@@ -1526,7 +1526,7 @@ async function startServer() {
             title: parsed.title.trim().slice(0, 240),
             content: parsed.content.trim().slice(0, 20_000),
             tags: Array.isArray(parsed.tags)
-              ? parsed.tags.filter((tag): tag is string => typeof tag === 'string' && !!tag.trim()).slice(0, 6)
+              ? parsed.tags.filter((tag): tag is string => typeof tag === 'string' && !!tag.trim()).map((tag) => tag.trim().slice(0, 80)).slice(0, 6)
               : ['owner-taught', category],
           };
           modelUsed = generated.model;
