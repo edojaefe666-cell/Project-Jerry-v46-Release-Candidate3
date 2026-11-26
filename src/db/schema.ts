@@ -106,6 +106,7 @@ export const memoryEntries = pgTable('memory_entries', {
   id: text('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
   category: text('category').notNull(),
+  memoryArea: text('memory_area').notNull().default('knowledge_experience'),
   title: text('title').notNull(),
   content: text('content').notNull(),
   outcome: text('outcome'),
