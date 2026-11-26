@@ -5,12 +5,12 @@ import { applyLearningEnhancement, createOwnerLearningEntry } from './learningMe
 const original = createOwnerLearningEntry(
   'memory-test-1',
   'lesson',
-  'Preserve the owner's exact knowledge when AI enhancement is unavailable.',
+  "Preserve the owner's exact knowledge when AI enhancement is unavailable.",
   '2026-11-26T12:00:00.000Z',
 );
 
 test('creates an owner-authored fallback entry without changing its meaning', () => {
-  assert.equal(original.content, 'Preserve the owner\'s exact knowledge when AI enhancement is unavailable.');
+  assert.equal(original.content, "Preserve the owner's exact knowledge when AI enhancement is unavailable.");
   assert.equal(original.category, 'lesson');
   assert.deepEqual(original.tags, ['owner-taught', 'lesson']);
 });
