@@ -1068,6 +1068,11 @@ async function startServer() {
             // current-chain value.
             verifiedBlockHeight: finalityLost ? item.verifiedBlockHeight : chainTx.block_height,
             verifiedBlockHash: finalityLost ? item.verifiedBlockHash : chainTx.block_hash,
+            // A fresh journal cycle is created only when a previously reorged
+            // transaction is independently confirmed again.
+            journalCycle: item.status === 'reorged' && final && latestApproved
+              ? (item.journalCycle ?? 0) + 1
+              : (item.journalCycle ?? 0),
             note: finalityLost
               ? `${item.note} Bitcoin chain reconciliation detected loss of finality or a possible reorg; prior finality evidence is retained for audit history.`
               : item.note,
