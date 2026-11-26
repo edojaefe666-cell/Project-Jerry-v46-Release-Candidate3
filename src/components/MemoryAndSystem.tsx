@@ -49,6 +49,7 @@ export function MemoryAndSystem({
   );
   const [identityMessage, setIdentityMessage] = useState<string | null>(null);
   const [resetApprovalId, setResetApprovalId] = useState('');
+  const [memoryExportStatus, setMemoryExportStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -87,6 +88,29 @@ export function MemoryAndSystem({
   const visibleMemories = persistentSearchResults ?? filterMemories(memories, query, categoryFilter).filter((entry) =>
     memoryAreaFilter === 'all' || (entry.area ?? memoryAreaForCategory(entry.category)) === memoryAreaFilter,
   );
+
+  const handleExportMemory = async () => {
+    setMemoryExportStatus('Preparing secure memory export…');
+    try {
+      const response = await apiFetch('/api/memory/export', { method: 'GET' });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(payload.error || `Memory export failed (HTTP ${response.status}).`);
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = 'jerry-memory-export.json';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+      setMemoryExportStatus('Memory export prepared. Keep this file private; it contains your saved Jerry knowledge.');
+    } catch (error) {
+      setMemoryExportStatus(error instanceof Error ? error.message : 'Memory export failed.');
+    }
+  };
 
   const handleSaveMemory = (e: FormEvent) => {
     e.preventDefault();
@@ -145,13 +169,19 @@ export function MemoryAndSystem({
             </p>
           </div>
 
-          <p className="text-xs text-slate-500" role="status">
-            {memorySearchStatus === 'loading'
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-500" role="status">
+              {memorySearchStatus === 'loading'
               ? 'Searching Jerry’s owner-scoped persistent memory…'
               : memorySearchStatus === 'ready'
                 ? 'Showing database-backed memory results.'
                 : 'Persistent search is unavailable; showing locally available workspace memories.'}
-          </p>
+            </p>
+            <button type="button" onClick={() => void handleExportMemory()} className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50">
+              Export persistent memory
+            </button>
+          </div>
+          {memoryExportStatus && <p className="text-xs text-slate-600" role="status">{memoryExportStatus}</p>}
 
           <div className="flex flex-wrap gap-2" aria-label="Persistent memory areas">
             {([
