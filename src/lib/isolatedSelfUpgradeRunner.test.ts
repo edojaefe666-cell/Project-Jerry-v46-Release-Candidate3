@@ -128,3 +128,27 @@ test('rejects missing or oversized code before contacting the runner', async () 
   assert.equal(oversized.status, 'unavailable');
   assert.equal(called, false);
 });
+
+
+test('owner cancellation aborts the isolated runner request and never reports a pass', async () => {
+  const ownerStop = new AbortController();
+  let requestSignal: AbortSignal | undefined;
+  const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+    requestSignal = init?.signal ?? undefined;
+    return await new Promise<Response>((_resolve, reject) => {
+      requestSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    });
+  }) as typeof fetch;
+  const pending = runIsolatedSelfUpgradeTests(input, {
+    endpoint: 'https://runner.example.test/execute',
+    secret,
+    fetchImpl,
+    signal: ownerStop.signal,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  ownerStop.abort(new Error('Owner emergency stop engaged'));
+  const result = await pending;
+  assert.equal(requestSignal?.aborted, true);
+  assert.equal(result.status, 'unavailable');
+  assert.match(result.report, /timed out|could not be reached/);
+});
