@@ -116,7 +116,10 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50): Promis
           [row.id],
         );
 
-        processed += result.action === 'not-eligible' ? 0 : 1;
+        // Count every successfully completed outbox row, including safe no-op
+        // duplicate deliveries whose journal effect was already applied.
+        // Journal posting counts are measured from the ledger, not this worker metric.
+        processed++;
       } catch (error) {
         await client.query(
           `UPDATE wallet_journal_outbox
