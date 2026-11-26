@@ -48,7 +48,7 @@ export function SecurityApprovals() {
 
   const createApproval = async () => {
     if (!summary.trim()) return; setCreating(true); setError(null);
-    try { await apiJson('/api/security/approvals', { method: 'POST', body: JSON.stringify({ action, summary: summary.trim(), ...(amountUsd.trim() ? { amountUsd: Number(amountUsd) } : {}), ...(action === 'bitcoin_transfer' ? { scope: { asset: 'BTC', network: 'Bitcoin Mainnet', destination: btcScope.destination.trim(), amount: Number(btcScope.amount), fee: Number(btcScope.fee) } } : {}) }) }); setSummary(''); setAmountUsd(''); setBtcScope({ destination: '', amount: '', fee: '' }); setStatus('pending'); await loadApprovals(); }
+    try { await apiJson('/api/security/approvals', { method: 'POST', body: JSON.stringify({ action, summary: summary.trim(), ...(amountUsd.trim() ? { amountUsd: Number(amountUsd) } : {}), ...(action === 'bitcoin_transfer' ? { scope: { asset: 'BTC', network: 'Bitcoin Mainnet', destination: btcScope.destination.trim(), amount: Number(btcScope.amount), fee: Number(btcScope.fee) } } : action === 'high_impact_change' ? { scope: { operation: 'security_backup_restore' } } : {}) }) }); setSummary(''); setAmountUsd(''); setBtcScope({ destination: '', amount: '', fee: '' }); setStatus('pending'); await loadApprovals(); }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not create approval.'); }
     finally { setCreating(false); }
   };
