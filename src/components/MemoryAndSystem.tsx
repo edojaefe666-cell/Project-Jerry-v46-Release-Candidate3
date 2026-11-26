@@ -105,7 +105,7 @@ export function MemoryAndSystem({
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(objectUrl);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
       setMemoryExportStatus('Memory export prepared. Keep this file private; it contains your saved Jerry knowledge.');
     } catch (error) {
       setMemoryExportStatus(error instanceof Error ? error.message : 'Memory export failed.');
