@@ -101,7 +101,7 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50): Promis
           throw new Error('Outbox owner no longer exists.');
         }
 
-        const result = await ensureWalletTransactionJournaled(
+        await ensureWalletTransactionJournaled(
           user.rows[0].uid,
           row.payload_json,
         );
