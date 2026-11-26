@@ -16,7 +16,7 @@ function responseRecorder() {
   };
 }
 
-test('limits requests independently per authenticated owner and reports retry timing', () => {
+function invoke(limit: ReturnType<typeof createOwnerRateLimiter>, uid?: string) {\n  const response = responseRecorder();\n  let nextCalled = false;\n  limit(\n    { user: uid ? { uid } : undefined } as Parameters<typeof limit>[0],\n    response as unknown as Parameters<typeof limit>[1],\n    () => { nextCalled = true; },\n  );\n  return { response, nextCalled };\n}\n\ntest('limits requests independently per authenticated owner and reports retry timing', () => {
   let currentTime = 1_000;
   const limit = createOwnerRateLimiter({ limit: 2, windowMs: 10_000, now: () => currentTime });
   const call = (uid: string) => {
@@ -43,7 +43,7 @@ test('rejects missing owner identity and invalid limiter configuration', () => {
   const limit = createOwnerRateLimiter({ limit: 1, windowMs: 1_000 });
   const response = responseRecorder();
   let nextCalled = false;
-  limit({}, response, () => { nextCalled = true; });
+  limit({} as Parameters<typeof limit>[0], response as unknown as Parameters<typeof limit>[1], () => { nextCalled = true; });
   assert.equal(response.statusCode, 401);
   assert.equal(nextCalled, false);
   assert.throws(() => createOwnerRateLimiter({ limit: 0, windowMs: 1_000 }), /positive safe integers/);
@@ -59,12 +59,12 @@ test('bounds retained owner buckets when many identities are observed', () => {
   // The bounded map evicts the oldest identity rather than growing forever.
   const response = responseRecorder();
   let nextCalled = false;
-  limit({ user: { uid: 'four' } }, response, () => { nextCalled = true; });
+  limit({ user: { uid: 'four' } } as Parameters<typeof limit>[0], response as unknown as Parameters<typeof limit>[1], () => { nextCalled = true; });
   assert.equal(response.statusCode, 429);
   assert.equal(nextCalled, false);
   currentTime += 10_001;
   const fresh = responseRecorder();
   let freshNext = false;
-  limit({ user: { uid: 'four' } }, fresh, () => { freshNext = true; });
+  limit({ user: { uid: 'four' } } as Parameters<typeof limit>[0], fresh as unknown as Parameters<typeof limit>[1], () => { freshNext = true; });
   assert.equal(freshNext, true);
 });
