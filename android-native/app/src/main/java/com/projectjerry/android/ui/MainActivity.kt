@@ -41,12 +41,12 @@ class MainActivity : AppCompatActivity() {
             webChromeClient = WebChromeClient()
             webViewClient = object : WebViewClientCompat() {
                 override fun shouldInterceptRequest(
-                    view: WebView?,
+                    view: WebView,
                     request: android.webkit.WebResourceRequest
                 ) = assetLoader.shouldInterceptRequest(request.url)
 
                 override fun shouldOverrideUrlLoading(
-                    view: WebView?,
+                    view: WebView,
                     request: android.webkit.WebResourceRequest
                 ): Boolean {
                     val uri = request.url
