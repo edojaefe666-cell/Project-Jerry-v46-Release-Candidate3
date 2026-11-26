@@ -249,7 +249,7 @@ export class SecurityStore {
     const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
     const leaseCutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
     const result = this.db.prepare(
-      "UPDATE approvals SET reservation_id=?, reserved_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND created_at>=? AND (? IS NULL OR scope_hash=?) AND (reservation_id IS NULL OR reserved_at IS NULL OR reserved_at<? OR reservation_id=?)"
+      "UPDATE approvals SET reservation_id=?, reserved_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND created_at>=? AND (? IS NULL OR scope_hash=?) AND (reservation_id IS NULL OR reserved_at IS NULL OR reserved_at<? OR reservation_id=?) AND EXISTS (SELECT 1 FROM emergency_control WHERE id=1 AND stopped=0)"
     ).run(reservationId, reservedAt, id, actorUid, action, cutoff, expectedHash ?? null, expectedHash ?? null, leaseCutoff, reservationId);
     if (Number(result.changes ?? 0) !== 1) return null;
     const reserved = this.getApproval(id, actorUid);
