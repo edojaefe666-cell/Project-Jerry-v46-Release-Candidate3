@@ -19,7 +19,6 @@ import {
   calculateUnifiedPortfolio,
   createAutonomousTask,
   evaluateDailyGrowthProgression,
-  evaluateInternetDominanceProgress,
   executeLearnedDiscovery,
   executeRevenueTask,
   mergeUniqueDailyDiscoveries,
@@ -587,13 +586,6 @@ export default function App() {
         return `Today's daily summary report (${todayIso}) is already compiled.`;
       }
 
-      const growth = evaluateDailyGrowthProgression(
-        state.transactions,
-        state.dailyProfitHistory ?? [],
-        state.owner.dailyProfitThresholdUsd
-      );
-      const internetProg = evaluateInternetDominanceProgress(state.internetMastery ?? []);
-
       const activeTasksCount = state.tasks.filter(
         (t) => t.status === 'queued' || t.status === 'running'
       ).length;
@@ -605,20 +597,11 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          todayProfitUsd: growth.todayProfitUsd,
-          previousDayProfitUsd: growth.previousDayProfitUsd,
-          dailyThresholdUsd: state.owner.dailyProfitThresholdUsd,
           activeTasksCount,
           completedTasksCount,
           interruptedTasksCount,
           awaitingApprovalCount,
           newRevenueInsightsCount: (state.dailyDiscoveries ?? []).length,
-          topDiscoveries: (state.dailyDiscoveries ?? []).slice(0, 3).map((d) => ({
-            title: d.title,
-            estimatedDailyProfitUsd: d.estimatedDailyProfitUsd,
-          })),
-          dailyTrend: growth.dailyTrend,
-          internetAuthorityScore: internetProg.todayAuthorityScore,
         }),
       });
       const data = (await res.json()) as { report?: DailySummaryReport; error?: string };
