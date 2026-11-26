@@ -49,3 +49,10 @@ The current Brain adapter supports text chat, planning, research and coding prom
 The authenticated Brain generation route is limited to 20 requests per owner per minute, chat to 30, and goal planning to 10. Responses over the limit return HTTP 429 with a `Retry-After` header. The in-process limiter bounds retained owner buckets and resets windows automatically.
 
 These limits are a local abuse/cost guard, not a distributed quota system. A multi-instance production deployment must also enforce shared rate limits and provider-side spending/usage caps at the gateway or provider account. Provider keys should have least privilege and alerts/limits configured where supported.
+
+
+## Goal planning and opportunity assessments
+
+The authenticated goal-planning and opportunity-assessment routes use Jerry's provider-neutral server-side model adapters and per-owner rate limits. They return HTTP 503 when no model provider is configured and HTTP 502 when providers fail or return invalid structured output; they no longer present deterministic sample plans or hard-coded commercial projections as generated AI work.
+
+Opportunity assessment is explicitly model-only unless a separate research connector supplies current sources. It returns no verified facts and labels its output as estimates without live sources. Goal plans are proposals only; generated action steps do not execute, authorize spending, or approve external commitments.
