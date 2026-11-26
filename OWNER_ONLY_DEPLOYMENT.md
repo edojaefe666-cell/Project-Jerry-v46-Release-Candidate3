@@ -79,3 +79,16 @@ The runner remains unavailable by default. Configure these values only in the cl
 The separate runner must enforce disposable container or microVM isolation, OS-level network denial, no inherited credentials or host mounts, read-only base filesystem, ephemeral workspace, resource/time/process limits, and destruction after every request. The request's `limits` fields are requirements, not enforcement; the runner must enforce them independently. Do not treat the runner's `sandboxed` response field as proof of isolation. Review `SELF_UPGRADE_RUNNER_PROTOCOL.md` and independently audit the runner implementation and infrastructure before configuring these secrets.
 
 Until that separate service exists and passes an independent security review, verification remains `pending`, owner approval is blocked, and self-upgrades cannot be deployed. Syntax transformation alone is never considered a runtime test.
+
+
+## Destructive workspace reset authorization
+
+`POST /api/state/reset` is owner-authenticated and blocked while Jerry's emergency stop is engaged. It requires an `approvalId` for a fresh, approved `high_impact_change` authorization whose immutable scope is exactly:
+
+```json
+{ "operation": "workspace_reset" }
+```
+
+The route reserves that authorization before changing workspace state and finalizes (consumes) it only after the reset is durably saved. Missing, pending, rejected, expired, wrong-owner, wrong-scope, already-reserved, consumed, or replayed approvals are rejected. If the workspace update fails before commit, the reservation is released. Server-owned financial and security records are not erased by this workspace reset.
+
+Create and approve the scoped request through the owner security approval endpoints; do not reuse an approval intended for a different action. A reset that commits but encounters a later authorization-finalization storage failure returns an explicit HTTP 503 and must be reconciled before another reset is attempted.
