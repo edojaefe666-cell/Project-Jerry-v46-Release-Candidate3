@@ -44,5 +44,6 @@
 ## Current validation status
 - Source and manifest structure reviewed locally.
 - Unit tests authored for six snapshot validation paths.
-- Android Gradle build, Android unit tests, lint, emulator and physical-device tests have **not** been run in this environment because an Android SDK/Gradle toolchain is not provisioned here.
+- The source has now been reconciled into the canonical v46 PR branch under `android-native/` and a dedicated GitHub Actions workflow builds the debug APK, runs unit tests and runs lint.
+- The first Android CI attempts failed during SDK bootstrap because the setup action requested the removed legacy `tools` package. The workflow has been corrected to request `platform-tools`, Android 35 and build-tools 35.0.0 directly; a successful build is still pending.
 - No APK is claimed as built; no phone settings changed; no production deployment performed.
