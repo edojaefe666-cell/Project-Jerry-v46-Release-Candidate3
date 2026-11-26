@@ -22,6 +22,7 @@ import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createOwnerRateLimiter } from './src/lib/requestRateLimit.ts';
 import { searchLiveResearch } from './src/lib/liveResearch.ts';
+import { parseOpportunityScan } from './src/lib/opportunityScan.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
 import { sql } from 'drizzle-orm';
 import {
@@ -1467,48 +1468,11 @@ async function startServer() {
         prompt: `Analyse these user interests: ${interests.join(', ')}. Available capital context: USD ${availableCapitalUsd}. Use ONLY the supplied sources for factual market claims. Return ONLY a JSON array with at most 5 objects. Each object must have: interestTopic, title, kind ("Business" or "Investment"), summary, profitabilityAnalysis, riskAnalysis, estimatedCapitalUsd (number), nextAction, sourceUrls (array of exact URLs from the supplied sources), sourceSupportedObservations (array of observations explicitly supported by the supplied source extracts), estimatesAndAssumptions (array). Do not create an opportunity if the sources do not support a concrete angle.\n\nRETRIEVED SOURCES:\n${sourceContext}`,
       });
 
-      const raw = generated.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 5) {
-        throw new Error('Research model returned an invalid opportunity list.');
-      }
-      const sourceByUrl = new Map(research.sources.map((source) => [source.url, source]));
-      const alerts: OpportunityAlert[] = parsed.map((entry, index) => {
-        if (!entry || typeof entry !== 'object') throw new Error('Research model returned an invalid opportunity.');
-        const item = entry as Record<string, unknown>;
-        const textField = (key: string, max = 1200): string => {
-          const value = item[key];
-          if (typeof value !== 'string' || !value.trim()) throw new Error(`Research model omitted ${key}.`);
-          return value.trim().slice(0, max);
-        };
-        const sourceUrls = Array.isArray(item.sourceUrls) ? item.sourceUrls.filter((value): value is string => typeof value === 'string') : [];
-        const sourceReferences = [...new Set(sourceUrls)].map((url) => sourceByUrl.get(url)).filter((source): source is NonNullable<typeof source> => Boolean(source))
-          .map((source) => ({ title: source.title, uri: source.url, publishedDate: source.publishedDate }));
-        if (sourceReferences.length === 0) throw new Error('Research model returned an opportunity without a matching retrieved source.');
-        const estimated = Number(item.estimatedCapitalUsd);
-        if (!Number.isFinite(estimated) || estimated < 0) throw new Error('Research model returned an invalid capital estimate.');
-        const listField = (key: string): string[] => Array.isArray(item[key])
-          ? (item[key] as unknown[]).filter((value): value is string => typeof value === 'string').map((value) => value.slice(0, 500)).slice(0, 8)
-          : [];
-        return {
-          id: `alert-${Date.now()}-${index}`,
-          interestTopic: typeof item.interestTopic === 'string' && interests.includes(item.interestTopic) ? item.interestTopic : interests[index % interests.length],
-          title: textField('title', 240),
-          kind: item.kind === 'Investment' ? 'Investment' : 'Business',
-          summary: textField('summary'),
-          profitabilityAnalysis: textField('profitabilityAnalysis'),
-          riskAnalysis: textField('riskAnalysis'),
-          estimatedCapitalUsd: estimated,
-          capitalFit: estimated <= availableCapitalUsd ? 'within_budget' : 'above_budget',
-          verifiedSources: [],
-          sourceReferences,
-          evidenceStatus: 'source_referenced_model_analysis_not_independently_verified',
-          sourceSupportedObservations: listField('sourceSupportedObservations'),
-          estimatesAndAssumptions: listField('estimatesAndAssumptions'),
-          nextAction: textField('nextAction'),
-          status: 'new',
-          createdAt: new Date().toISOString(),
-        } as OpportunityAlert;
+      const alerts = parseOpportunityScan({
+        raw: generated.text,
+        sources: research.sources,
+        interests,
+        availableCapitalUsd,
       });
       res.json({ status: 'completed', alerts, modelUsed: generated.model, researchProvider: 'tavily',
         evidenceStatus: 'source_referenced_model_analysis_not_independently_verified',
