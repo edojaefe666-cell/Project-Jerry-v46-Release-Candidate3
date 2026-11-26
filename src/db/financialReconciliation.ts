@@ -32,24 +32,54 @@ export type WalletJournalEntryAudit = {
 
 export function auditWalletJournalEntries(rows: WalletJournalEntryAuditRow[]): WalletJournalEntryAudit {
   const byId = new Map(rows.map((row) => [String(row.id), row]));
-  const audit = auditWalletJournalEntries(journaled.rows as WalletJournalEntryAuditRow[]);
-  const confirmedEntriesByTransaction = audit.confirmedEntriesByTransaction;
-  const journaledIds = new Set(confirmedEntriesByTransaction.keys());
-  const unreversedReorged = [...reorgedIds].filter((txRef) => {
-    const postedGenerations = confirmedEntriesByTransaction.get(txRef) ?? [];
-    return postedGenerations.some((entryId) => !audit.reversedOriginalEntryIds.has(entryId));
-  });
-  const ineligibleJournaledTransactions = [...new Set(
-    journaled.rows
-      .filter((row) => row.status === 'posted')
-      .map((row) => parseWalletJournalEntryKey(row.idempotency_key))
-      .filter((parsed): parsed is NonNullable<typeof parsed> => parsed?.event === 'confirmed')
-      .map((parsed) => parsed.transactionRef)
-      .filter((txRef) => {
-        const source = legacy.rows.find((row) => row.tx_ref === txRef);
-        return !source || !(source.status === 'confirmed' && source.is_verified_on_chain === true);
-      })
-  )];
+  const confirmedEntriesByTransaction = new Map<string, string[]>();
+  const generationCounts = new Map<string, number>();
+  const reversedOriginalEntryIds = new Set<string>();
+  const unmatchedReversalEntries: string[] = [];
+
+  for (const row of rows) {
+    if (row.status !== 'posted') continue;
+    const parsed = parseWalletJournalEntryKey(row.idempotency_key);
+    if (!parsed) continue;
+
+    if (parsed.event === 'confirmed') {
+      const entries = confirmedEntriesByTransaction.get(parsed.transactionRef) ?? [];
+      entries.push(String(row.id));
+      confirmedEntriesByTransaction.set(parsed.transactionRef, entries);
+      const prefix = `wallet-tx:${parsed.transactionRef}:confirmed`;
+      const generation = row.idempotency_key.slice(prefix.length) || ':legacy';
+      const generationKey = `${parsed.transactionRef}${generation}`;
+      generationCounts.set(generationKey, (generationCounts.get(generationKey) ?? 0) + 1);
+      continue;
+    }
+
+    const originalId = row.reversal_of ? String(row.reversal_of) : '';
+    const original = byId.get(originalId);
+    const originalParsed = original && original.status === 'posted'
+      ? parseWalletJournalEntryKey(original.idempotency_key)
+      : null;
+    if (!originalParsed || originalParsed.event !== 'confirmed' ||
+        originalParsed.transactionRef !== parsed.transactionRef) {
+      unmatchedReversalEntries.push(String(row.id));
+      continue;
+    }
+
+    const reversalPrefix = `wallet-tx:${parsed.transactionRef}:reorg-reversal`;
+    const reversalGeneration = row.idempotency_key.slice(reversalPrefix.length);
+    const originalPrefix = `wallet-tx:${parsed.transactionRef}:confirmed`;
+    const originalGeneration = original.idempotency_key.slice(originalPrefix.length);
+    const legacyEntryBinding = /^:entry-(\\d+)$/.exec(reversalGeneration);
+    const matchesGeneration = reversalGeneration.startsWith(':cycle-')
+      ? reversalGeneration === originalGeneration
+      : legacyEntryBinding
+        ? legacyEntryBinding[1] === originalId
+        : reversalGeneration === '' && originalGeneration === '';
+    if (!matchesGeneration) {
+      unmatchedReversalEntries.push(String(row.id));
+      continue;
+    }
+    reversedOriginalEntryIds.add(originalId);
+  }
 
   return {
     confirmedEntriesByTransaction,
@@ -94,34 +124,41 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
   const confirmedIds = new Set<string>();
   const reorgedIds = new Set<string>();
   for (const row of legacy.rows) {
-    if (row.status === 'confirmed' && row.is_verified_on_chain) confirmedIds.add(row.tx_ref);
+    if (row.status === 'confirmed' && row.is_verified_on_chain === true) confirmedIds.add(row.tx_ref);
     if (row.status === 'reorged') reorgedIds.add(row.tx_ref);
   }
+
   const journaled = await pool.query(
     `SELECT je.id::text, je.idempotency_key, je.reversal_of::text, je.status
        FROM journal_entries je JOIN users u ON u.id = je.user_id
       WHERE u.uid = $1 AND je.idempotency_key LIKE 'wallet-tx:%'`,
     [uid],
   );
-  const confirmedEntriesByTransaction = new Map<string, string[]>();
-  const reversedOriginalEntryIds = new Set<string>();
-  for (const row of journaled.rows) {
-    const parsed = parseWalletJournalEntryKey(row.idempotency_key);
-    if (!parsed || row.status !== 'posted') continue;
-    if (parsed.event === 'confirmed') {
-      const entries = confirmedEntriesByTransaction.get(parsed.transactionRef) ?? [];
-      entries.push(String(row.id));
-      confirmedEntriesByTransaction.set(parsed.transactionRef, entries);
-    }
-    if (parsed.event === 'reorg-reversal' && row.reversal_of) {
-      reversedOriginalEntryIds.add(String(row.reversal_of));
-    }
-  }
-  const journaledIds = new Set(confirmedEntriesByTransaction.keys());
+  const audit = auditWalletJournalEntries(journaled.rows as WalletJournalEntryAuditRow[]);
+  const journaledIds = new Set(audit.confirmedEntriesByTransaction.keys());
   const unreversedReorged = [...reorgedIds].filter((txRef) => {
-    const postedGenerations = confirmedEntriesByTransaction.get(txRef) ?? [];
-    return postedGenerations.some((entryId) => !reversedOriginalEntryIds.has(entryId));
+    const postedGenerations = audit.confirmedEntriesByTransaction.get(txRef) ?? [];
+    return postedGenerations.some((entryId) => !audit.reversedOriginalEntryIds.has(entryId));
   });
+
+  const ineligibleJournaledTransactions = [...new Set(
+    journaled.rows
+      .filter((row) => row.status === 'posted')
+      .map((row) => parseWalletJournalEntryKey(row.idempotency_key))
+      .filter((parsed): parsed is NonNullable<typeof parsed> => parsed?.event === 'confirmed')
+      .map((parsed) => parsed.transactionRef)
+      .filter((txRef) => legacy.rows.some((row) =>
+        row.tx_ref === txRef && !(row.status === 'confirmed' && row.is_verified_on_chain === true)
+      )),
+  )];
+
+  const unjournaledConfirmedTransactions = [...confirmedIds].filter((id) => !journaledIds.has(id));
+  const integrityClean = deltaSatoshis === 0n &&
+    unjournaledConfirmedTransactions.length === 0 &&
+    unreversedReorged.length === 0 &&
+    audit.duplicateConfirmedGenerations.length === 0 &&
+    audit.unmatchedReversalEntries.length === 0 &&
+    ineligibleJournaledTransactions.length === 0;
 
   return {
     legacyWalletSatoshis: legacyWalletSatoshis.toString(),
@@ -129,16 +166,12 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
     deltaSatoshis: deltaSatoshis.toString(),
     eligibleHistoricalTransactions: confirmedIds.size,
     journaledTransactions: [...confirmedIds].filter((id) => journaledIds.has(id)).length,
-    unjournaledConfirmedTransactions: [...confirmedIds].filter((id) => !journaledIds.has(id)),
+    unjournaledConfirmedTransactions,
     unreversedReorgedTransactions: unreversedReorged,
     duplicateConfirmedGenerations: audit.duplicateConfirmedGenerations,
     unmatchedReversalEntries: audit.unmatchedReversalEntries,
     ineligibleJournaledTransactions,
-    integrityClean: audit.duplicateConfirmedGenerations.length === 0 &&
-      audit.unmatchedReversalEntries.length === 0 &&
-      ineligibleJournaledTransactions.length === 0 &&
-      unreversedReorged.length === 0 &&
-      [...confirmedIds].every((id) => journaledIds.has(id)),
+    integrityClean,
     balanced: deltaSatoshis === 0n,
   };
 }
