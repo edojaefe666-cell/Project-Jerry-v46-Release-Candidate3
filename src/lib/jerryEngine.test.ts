@@ -211,7 +211,25 @@ test('auditSelfProgrammedCode and canDeploySelfUpgrade enforce security policy a
       testStatus: 'passed',
       approvalStatus: 'awaiting_permission',
     }).allowed,
+    false
+  );
+
+  assert.equal(
+    canDeploySelfUpgrade({
+      securityAuditPassed: true,
+      testStatus: 'passed',
+      approvalStatus: 'approved',
+    }).allowed,
     true
+  );
+
+  assert.equal(
+    canDeploySelfUpgrade({
+      securityAuditPassed: true,
+      testStatus: 'passed',
+      approvalStatus: 'approved_deployed',
+    }).allowed,
+    false
   );
 });
 
