@@ -9,6 +9,7 @@ export interface ModelGenerationResult {
 export interface ModelGenerationOptions {
   task: ModelTask;
   prompt: string;
+  systemInstruction?: string;
   configuration: ProviderConfiguration;
   preferredProvider?: ModelProvider;
   timeoutMs?: number;
@@ -63,6 +64,7 @@ async function generateFromProvider(
   provider: ModelProvider,
   model: string,
   prompt: string,
+  systemInstruction: string | undefined,
   configuration: ProviderConfiguration,
   timeoutMs: number,
   fetchImpl: typeof fetch
@@ -72,7 +74,7 @@ async function generateFromProvider(
     if (!key) throw new Error('Google provider is not configured.');
     const body = await requestJson(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
-      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }) },
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}), contents: [{ role: 'user', parts: [{ text: prompt }] }] }) },
       timeoutMs, fetchImpl
     );
     return extractText(provider, body);
@@ -82,7 +84,7 @@ async function generateFromProvider(
     if (!key) throw new Error('OpenAI provider is not configured.');
     const body = await requestJson('https://api.openai.com/v1/chat/completions', {
       method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] }),
+      body: JSON.stringify({ model, messages: [...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []), { role: 'user', content: prompt }] }),
     }, timeoutMs, fetchImpl);
     return extractText(provider, body);
   }
@@ -92,7 +94,7 @@ async function generateFromProvider(
     const body = await requestJson('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model, max_tokens: 2048, messages: [{ role: 'user', content: prompt }] }),
+      body: JSON.stringify({ model, max_tokens: 2048, ...(systemInstruction ? { system: systemInstruction } : {}), messages: [{ role: 'user', content: prompt }] }),
     }, timeoutMs, fetchImpl);
     return extractText(provider, body);
   }
@@ -102,7 +104,7 @@ async function generateFromProvider(
   const endpoint = new URL('/v1/chat/completions', base);
   const body = await requestJson(endpoint.toString(), {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] }),
+    body: JSON.stringify({ model, messages: [...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []), { role: 'user', content: prompt }] }),
   }, timeoutMs, fetchImpl);
   return extractText(provider, body);
 }
@@ -122,7 +124,7 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
   const failures: string[] = [];
   for (const route of routes) {
     try {
-      const text = await generateFromProvider(route.provider, route.model, prompt, options.configuration, timeoutMs, fetchImpl);
+      const text = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl);
       return { text, provider: route.provider, model: route.model };
     } catch (error) {
       failures.push(`${route.provider}: ${error instanceof Error ? error.message : 'request failed'}`);
