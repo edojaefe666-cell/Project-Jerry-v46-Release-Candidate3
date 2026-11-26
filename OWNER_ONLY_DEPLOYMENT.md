@@ -65,3 +65,17 @@ The authenticated goal-planning and opportunity-assessment routes use Jerry's pr
 Persistent memory is stored in the owner-scoped PostgreSQL `memory_entries` table. Apply the numbered SQL migrations with `bun run db:migrate` after database connectivity is configured. Migration `0008_memory_areas.sql` assigns legacy entries to three searchable areas: `owner_profile` (preferences), `mission_projects` (goals and workflows), and `knowledge_experience` (decisions and lessons). The five existing categories remain intact for compatibility. The authenticated `GET /api/memory` endpoint accepts optional `q`, `category`, `area`, and `limit` query parameters; all search results remain filtered by the authenticated tenant. The Android/web memory screen queries this endpoint when searching and falls back to locally loaded workspace memories only when the persistent search service is unavailable.
 
 The Opportunity Radar (`POST /api/jerry/scan-opportunities`) retrieves bounded source extracts through Tavily when `TAVILY_API_KEY` is configured, then asks a configured provider-neutral research model to analyse them. Source references are separate from independently verified facts; retrieved sources and model summaries are not independently verified. The route fails closed with HTTP 503 when live research is unconfigured or returns no usable sources, and HTTP 502 when research/model processing fails. It never falls back to fabricated sample opportunities. Both live research and model provider credentials must be configured for a completed scan. Goal plans are proposals only; generated action steps do not execute, authorize spending, or approve external commitments.
+
+
+## Isolated self-upgrade test runner
+
+Jerry's API does not execute generated self-upgrade code. It uses a separate HTTPS runner adapter and accepts a test pass only when the runner returns a valid HMAC-signed attestation bound to the exact source and test-suite SHA-256 hashes.
+
+The runner remains unavailable by default. Configure these values only in the cloud secret manager after deploying and independently auditing the sandbox service:
+
+- `JERRY_TEST_RUNNER_URL`: credential-free HTTPS endpoint.
+- `JERRY_TEST_RUNNER_HMAC_SECRET`: random shared secret with at least 32 characters.
+
+The separate runner must enforce disposable container or microVM isolation, OS-level network denial, no inherited credentials or host mounts, read-only base filesystem, ephemeral workspace, resource/time/process limits, and destruction after every request. The request's `limits` fields are requirements, not enforcement; the runner must enforce them independently. Do not treat the runner's `sandboxed` response field as proof of isolation. Review `SELF_UPGRADE_RUNNER_PROTOCOL.md` and independently audit the runner implementation and infrastructure before configuring these secrets.
+
+Until that separate service exists and passes an independent security review, verification remains `pending`, owner approval is blocked, and self-upgrades cannot be deployed. Syntax transformation alone is never considered a runtime test.
