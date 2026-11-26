@@ -40,7 +40,7 @@ test('approval without verified block or transaction evidence cannot create wall
 
 test('approval for non-mainnet or non-BTC settlement cannot create wallet credit', () => {
   assert.equal(resolveSettlementApprovalStatus(verifiedSettlement({ network: 'Bitcoin Testnet' }), 'approved'), 'pending_approval');
-  assert.equal(resolveSettlementApprovalStatus(verifiedSettlement({ asset: 'ETH' as 'BTC' }), 'approved'), 'pending_approval');
+  assert.equal(resolveSettlementApprovalStatus(verifiedSettlement({ asset: 'ETH' as unknown as 'BTC' }), 'approved'), 'pending_approval');
 });
 
 test('rejection always rejects the settlement and existing terminal states are preserved on approval', () => {
