@@ -18,6 +18,7 @@ import { ensureWalletTransactionJournaled } from './src/db/walletJournal.ts';
 import { drainWalletJournalOutbox } from './src/db/walletJournalOutbox.ts';
 import { saveMemoryEntryForUser, searchMemoryForUser } from './src/db/memoryStore.ts';
 import { generateWithModelFallback, providerConfigurationFromEnvironment } from './src/lib/providerAdapters.ts';
+import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createOwnerRateLimiter } from './src/lib/requestRateLimit.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
 import { sql } from 'drizzle-orm';
@@ -1317,90 +1318,54 @@ async function startServer() {
     }
   });
 
-  // Jerry Vision: Image / Document Analysis
+  // Jerry Vision: provider-neutral image / document analysis. No image is reported
+  // as analyzed unless a configured provider returns a non-empty response.
   app.post('/api/jerry/vision', requireAuth, async (req: AuthRequest, res) => {
     const { imageDataUrl, sampleImagePath, prompt } = req.body as {
-      imageDataUrl?: string;
-      sampleImagePath?: string;
-      prompt?: string;
+      imageDataUrl?: string; sampleImagePath?: string; prompt?: string;
     };
-
-    const effectivePrompt =
-      prompt?.trim() || 'Analyze this document or screenshot and extract key financial metrics, risks, and action items.';
-
+    const effectivePrompt = prompt?.trim() || 'Analyze this document or screenshot and extract key financial metrics, risks, and action items. Return JSON with "analysis" and "extractedActions".';
     let mimeType = 'image/jpeg';
     let base64Data = '';
-
     try {
       if (imageDataUrl && imageDataUrl.startsWith('data:')) {
         const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
-        if (!match) {
-          res.status(400).json({ error: 'Invalid base64 image payload.' });
-          return;
-        }
+        if (!match) { res.status(400).json({ error: 'Invalid base64 image payload.' }); return; }
         mimeType = match[1];
         base64Data = match[2];
       } else if (sampleImagePath && sampleImagePath.startsWith('/src/assets/images/')) {
         const safePath = path.resolve(process.cwd(), `.${sampleImagePath}`);
+        const allowedRoot = path.resolve(process.cwd(), 'src/assets/images') + path.sep;
+        if (!safePath.startsWith(allowedRoot)) { res.status(400).json({ error: 'Invalid sample image path.' }); return; }
         const buf = await fs.readFile(safePath);
         base64Data = buf.toString('base64');
-        mimeType = sampleImagePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        mimeType = sampleImagePath.endsWith('.png') ? 'image/png' : sampleImagePath.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
       } else {
-        res.status(400).json({ error: 'Provide an uploaded image or sample document.' });
-        return;
+        res.status(400).json({ error: 'Provide an uploaded image or sample document.' }); return;
       }
     } catch {
-      res.status(400).json({ error: 'Could not read image source.' });
-      return;
+      res.status(400).json({ error: 'Could not read image source.' }); return;
     }
-
-    const ai = getGeminiClient();
-    if (!ai) {
-      res.status(503).json({
-        error: 'Jerry Vision is unavailable: no compatible server-side vision provider is configured. The image has not been analyzed.',
-      });
-      return;
-    }
-
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: {
-          parts: [
-            { inlineData: { mimeType, data: base64Data } },
-            {
-              text: `${effectivePrompt}\nReturn JSON with "analysis" (concise paragraph) and "extractedActions" (array of 2-4 concrete next steps).`,
-            },
-          ],
-        },
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              analysis: { type: Type.STRING },
-              extractedActions: { type: Type.ARRAY, items: { type: Type.STRING } },
-            },
-          },
-        },
+      const result = await analyzeImageWithModelFallback({
+        prompt: `${effectivePrompt}\nReturn valid JSON with "analysis" (concise paragraph) and "extractedActions" (array of concrete next steps).`,
+        mimeType, base64Data, configuration: providerConfigurationFromEnvironment(process.env),
       });
-
-      const parsed = JSON.parse((response.text ?? '{}').trim()) as {
-        analysis?: string;
-        extractedActions?: string[];
-      };
-
-      res.json({
-        analysis: parsed.analysis || 'Image analyzed successfully.',
-        extractedActions: parsed.extractedActions ?? [],
-        modelUsed: 'gemini-4-hydrogen',
-      });
-    } catch (error) {
-      if (isQuotaError(error)) {
-        res.status(503).json({ error: 'Jerry Vision provider quota is unavailable. The image was not analyzed; retry after provider quota is restored or configure another compatible vision provider.' });
-        return;
+      let parsed: { analysis?: string; extractedActions?: string[] };
+      try {
+        parsed = JSON.parse(result.text) as { analysis?: string; extractedActions?: string[] };
+      } catch {
+        res.status(502).json({ error: 'Vision provider returned an invalid structured response. The image analysis was not accepted.' }); return;
       }
-      res.status(502).json({ error: `Jerry Vision error: ${formatCleanError(error, 'Vision analysis failed')}` });
+      if (typeof parsed.analysis !== 'string' || !parsed.analysis.trim() ||
+          (parsed.extractedActions !== undefined && (!Array.isArray(parsed.extractedActions) || parsed.extractedActions.some((item) => typeof item !== 'string')))) {
+        res.status(502).json({ error: 'Vision provider response failed validation. The image analysis was not accepted.' }); return;
+      }
+      res.json({ analysis: parsed.analysis.trim(), extractedActions: parsed.extractedActions ?? [], provider: result.provider, modelUsed: result.model, evidenceStatus: 'model_generated_not_independently_verified' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Vision analysis failed.';
+      const unavailable = /No vision provider|All configured vision providers failed/.test(message);
+      res.status(unavailable ? 503 : 502).json({ error: `Jerry Vision: ${message.slice(0, 240)} The image was not accepted as analyzed.` });
     }
   });
 
