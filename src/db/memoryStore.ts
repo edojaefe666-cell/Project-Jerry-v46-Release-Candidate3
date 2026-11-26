@@ -91,7 +91,7 @@ export async function searchMemoryForUser(
     if (!MEMORY_CATEGORIES.has(options.category)) throw new Error('Memory category is invalid.');
     conditions.push(eq(memoryEntries.category, options.category));
   }
-  const limit = Number.isSafeInteger(options.limit) ? Math.max(1, Math.min(100, options.limit!)) : 50;
+  const limit = Number.isSafeInteger(options.limit) ? Math.max(1, Math.min(1000, options.limit!)) : 50;
   const rows = await db.select({
     id: memoryEntries.id,
     category: memoryEntries.category,
