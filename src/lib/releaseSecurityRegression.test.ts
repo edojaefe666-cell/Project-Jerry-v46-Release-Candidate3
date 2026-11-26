@@ -153,7 +153,8 @@ test('emergency stop blocks every isolated self-upgrade test execution path', ()
 
 test('emergency stop keeps internal wallet journal recovery separate from external execution', () => {
   const workerStart = server.indexOf('// Recover journal events after crashes');
-  const workerEnd = server.indexOf('}', server.indexOf('if (process.env.JERRY_DISABLE_JOURNAL_OUTBOX_WORKER', workerStart));
+  const workerEnd = server.indexOf('\n}\n\nstartServer()', workerStart);
+  assert.ok(workerEnd > workerStart, 'wallet outbox worker block must have a stable end boundary');
   const worker = server.slice(workerStart, workerEnd);
   assert.match(worker, /drainOutboxWithStop/);
   assert.match(worker, /executionRegistry\.register\(\)/);
