@@ -73,8 +73,8 @@ async function generateFromProvider(
     const key = configuration.google?.apiKey;
     if (!key) throw new Error('Google provider is not configured.');
     const body = await requestJson(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
-      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}), contents: [{ role: 'user', parts: [{ text: prompt }] }] }) },
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}), contents: [{ role: 'user', parts: [{ text: prompt }] }] }) },
       timeoutMs, fetchImpl
     );
     return extractText(provider, body);
