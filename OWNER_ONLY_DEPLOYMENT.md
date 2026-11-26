@@ -42,3 +42,10 @@ Configure only the providers you intend to use in the cloud server's secret mana
 Never place provider keys in `VITE_*` variables, Android resources, APK assets, source control, or chat messages. Do not configure a provider unless its endpoint, model identifier, billing and data-handling terms have been reviewed. The service returns an unavailable response when no provider is configured; it does not fabricate an AI answer.
 
 The current Brain adapter supports text chat, planning, research and coding prompts. Vision, speech generation and transcription are not yet wired through these adapters. Provider fallback is an availability mechanism, not a guarantee of identical model behavior or data residency across providers.
+
+
+## AI request limits
+
+The authenticated Brain generation route is limited to 20 requests per owner per minute, chat to 30, and goal planning to 10. Responses over the limit return HTTP 429 with a `Retry-After` header. The in-process limiter bounds retained owner buckets and resets windows automatically.
+
+These limits are a local abuse/cost guard, not a distributed quota system. A multi-instance production deployment must also enforce shared rate limits and provider-side spending/usage caps at the gateway or provider account. Provider keys should have least privilege and alerts/limits configured where supported.
