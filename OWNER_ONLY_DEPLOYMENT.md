@@ -26,3 +26,19 @@ This control does not replace action-level approvals, audit logging, tenant isol
 - The independent deployment/operator hard stop is `JERRY_EMERGENCY_STOP=1`. The application API cannot clear this environment-level switch; an operator must remove it through the deployment control plane.
 - If the security control store cannot be read, the application fails closed and blocks transfer staging.
 - This is an application-side stop for the currently implemented outgoing-transfer staging boundary. No Bitcoin broadcast implementation exists in this branch. Future external execution adapters must enforce the same stop independently at their own execution boundary before they are enabled.
+
+
+## Jerry Brain model providers
+
+The authenticated chat route `POST /api/jerry/chat` and the provider-neutral generation route `POST /api/brain/generate` use server-side model adapters. They do not expose provider credentials to the browser or Android APK.
+
+Configure only the providers you intend to use in the cloud server's secret manager:
+
+- `GEMINI_API_KEY` (or `GOOGLE_AI_API_KEY`); optional model override `JERRY_GOOGLE_MODEL`
+- `OPENAI_API_KEY`; optional model override `JERRY_OPENAI_MODEL`
+- `ANTHROPIC_API_KEY`; optional model override `JERRY_ANTHROPIC_MODEL`
+- Optional local OpenAI-compatible endpoint: `JERRY_LOCAL_MODEL_ENABLED=1`, `JERRY_LOCAL_MODEL_URL=http://127.0.0.1:11434`, and optional `JERRY_LOCAL_MODEL_NAME`. The local adapter rejects non-loopback hosts.
+
+Never place provider keys in `VITE_*` variables, Android resources, APK assets, source control, or chat messages. Do not configure a provider unless its endpoint, model identifier, billing and data-handling terms have been reviewed. The service returns an unavailable response when no provider is configured; it does not fabricate an AI answer.
+
+The current Brain adapter supports text chat, planning, research and coding prompts. Vision, speech generation and transcription are not yet wired through these adapters. Provider fallback is an availability mechanism, not a guarantee of identical model behavior or data residency across providers.
