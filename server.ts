@@ -1805,7 +1805,7 @@ async function startServer() {
   });
 
   // Verify the exact persisted proposal, not code supplied by the browser.
-  app.post('/api/jerry/self-upgrades/:id/verify', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/self-upgrades/:id/verify', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -1845,7 +1845,7 @@ async function startServer() {
   });
 
   // Verify Self-Upgrade (Security Policy + Syntax/Test Verification before Permission)
-  app.post('/api/jerry/verify-upgrade', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/verify-upgrade', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     const { code = '', testCode = '', language = 'TypeScript' } = req.body as {
       code?: string;
       testCode?: string;
