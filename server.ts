@@ -2336,13 +2336,27 @@ async function startServer() {
   // The outbox is durable and tenant-scoped; the worker is best-effort and
   // deliberately does not affect HTTP availability.
   if (process.env.JERRY_DISABLE_JOURNAL_OUTBOX_WORKER !== '1') {
+    const drainOutboxWithStop = async () => {
+      if (isEmergencyStopActive()) {
+        executionRegistry.setStopped(true, 'Emergency stop paused wallet journal outbox worker');
+        return;
+      }
+      const execution = executionRegistry.register();
+      try {
+        if (execution.signal.aborted) return;
+        await drainWalletJournalOutbox(undefined, 50, execution.signal);
+      } finally {
+        execution.release();
+      }
+    };
+
     const timer = setInterval(() => {
-      void drainWalletJournalOutbox().catch((error) => {
+      void drainOutboxWithStop().catch((error) => {
         console.error('Wallet journal outbox drain failed:', error);
       });
     }, 15_000);
     timer.unref();
-    void drainWalletJournalOutbox().catch((error) => {
+    void drainOutboxWithStop().catch((error) => {
       console.error('Initial wallet journal outbox drain failed:', error);
     });
   }
