@@ -31,7 +31,7 @@ test('wrong action cannot consume an approval', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'jerry-security-'));
   const store = new SecurityStore(path.join(dir, 'security.sqlite'));
   try {
-    const approval = store.createApproval({ action: 'financial_commitment', summary: 'Financial action', ownerUid: 'owner-1' });
+    const approval = store.createApproval({ action: 'financial_commitment', summary: 'Financial action', amountUsd: 25, scope: { recipient: 'Test vendor', purpose: 'Test financial approval scope' }, ownerUid: 'owner-1' });
     store.decideApproval(approval.id, 'approved', 'owner-1');
     assert.equal(store.consumeApproval(approval.id, 'high_impact_change', 'owner-1'), null);
     assert.equal(store.consumeApproval(approval.id, 'financial_commitment', 'owner-1')?.id, approval.id);
@@ -177,7 +177,7 @@ test('Bitcoin transfer approvals reject incomplete or imprecise scope', () => {
     assert.throws(
       () => store.createApproval({
         action: 'bitcoin_transfer', summary: 'Bad transfer',
-        scope: { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', amount: 0.01, fee: 0.0001 },
+        scope: { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'not-a-bitcoin-address', amount: 0.01, fee: 0.0001 },
         ownerUid: 'owner-btc',
       }),
       /valid destination address/,
