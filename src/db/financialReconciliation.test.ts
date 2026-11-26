@@ -80,3 +80,35 @@ test('ignores drafts and unrelated journal entries during integrity audit', () =
   assert.equal(audit.confirmedEntriesByTransaction.size, 0);
   assert.deepEqual(audit.unmatchedReversalEntries, []);
 });
+
+
+test('journal audit detects duplicate confirmation generations', () => {
+  const suffix = ':confirmed:cycle-2:block-${'a'.repeat(64)}';
+  const audit = auditWalletJournalEntries([
+    { id: '10', idempotency_key: `wallet-tx:tx-dup${suffix}`, reversal_of: null, status: 'posted' },
+    { id: '11', idempotency_key: `wallet-tx:tx-dup${suffix}`, reversal_of: null, status: 'posted' },
+  ]);
+  assert.deepEqual(audit.duplicateConfirmedGenerations, [`tx-dup:cycle-2:block-${'a'.repeat(64)}`]);
+});
+
+test('journal audit rejects orphan and wrong-generation reversals', () => {
+  const blockA = 'a'.repeat(64);
+  const blockB = 'b'.repeat(64);
+  const audit = auditWalletJournalEntries([
+    { id: '20', idempotency_key: `wallet-tx:tx-a:confirmed:cycle-0:block-${blockA}`, reversal_of: null, status: 'posted' },
+    { id: '21', idempotency_key: `wallet-tx:tx-a:reorg-reversal:cycle-1:block-${blockB}`, reversal_of: '20', status: 'posted' },
+    { id: '22', idempotency_key: 'wallet-tx:tx-missing:reorg-reversal:cycle-0:block-x', reversal_of: '999', status: 'posted' },
+  ]);
+  assert.deepEqual(audit.unmatchedReversalEntries, ['21', '22']);
+  assert.equal(audit.reversedOriginalEntryIds.size, 0);
+});
+
+test('journal audit accepts a reversal bound to the exact confirmation generation', () => {
+  const block = 'c'.repeat(64);
+  const audit = auditWalletJournalEntries([
+    { id: '30', idempotency_key: `wallet-tx:tx-ok:confirmed:cycle-3:block-${block}`, reversal_of: null, status: 'posted' },
+    { id: '31', idempotency_key: `wallet-tx:tx-ok:reorg-reversal:cycle-3:block-${block}`, reversal_of: '30', status: 'posted' },
+  ]);
+  assert.deepEqual(audit.unmatchedReversalEntries, []);
+  assert.deepEqual([...audit.reversedOriginalEntryIds], ['30']);
+});
