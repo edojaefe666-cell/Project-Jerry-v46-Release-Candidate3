@@ -354,7 +354,7 @@ test('workspace reset approval is exact-scope, reserved once, and consumed on fi
   assert.equal(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'd'.repeat(64), scope), null);
   assert.equal(store.verifyAuditChain(ownerUid).ok, true);
   assert.equal(
-    store.listAudit(20, ownerUid).find((entry) => entry.event === 'approval.consumed')?.details.action,
+    (store.listAudit(20, ownerUid).find((entry) => entry.event === 'approval.consumed')?.details as { action?: string } | undefined)?.action,
     'high_impact_change',
   );
   store.close();
