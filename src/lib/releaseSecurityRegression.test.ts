@@ -137,3 +137,22 @@ test('self-upgrade deployment gate requires explicit owner approval, not merely 
   assert.match(gate, /approvalStatus !== 'approved'/);
   assert.match(gate, /explicit owner approval is required/);
 });
+
+
+test('emergency stop blocks every isolated self-upgrade test execution path', () => {
+  const persisted = server.match(/app\\.post\\('\\/api\\/jerry\\/self-upgrades\\/:id\\/verify'[^\\n]+/);
+  const direct = server.match(/app\\.post\\('\\/api\\/jerry\\/verify-upgrade'[^\\n]+/);
+  assert.ok(persisted, 'persisted proposal verification route must exist');
+  assert.ok(direct, 'direct verification route must exist');
+  assert.match(persisted[0], /requireAuth, requireExecutionEnabled/);
+  assert.match(direct[0], /requireAuth, requireExecutionEnabled/);
+  assert.match(server, /if \\(isEmergencyStopActive\\(\\)\\) \\{[\\s\\S]*?res\\.status\\(423\\)/);
+});
+
+test('emergency stop keeps internal wallet journal recovery separate from external execution', () => {
+  const workerStart = server.indexOf('// Recover journal events after crashes');
+  const workerEnd = server.indexOf('}', server.indexOf('if (process.env.JERRY_DISABLE_JOURNAL_OUTBOX_WORKER', workerStart));
+  const worker = server.slice(workerStart, workerEnd);
+  assert.match(worker, /drainWalletJournalOutbox/);
+  assert.doesNotMatch(worker, /submit-transfer|broadcast|external execution/i);
+});
