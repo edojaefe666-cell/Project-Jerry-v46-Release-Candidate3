@@ -162,7 +162,7 @@ export class SecurityStore {
         owner_uid TEXT NOT NULL
       );
       INSERT OR IGNORE INTO emergency_control(id, stopped, reason, updated_at, owner_uid)
-        VALUES(1, 0, 'Emergency stop not engaged', strftime('%Y-%m-%dT%H:%M:%fZ','now'), 'system');
+        VALUES(1, 1, 'Emergency stop engaged by secure first-boot default', strftime('%Y-%m-%dT%H:%M:%fZ','now'), 'system');
       CREATE TABLE IF NOT EXISTS idempotency (
         idempotency_key TEXT PRIMARY KEY,
         actor_uid TEXT NOT NULL,
@@ -183,6 +183,11 @@ export class SecurityStore {
     try { this.db.exec('ALTER TABLE approvals ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE approved_contacts ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE audit_log ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
+    // A legacy unclaimed system seed must never silently enable execution.
+    // Explicit owner-controlled resume changes owner_uid and is preserved.
+    this.db.prepare(
+      "UPDATE emergency_control SET stopped=1, reason='Emergency stop engaged by secure first-boot default', updated_at=? WHERE id=1 AND owner_uid='system' AND reason='Emergency stop not engaged'"
+    ).run(now());
   }
 
   getEmergencyStop(): { stopped: boolean; reason: string; updatedAt: string; ownerUid: string } {
