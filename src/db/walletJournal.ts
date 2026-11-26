@@ -24,19 +24,20 @@ export async function ensureWalletTransactionJournaled(uid: string, transaction:
        AND idempotency_key = $2 AND status = 'posted'`,
       [uid, baseKey],
     );
+    let originalEntryId: string | undefined = original.rows[0]?.id;
     // Preserve compatibility with journal entries posted before cycle-aware keys.
-    if (!original.rowCount) {
+    if (!originalEntryId) {
       const legacy = await client.query(
         `SELECT id::text FROM journal_entries WHERE user_id = (SELECT id FROM users WHERE uid = $1)
          AND idempotency_key = $2 AND status = 'posted'`,
         [uid, `wallet-tx:${transaction.id}:confirmed`],
       );
-      if (!legacy.rowCount) return { action: 'not-eligible' };
-      original.rows = legacy.rows;
+      originalEntryId = legacy.rows[0]?.id;
     }
+    if (!originalEntryId) return { action: 'not-eligible' };
     const reversal = await reversePostedJournalEntry({
       uid,
-      originalEntryId: original.rows[0].id,
+      originalEntryId,
       idempotencyKey: `wallet-tx:${transaction.id}:reorg-reversal:${identity}`,
       description: `Reverse wallet transaction ${transaction.id} after Bitcoin finality loss`,
     });
