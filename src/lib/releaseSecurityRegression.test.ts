@@ -155,7 +155,10 @@ test('emergency stop keeps internal wallet journal recovery separate from extern
   const workerStart = server.indexOf('// Recover journal events after crashes');
   const workerEnd = server.indexOf('}', server.indexOf('if (process.env.JERRY_DISABLE_JOURNAL_OUTBOX_WORKER', workerStart));
   const worker = server.slice(workerStart, workerEnd);
-  assert.match(worker, /drainWalletJournalOutbox/);
+  assert.match(worker, /drainWalletOutboxWithStop/);
+  assert.match(worker, /executionRegistry\.register\(\)/);
+  assert.match(worker, /drainWalletJournalOutbox\(undefined, 50, execution\.signal\)/);
+  assert.match(worker, /execution\.release\(\)/);
   assert.doesNotMatch(worker, /submit-transfer|broadcast|external execution/i);
 });
 
