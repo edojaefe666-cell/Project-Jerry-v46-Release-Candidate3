@@ -199,7 +199,7 @@ test('PostgreSQL journal posting, idempotency, reversal and tenant isolation', {
   assert.equal(repairResult.skipped, 0, 'Eligible verified historical transaction must not be skipped.');
   const repairJournalRows = await pool.query(
     'SELECT id::text FROM journal_entries WHERE user_id = (SELECT id FROM users WHERE uid = $1) AND idempotency_key = $2 AND status = \'posted\'',
-    [uid, repairEventKey.replace(':confirmed:cycle-0:block-', ':confirmed:cycle-0:block-')],
+    [uid, repairEventKey],
   );
   assert.equal(repairJournalRows.rowCount, 1,
     'Backfill and live outbox worker must converge on exactly one posted generation.');
