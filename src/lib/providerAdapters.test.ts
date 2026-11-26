@@ -26,18 +26,22 @@ test('calls the configured Google provider and returns provider-neutral output',
 
 test('falls back to OpenAI when the preferred Google provider fails', async () => {
   const calls: string[] = [];
+  let openAiBody: any;
   const result = await generateWithModelFallback({
-    task: 'chat', prompt: 'hello',
+    task: 'chat', prompt: 'hello', systemInstruction: 'Follow Jerry governance rules.',
     configuration: { google: { apiKey: 'g-key' }, openai: { apiKey: 'o-key', model: 'gpt-test' } },
-    fetchImpl: async (input) => {
+    fetchImpl: async (input, init) => {
       calls.push(String(input));
       if (calls.length === 1) return jsonResponse({ error: 'unavailable' }, 503);
+      openAiBody = JSON.parse(String(init?.body));
       return jsonResponse({ choices: [{ message: { content: 'Fallback response' } }] });
     },
   });
   assert.equal(result.provider, 'openai');
   assert.equal(result.text, 'Fallback response');
   assert.equal(calls.length, 2);
+  assert.equal(openAiBody.messages[0].role, 'system');
+  assert.equal(openAiBody.messages[0].content, 'Follow Jerry governance rules.');
 });
 
 test('uses Anthropic Messages response format', async () => {
