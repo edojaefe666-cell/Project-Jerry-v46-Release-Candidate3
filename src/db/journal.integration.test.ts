@@ -230,8 +230,8 @@ test('PostgreSQL journal posting, idempotency, reversal and tenant isolation', {
     drainWalletJournalOutbox(uid, 10),
   ]);
   assert.equal(reorgWorkerResult.failed, 0, 'Live reorg outbox processing must not fail during historical repair.');
-  assert.equal(reorgRepairResult.skipped, 1,
-    'Only the pending/unverified fixture may be skipped during reorg repair.');
+  assert.equal(reorgRepairResult.skipped, 0,
+    'The reorg repair fixture is eligible for reversal; the pending fixture is inserted and checked below.');
   const repairReversalRows = await pool.query(
     `SELECT id::text, reversal_of::text FROM journal_entries
       WHERE user_id = (SELECT id FROM users WHERE uid = $1)
