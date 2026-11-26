@@ -321,7 +321,7 @@ export function VoiceVisionStudio({
             Jerry Voice — Speech Recognition &amp; Spoken Updates
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Hands-free voice commands and natural executive briefings via Gemini TTS or browser speech fallback.
+            Hands-free voice commands and natural executive briefings via configured server voice providers or device speech fallback.
           </p>
         </div>
 
