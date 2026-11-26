@@ -21,7 +21,6 @@ import { generateWithModelFallback, providerConfigurationFromEnvironment } from 
 import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createOwnerRateLimiter } from './src/lib/requestRateLimit.ts';
-import { searchLiveResearch } from './src/lib/liveResearch.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
 import { applyLearningEnhancement, createOwnerLearningEntry } from './src/lib/learningMemory.ts';
