@@ -190,6 +190,8 @@ export interface ApprovalRequest {
   requestedAt: string;
   decision: 'pending' | 'approved' | 'rejected';
   decidedAt?: string;
+  /** Set atomically when this authorization is consumed to start a task execution. */
+  consumedAt?: string;
 }
 
 export interface WalletTransaction {
