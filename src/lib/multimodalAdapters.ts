@@ -139,7 +139,7 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
 
 /** Transcribes uploaded audio using configured Google or OpenAI providers. */
 export async function transcribeAudioWithModelFallback(options: AudioTranscriptionOptions): Promise<TranscriptionResult> {
-  if (!validAudioPayload(options.audioBase64)) throw new Error('Invalid or oversized audio payload.');
+  if (!validAudioPayload(options.audioBase64, 10_000_000)) throw new Error('Invalid or oversized audio payload.');
   if (!/^audio\/(webm|wav|mpeg|mp4|ogg|mp3|m4a|x-m4a|flac)$/i.test(options.mimeType)) throw new Error('Unsupported audio media type.');
   const routes = resolveModelRoute('transcription', options.configuration);
   const fetchImpl = options.fetchImpl ?? fetch;
