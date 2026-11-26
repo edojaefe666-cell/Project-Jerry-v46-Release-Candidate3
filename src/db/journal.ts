@@ -133,6 +133,8 @@ export async function reversePostedJournalEntry(input: {
   description?: string;
 }): Promise<PostedJournalEntry> {
   if (!/^\d+$/.test(input.originalEntryId)) throw new Error('A valid original journal entry ID is required.');
+  const idempotencyKey = input.idempotencyKey?.trim();
+  if (!idempotencyKey || idempotencyKey.length > 200) throw new Error('A valid reversal idempotency key is required.');
   const client = await createPool().connect();
   try {
     await client.query('BEGIN');
@@ -158,7 +160,7 @@ export async function reversePostedJournalEntry(input: {
     if (priorReversal.rowCount) {
       const keyCollision = await client.query(
         'SELECT id::text FROM journal_entries WHERE user_id = $1 AND idempotency_key = $2',
-        [userId, input.idempotencyKey?.trim()],
+        [userId, idempotencyKey],
       );
       if (keyCollision.rowCount && keyCollision.rows[0].id !== priorReversal.rows[0].id) {
         throw new Error('Journal idempotency key was already used for a different posting.');
@@ -186,8 +188,6 @@ export async function reversePostedJournalEntry(input: {
       accountCode: row.account_code, asset: row.asset, debitUnits: row.debit_units, creditUnits: row.credit_units,
     })));
     const description = input.description?.trim() || `Reversal of journal entry ${input.originalEntryId}`;
-    const idempotencyKey = input.idempotencyKey?.trim();
-    if (!idempotencyKey || idempotencyKey.length > 200) throw new Error('A valid reversal idempotency key is required.');
     const requestHash = journalRequestHash(description, lines);
     const result = await writePostedEntry(client, { userId, idempotencyKey, description, lines, requestHash, reversalOf: input.originalEntryId });
     await client.query('COMMIT');
