@@ -90,14 +90,41 @@ export function MemoryAndSystem({
   );
 
   const handleExportMemory = async () => {
-    setMemoryExportStatus('Preparing secure memory export…');
+    setMemoryExportStatus('Preparing complete secure memory export…');
     try {
-      const response = await apiFetch('/api/memory/export', { method: 'GET' });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(payload.error || `Memory export failed (HTTP ${response.status}).`);
-      }
-      const blob = await response.blob();
+      const allEntries: unknown[] = [];
+      let cursor: string | null = null;
+      let exportMetadata: { schemaVersion: number; exportedAt: string; ownerUid?: string } | null = null;
+      do {
+        const query = cursor ? `?limit=500&cursor=${encodeURIComponent(cursor)}` : '?limit=500';
+        const response = await apiFetch(`/api/memory/export${query}`, { method: 'GET' });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(payload.error || `Memory export failed (HTTP ${response.status}).`);
+        }
+        const page = await response.json() as {
+          schemaVersion: number;
+          exportedAt: string;
+          ownerUid?: string;
+          entries: unknown[];
+          nextCursor: string | null;
+        };
+        if (!Array.isArray(page.entries) || (page.nextCursor !== null && typeof page.nextCursor !== 'string')) {
+          throw new Error('Jerry returned an invalid memory export page.');
+        }
+        exportMetadata ??= { schemaVersion: page.schemaVersion, exportedAt: page.exportedAt, ownerUid: page.ownerUid };
+        allEntries.push(...page.entries);
+        cursor = page.nextCursor;
+        setMemoryExportStatus(`Preparing complete secure memory export… ${allEntries.length} entries collected.`);
+      } while (cursor);
+
+      const exportDocument = {
+        ...exportMetadata,
+        count: allEntries.length,
+        truncated: false,
+        entries: allEntries,
+      };
+      const blob = new Blob([JSON.stringify(exportDocument, null, 2)], { type: 'application/json' });
       const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = objectUrl;
@@ -106,7 +133,7 @@ export function MemoryAndSystem({
       anchor.click();
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      setMemoryExportStatus('Memory export prepared. Keep this file private; it contains your saved Jerry knowledge.');
+      setMemoryExportStatus(`Complete memory export prepared: ${allEntries.length} entries. Keep this file private; it contains your saved Jerry knowledge.`);
     } catch (error) {
       setMemoryExportStatus(error instanceof Error ? error.message : 'Memory export failed.');
     }
