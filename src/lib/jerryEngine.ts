@@ -528,10 +528,12 @@ export function canDeploySelfUpgrade(proposal: {
       reason: 'Cannot deploy: verification tests must pass before deployment.',
     };
   }
-  if (proposal.approvalStatus === 'rejected') {
+  if (proposal.approvalStatus !== 'approved') {
     return {
       allowed: false,
-      reason: 'Proposal was rejected by the owner.',
+      reason: proposal.approvalStatus === 'rejected'
+        ? 'Proposal was rejected by the owner.'
+        : 'Cannot deploy: explicit owner approval is required.',
     };
   }
   return { allowed: true };
