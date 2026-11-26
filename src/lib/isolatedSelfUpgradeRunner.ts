@@ -57,6 +57,14 @@ export async function runIsolatedSelfUpgradeTests(
   input: { language: string; source: string; testCode: string },
   options: IsolatedTestRunnerOptions = {},
 ): Promise<IsolatedTestResult> {
+  if (
+    typeof input.language !== 'string' || input.language.length < 1 || input.language.length > 40 ||
+    typeof input.source !== 'string' || input.source.length < 1 || input.source.length > 256_000 ||
+    typeof input.testCode !== 'string' || input.testCode.length < 1 || input.testCode.length > 256_000
+  ) {
+    return { status: 'unavailable', report: 'Self-upgrade source or test suite is missing or exceeds the 256 KB input limit.' };
+  }
+
   const endpointValue = options.endpoint ?? process.env.JERRY_TEST_RUNNER_URL;
   const secret = options.secret ?? process.env.JERRY_TEST_RUNNER_HMAC_SECRET;
   if (!endpointValue || !secret || secret.length < 32) {
