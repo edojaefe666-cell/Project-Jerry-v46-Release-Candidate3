@@ -1,5 +1,27 @@
 import { auth } from './firebase';
 
+const API_BASE = (() => {
+  const configured = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
+  if (!configured) return '';
+  const parsed = new URL(configured);
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password ||
+      parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('VITE_API_BASE_URL must be a clean HTTPS origin.');
+  }
+  return parsed.origin;
+})();
+
+function resolveApiInput(input: RequestInfo | URL): RequestInfo | URL {
+  if (!API_BASE) return input;
+  const raw = typeof input === 'string'
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url;
+  if (!raw.startsWith('/api/')) return input;
+  return `${API_BASE}${raw}`;
+}
+
 function createIdempotencyKey(): string {
   const bytes = new Uint8Array(18);
   crypto.getRandomValues(bytes);
@@ -8,7 +30,7 @@ function createIdempotencyKey(): string {
 
 export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
-  const method = (init.method ?? 'GET').toUpperCase();
+  const method = (init.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
   const user = auth.currentUser;
   if (user && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${await user.getIdToken()}`);
@@ -19,7 +41,7 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
   if (init.body && !headers.has('Content-Type') && typeof init.body === 'string') {
     headers.set('Content-Type', 'application/json');
   }
-  return fetch(input, { ...init, headers });
+  return fetch(resolveApiInput(input), { ...init, headers });
 }
 
 export async function apiJson<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {
