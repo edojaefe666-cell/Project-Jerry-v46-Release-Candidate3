@@ -99,6 +99,7 @@ test('expired approval is not consumed or burned', () => {
 
 test('Bitcoin transfer approval reservation survives PostgreSQL failure safely and can be released', () => {
   const store = new SecurityStore(':memory:');
+  store.setEmergencyStop(false, 'owner-reserve', 'Test explicitly resumes execution for reservation');
   const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', amount: 0.01, fee: 0.0001 };
   const approval = store.createApproval({ action: 'bitcoin_transfer', summary: 'Reserve then release', scope, ownerUid: 'owner-reserve' });
   store.decideApproval(approval.id, 'approved', 'owner-reserve');
@@ -113,6 +114,7 @@ test('Bitcoin transfer approval reservation survives PostgreSQL failure safely a
 
 test('Bitcoin transfer approval is consumed only when its reservation is finalized', () => {
   const store = new SecurityStore(':memory:');
+  store.setEmergencyStop(false, 'owner-finalize', 'Test explicitly resumes execution for reservation');
   const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', amount: 0.01, fee: 0.0001 };
   const approval = store.createApproval({ action: 'bitcoin_transfer', summary: 'Reserve then finalize', scope, ownerUid: 'owner-finalize' });
   store.decideApproval(approval.id, 'approved', 'owner-finalize');
