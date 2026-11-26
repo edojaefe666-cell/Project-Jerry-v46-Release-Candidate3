@@ -160,9 +160,25 @@ test('emergency stop keeps internal wallet journal recovery separate from extern
 });
 
 
-test('owner emergency stop aborts in-flight isolated verification requests', () => {
-  assert.match(server, /const activeIsolatedExecutions = new Set<AbortController>\(\)/);
-  assert.match(server, /for \(const controller of activeIsolatedExecutions\) controller\.abort/);
-  assert.match(server, /runIsolatedSelfUpgradeTests\(input, \{ signal: controller\.signal \}\)/);
-  assert.match(server, /if \(controller\.signal\.aborted\)/);
+test('owner emergency stop uses the shared execution registry for in-flight verification', () => {
+  assert.match(server, /new ExecutionRegistry\(isEmergencyStopActive\(\)\)/);
+  assert.match(server, /executionRegistry\.setStopped\(body\.action === 'stop'/);
+  assert.match(server, /runIsolatedSelfUpgradeTests\(input, \{ signal: execution\.signal \}\)/);
+  assert.match(server, /if \(execution\.signal\.aborted\)/);
+  assert.match(server, /execution\.release\(\)/);
+});
+
+test('emergency stop blocks model-provider and financial mutation routes', () => {
+  const guardedRoutes = [
+    '/api/brain/generate', '/api/jerry/chat', '/api/jerry/plan-goal',
+    '/api/jerry/vision', '/api/jerry/tts', '/api/jerry/transcribe',
+    '/api/jerry/scan-opportunities', '/api/jerry/discover-daily-ways',
+    '/api/wallet/commands/record-income', '/api/wallet/sync-onchain',
+    '/api/wallet/financial-truth/backfill', '/api/wallet/commands/reconcile-tx',
+  ];
+  for (const route of guardedRoutes) {
+    const declaration = server.split('\n').find((line) => line.includes("app.post('" + route + "'"));
+    assert.ok(declaration, 'missing route declaration: ' + route);
+    assert.match(declaration, /requireExecutionEnabled/, 'emergency stop must guard: ' + route);
+  }
 });
