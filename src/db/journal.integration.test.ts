@@ -152,4 +152,78 @@ test('PostgreSQL journal posting, idempotency, reversal and tenant isolation', {
 
   const after = await getJournalAccountBalances(uid);
   assert.ok(after.every((row) => row.netDebitUnits === '0'), 'A complete reversal must return all account net balances to zero.');
+  // Historical backfill and the live outbox worker may race on the same
+  // confirmed transaction. Both must converge on one generation-scoped posting.
+  const { backfillHistoricalWalletJournal } = await import('./financialReconciliation.ts');
+  const { drainWalletJournalOutbox } = await import('./walletJournalOutbox.ts');
+  const { getWalletJournalEventKey } = await import('../lib/walletJournalPolicy.ts');
+  const repairTx = {
+    id: `repair-race-${suffix}`,
+    timestamp: new Date().toISOString(),
+    type: 'incoming' as const,
+    asset: 'BTC' as const,
+    network: 'Bitcoin Mainnet',
+    amount: 0.002,
+    fee: 0,
+    counterparty: 'disposable-backfill-concurrency-test',
+    status: 'confirmed' as const,
+    note: 'verified historical repair race fixture',
+    isVerifiedOnChain: true,
+    confirmationDepth: 6,
+    verifiedBlockHeight: 900100,
+    verifiedBlockHash: 'd'.repeat(64),
+  };
+  await pool.query(
+    `INSERT INTO ledger_transactions
+      (user_id, tx_ref, timestamp, tx_type, asset, network, amount, fee, counterparty,
+       status, note, tx_hash, is_verified_on_chain, confirmation_depth,
+       verified_block_height, verified_block_hash)
+     VALUES ((SELECT id FROM users WHERE uid = $1), $2, $3, 'incoming', 'BTC',
+       'Bitcoin Mainnet', $4, 0, $5, 'confirmed', $6, $7, true, 6, 900100, $8)`,
+    [uid, repairTx.id, repairTx.timestamp, repairTx.amount, repairTx.counterparty,
+      repairTx.note, `hash-${suffix}`, repairTx.verifiedBlockHash],
+  );
+  const repairEventKey = getWalletJournalEventKey(repairTx);
+  await pool.query(
+    `INSERT INTO wallet_journal_outbox
+      (user_id, event_key, tx_ref, payload_json, status, available_at)
+     VALUES ((SELECT id FROM users WHERE uid = $1), $2, $3, $4::jsonb, 'pending', now())`,
+    [uid, repairEventKey, repairTx.id, JSON.stringify(repairTx)],
+  );
+
+  const [repairResult, workerResult] = await Promise.all([
+    backfillHistoricalWalletJournal(uid),
+    drainWalletJournalOutbox(uid, 10),
+  ]);
+  assert.equal(workerResult.failed, 0, 'Live outbox processing must not fail during historical repair.');
+  assert.equal(repairResult.skipped, 0, 'Eligible verified historical transaction must not be skipped.');
+  const repairJournalRows = await pool.query(
+    'SELECT id::text FROM journal_entries WHERE user_id = (SELECT id FROM users WHERE uid = $1) AND idempotency_key = $2 AND status = \'posted\'',
+    [uid, repairEventKey.replace(':confirmed:cycle-0:block-', ':confirmed:cycle-0:block-')],
+  );
+  assert.equal(repairJournalRows.rowCount, 1,
+    'Backfill and live outbox worker must converge on exactly one posted generation.');
+  const repairReplay = await backfillHistoricalWalletJournal(uid);
+  assert.equal(repairReplay.posted, 0, 'A repeated repair must not create another posting.');
+  assert.equal(repairReplay.replayed, 1, 'A repeated repair must report the existing journal posting as replayed.');
+
+  // Pending/unverified historical records are deliberately excluded from repair.
+  const pendingRef = `pending-repair-${suffix}`;
+  await pool.query(
+    `INSERT INTO ledger_transactions
+      (user_id, tx_ref, timestamp, tx_type, asset, network, amount, fee, counterparty,
+       status, note, is_verified_on_chain)
+     VALUES ((SELECT id FROM users WHERE uid = $1), $2, $3, 'incoming', 'BTC',
+       'Bitcoin Mainnet', 0.003, 0, 'unverified-fixture', 'pending_approval',
+       'must never be credited by backfill', false)`,
+    [uid, pendingRef, new Date().toISOString()],
+  );
+  const pendingRepair = await backfillHistoricalWalletJournal(uid);
+  assert.equal(pendingRepair.skipped, 1, 'Pending/unverified records must be skipped.');
+  const pendingJournalRows = await pool.query(
+    'SELECT id FROM journal_entries WHERE user_id = (SELECT id FROM users WHERE uid = $1) AND idempotency_key LIKE $2',
+    [uid, `wallet-tx:${pendingRef}:%`],
+  );
+  assert.equal(pendingJournalRows.rowCount, 0, 'Pending/unverified records must never create journal credits.');
+
 });
