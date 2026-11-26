@@ -913,7 +913,7 @@ export default function App() {
   const handleAddMemory = async (entry: Omit<MemoryEntry, 'id' | 'createdAt'>) => {
     const memoryEntry: MemoryEntry = {
       ...entry,
-      id: `mem-${crypto.randomUUID()}`,
+      id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
       createdAt: new Date().toISOString(),
     };
     try {
