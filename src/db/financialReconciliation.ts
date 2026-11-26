@@ -54,14 +54,25 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
       WHERE u.uid = $1 AND je.idempotency_key LIKE 'wallet-tx:%'`,
     [uid],
   );
-  const journaledIds = new Set<string>();
-  const reversedIds = new Set<string>();
+  const confirmedEntriesByTransaction = new Map<string, string[]>();
+  const reversedOriginalEntryIds = new Set<string>();
   for (const row of journaled.rows) {
     const parsed = parseWalletJournalEntryKey(row.idempotency_key);
-    if (!parsed) continue;
-    if (parsed.event === 'confirmed' && row.status === 'posted') journaledIds.add(parsed.transactionRef);
-    if (parsed.event === 'reorg-reversal' && row.status === 'posted') reversedIds.add(parsed.transactionRef);
+    if (!parsed || row.status !== 'posted') continue;
+    if (parsed.event === 'confirmed') {
+      const entries = confirmedEntriesByTransaction.get(parsed.transactionRef) ?? [];
+      entries.push(String(row.id));
+      confirmedEntriesByTransaction.set(parsed.transactionRef, entries);
+    }
+    if (parsed.event === 'reorg-reversal' && row.reversal_of) {
+      reversedOriginalEntryIds.add(String(row.reversal_of));
+    }
   }
+  const journaledIds = new Set(confirmedEntriesByTransaction.keys());
+  const unreversedReorged = [...reorgedIds].filter((txRef) => {
+    const postedGenerations = confirmedEntriesByTransaction.get(txRef) ?? [];
+    return postedGenerations.some((entryId) => !reversedOriginalEntryIds.has(entryId));
+  });
 
   return {
     legacyWalletSatoshis: legacyWalletSatoshis.toString(),
@@ -70,7 +81,7 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
     eligibleHistoricalTransactions: confirmedIds.size,
     journaledTransactions: [...confirmedIds].filter((id) => journaledIds.has(id)).length,
     unjournaledConfirmedTransactions: [...confirmedIds].filter((id) => !journaledIds.has(id)),
-    unreversedReorgedTransactions: [...reorgedIds].filter((id) => journaledIds.has(id) && !reversedIds.has(id)),
+    unreversedReorgedTransactions: unreversedReorged,
     balanced: deltaSatoshis === 0n,
   };
 }
@@ -90,25 +101,24 @@ export async function backfillHistoricalWalletJournal(uid: string): Promise<{ po
   let posted = 0; let replayed = 0; let reversed = 0; let skipped = 0;
   for (const row of result.rows) {
     if (row.status === 'reorged') {
-      const original = await pool.query(
-        `SELECT id::text FROM journal_entries je JOIN users u ON u.id = je.user_id
-          WHERE u.uid = $1 AND je.idempotency_key = $2 AND je.status = 'posted'`,
-        [uid, `wallet-tx:${row.tx_ref}:confirmed`],
+      const originals = await pool.query(
+        `SELECT je.id::text
+           FROM journal_entries je JOIN users u ON u.id = je.user_id
+          WHERE u.uid = $1 AND je.status = 'posted'
+            AND (je.idempotency_key = $2 OR left(je.idempotency_key, length($3)) = $3)
+          ORDER BY je.id`,
+        [uid, `wallet-tx:${row.tx_ref}:confirmed`, `wallet-tx:${row.tx_ref}:confirmed:`],
       );
-      if (!original.rowCount) { skipped++; continue; }
-      const existingReversal = await pool.query(
-        `SELECT 1 FROM journal_entries je JOIN users u ON u.id = je.user_id
-          WHERE u.uid = $1 AND je.idempotency_key = $2 AND je.status = 'posted'`,
-        [uid, `wallet-tx:${row.tx_ref}:reorg-reversal`],
-      );
-      if (existingReversal.rowCount) { replayed++; continue; }
-      await reversePostedJournalEntry({
-        uid,
-        originalEntryId: original.rows[0].id,
-        idempotencyKey: `wallet-tx:${row.tx_ref}:reorg-reversal`,
-        description: `Historical reversal of reorged wallet transaction ${row.tx_ref}`,
-      });
-      reversed++;
+      if (!originals.rowCount) { skipped++; continue; }
+      for (const original of originals.rows as Array<{ id: string }>) {
+        const reversal = await reversePostedJournalEntry({
+          uid,
+          originalEntryId: original.id,
+          idempotencyKey: `wallet-tx:${row.tx_ref}:reorg-reversal:entry-${original.id}`,
+          description: `Historical reversal of reorged wallet transaction ${row.tx_ref}`,
+        });
+        if (reversal.replayed) replayed++; else reversed++;
+      }
       continue;
     }
     if (row.status !== 'confirmed' || !row.is_verified_on_chain) { skipped++; continue; }
