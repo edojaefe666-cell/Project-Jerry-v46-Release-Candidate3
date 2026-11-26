@@ -162,7 +162,7 @@ export class SecurityStore {
         owner_uid TEXT NOT NULL
       );
       INSERT OR IGNORE INTO emergency_control(id, stopped, reason, updated_at, owner_uid)
-        VALUES(1, 0, 'Emergency stop not engaged', '2026-11-26T10:54:35.255Z', 'system');
+        VALUES(1, 0, 'Emergency stop not engaged', strftime('%Y-%m-%dT%H:%M:%fZ','now'), 'system');
       CREATE TABLE IF NOT EXISTS idempotency (
         idempotency_key TEXT PRIMARY KEY,
         actor_uid TEXT NOT NULL,
