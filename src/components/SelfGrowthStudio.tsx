@@ -166,7 +166,7 @@ export function SelfGrowthStudio({
     const res = onQueueDiscoveryTask(item);
     setDiscoveryNotice(
       res.ok
-        ? `Queued "${item.title}" in Tasks & Recovery (+$${item.estimatedDailyProfitUsd}/day expected).`
+        ? `Queued "${item.title}" in Tasks & Recovery (unverified revenue scenario only; no income earned).`
         : (res.error ?? 'This method is already queued in Tasks & Recovery.')
     );
   };
@@ -432,7 +432,7 @@ export function SelfGrowthStudio({
                   <div className="flex items-center justify-between gap-2 text-xs">
                     <span className="font-semibold text-blue-700">{item.methodCategory}</span>
                     <span className="font-mono tabular-nums font-semibold text-emerald-700">
-                      +${item.estimatedDailyProfitUsd}/day est.
+                      Hypothetical scenario: ${item.estimatedDailyProfitUsd}/day
                     </span>
                   </div>
                   <h2 className="text-sm font-semibold text-slate-900">{item.title}</h2>
