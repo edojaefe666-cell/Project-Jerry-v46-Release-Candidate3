@@ -20,7 +20,7 @@ function invoke(limit: ReturnType<typeof createOwnerRateLimiter>, uid?: string) 
   const response = responseRecorder();
   let nextCalled = false;
   limit(
-    { user: uid ? { uid } : undefined } as Parameters<typeof limit>[0],
+    { user: uid ? { uid } : undefined } as unknown as Parameters<typeof limit>[0],
     response as unknown as Parameters<typeof limit>[1],
     () => { nextCalled = true; },
   );
