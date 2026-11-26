@@ -36,7 +36,7 @@ export function decomposeGoal(input: { title: string; description: string; proje
     { title: 'Prepare handover and maintenance plan', kind: 'operations', description: 'Summarize deliverables, limitations, outstanding risks and maintenance needs.' },
     { title: 'External communications or account actions (optional)', kind: 'external_action', optional: true, description: 'Sending messages, submitting forms or changing external accounts requires separate approval of the exact action and content.' },
     { title: 'Purchases or financial commitments (optional)', kind: 'financial', optional: true, description: 'Any purchase, payment, subscription or financial commitment requires fresh approval of the amount, recipient and terms.' },
-    { title: 'Publish, deploy or submit to production (optional)', kind: 'deployment', optional: true, description: 'Only after Joshua explicitly approves the exact destination, scope and impact; deployment is not performed by this planning record.' },
+    { title: 'Publish, deploy or submit to production (optional)', kind: 'deployment', optional: true, description: 'Only after the owner explicitly approves the exact destination, scope and impact; deployment is not performed by this planning record.' },
   ];
   const tasks: GoalTask[] = steps.map((step, index) => {
     const requiresApproval = approvalKinds.includes(step.kind);
@@ -44,7 +44,7 @@ export function decomposeGoal(input: { title: string; description: string; proje
       id: id(), title: step.title, description: step.description, kind: step.kind,
       status: requiresApproval ? 'awaiting_approval' : 'queued',
       dependsOn: index ? [] : [], requiresApproval, optional: step.optional,
-      approvalReason: requiresApproval ? 'This task may affect an external system, money, a contract or production. Joshua must approve it explicitly.' : undefined,
+      approvalReason: requiresApproval ? 'This task may affect an external system, money, a contract or production. The owner must approve it explicitly.' : undefined,
       attempts: 0, updatedAt: stamp(),
     };
   });
