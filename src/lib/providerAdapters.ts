@@ -14,6 +14,7 @@ export interface ModelGenerationOptions {
   preferredProvider?: ModelProvider;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 }
 
 function safeLocalEndpoint(baseUrl: string): URL {
@@ -31,11 +32,16 @@ async function requestJson(
   url: string,
   init: RequestInit,
   timeoutMs: number,
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  parentSignal?: AbortSignal
 ): Promise<Record<string, any>> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromParent = () => controller.abort(parentSignal?.reason);
+  if (parentSignal?.aborted) abortFromParent();
+  else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error('Provider request timed out.')), timeoutMs);
   try {
+    if (controller.signal.aborted) throw new Error('Provider request cancelled.');
     const response = await fetchImpl(url, { ...init, signal: controller.signal });
     if (!response.ok) {
       // Do not surface provider response bodies: they may contain request data or secrets.
@@ -48,6 +54,7 @@ async function requestJson(
     return body as Record<string, any>;
   } finally {
     clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', abortFromParent);
   }
 }
 
@@ -67,7 +74,8 @@ async function generateFromProvider(
   systemInstruction: string | undefined,
   configuration: ProviderConfiguration,
   timeoutMs: number,
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  signal?: AbortSignal
 ): Promise<string> {
   if (provider === 'google') {
     const key = configuration.google?.apiKey;
@@ -75,7 +83,7 @@ async function generateFromProvider(
     const body = await requestJson(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
       { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}), contents: [{ role: 'user', parts: [{ text: prompt }] }] }) },
-      timeoutMs, fetchImpl
+      timeoutMs, fetchImpl, signal
     );
     return extractText(provider, body);
   }
@@ -85,7 +93,7 @@ async function generateFromProvider(
     const body = await requestJson('https://api.openai.com/v1/chat/completions', {
       method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
       body: JSON.stringify({ model, messages: [...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []), { role: 'user', content: prompt }] }),
-    }, timeoutMs, fetchImpl);
+    }, timeoutMs, fetchImpl, signal);
     return extractText(provider, body);
   }
   if (provider === 'anthropic') {
@@ -95,7 +103,7 @@ async function generateFromProvider(
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({ model, max_tokens: 2048, ...(systemInstruction ? { system: systemInstruction } : {}), messages: [{ role: 'user', content: prompt }] }),
-    }, timeoutMs, fetchImpl);
+    }, timeoutMs, fetchImpl, signal);
     return extractText(provider, body);
   }
   const local = configuration.local;
@@ -105,7 +113,7 @@ async function generateFromProvider(
   const body = await requestJson(endpoint.toString(), {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ model, messages: [...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []), { role: 'user', content: prompt }] }),
-  }, timeoutMs, fetchImpl);
+  }, timeoutMs, fetchImpl, signal);
   return extractText(provider, body);
 }
 
@@ -123,10 +131,12 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
 
   const failures: string[] = [];
   for (const route of routes) {
+    if (options.signal?.aborted) throw new Error('Jerry Brain request cancelled by emergency stop or client disconnect.');
     try {
-      const text = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl);
+      const text = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl, options.signal);
       return { text, provider: route.provider, model: route.model };
     } catch (error) {
+      if (options.signal?.aborted) throw new Error('Jerry Brain request cancelled by emergency stop or client disconnect.');
       failures.push(`${route.provider}: ${error instanceof Error ? error.message : 'request failed'}`);
     }
   }
