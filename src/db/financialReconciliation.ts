@@ -16,6 +16,75 @@ export function parseWalletJournalEntryKey(value: string): { transactionRef: str
   return { transactionRef: match[1], event: match[2] as 'confirmed' | 'reorg-reversal' };
 }
 
+export type WalletJournalEntryAuditRow = {
+  id: string;
+  idempotency_key: string;
+  reversal_of: string | null;
+  status: string;
+};
+
+export type WalletJournalEntryAudit = {
+  confirmedEntriesByTransaction: Map<string, string[]>;
+  reversedOriginalEntryIds: Set<string>;
+  duplicateConfirmedGenerations: string[];
+  unmatchedReversalEntries: string[];
+};
+
+export function auditWalletJournalEntries(rows: WalletJournalEntryAuditRow[]): WalletJournalEntryAudit {
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  const confirmedEntriesByTransaction = new Map<string, string[]>();
+  const generationCounts = new Map<string, number>();
+  const reversedOriginalEntryIds = new Set<string>();
+  const unmatchedReversalEntries: string[] = [];
+
+  for (const row of rows) {
+    if (row.status !== 'posted') continue;
+    const parsed = parseWalletJournalEntryKey(row.idempotency_key);
+    if (!parsed) continue;
+    if (parsed.event === 'confirmed') {
+      const entries = confirmedEntriesByTransaction.get(parsed.transactionRef) ?? [];
+      entries.push(String(row.id));
+      confirmedEntriesByTransaction.set(parsed.transactionRef, entries);
+      const prefix = `wallet-tx:${parsed.transactionRef}:confirmed`;
+      const generation = row.idempotency_key.slice(prefix.length) || ':legacy';
+      const generationKey = `${parsed.transactionRef}${generation}`;
+      generationCounts.set(generationKey, (generationCounts.get(generationKey) ?? 0) + 1);
+      continue;
+    }
+
+    const originalId = row.reversal_of ? String(row.reversal_of) : '';
+    const original = byId.get(originalId);
+    const originalParsed = original && original.status === 'posted'
+      ? parseWalletJournalEntryKey(original.idempotency_key)
+      : null;
+    if (!originalParsed || originalParsed.event !== 'confirmed' ||
+        originalParsed.transactionRef !== parsed.transactionRef) {
+      unmatchedReversalEntries.push(String(row.id));
+      continue;
+    }
+    const reversalPrefix = `wallet-tx:${parsed.transactionRef}:reorg-reversal`;
+    const reversalGeneration = row.idempotency_key.slice(reversalPrefix.length);
+    const originalPrefix = `wallet-tx:${parsed.transactionRef}:confirmed`;
+    const originalGeneration = original.idempotency_key.slice(originalPrefix.length);
+    // Legacy backfill keys bind directly to the original entry ID. Cycle-aware
+    // reversals must also match the exact cycle/block generation they reverse.
+    if (reversalGeneration.startsWith(':cycle-') && reversalGeneration !== originalGeneration) {
+      unmatchedReversalEntries.push(String(row.id));
+      continue;
+    }
+    reversedOriginalEntryIds.add(originalId);
+  }
+
+  return {
+    confirmedEntriesByTransaction,
+    reversedOriginalEntryIds,
+    duplicateConfirmedGenerations: [...generationCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([generation]) => generation),
+    unmatchedReversalEntries,
+  };
+}
+
 export type FinancialTruthReport = {
   legacyWalletSatoshis: string;
   journalWalletSatoshis: string;
