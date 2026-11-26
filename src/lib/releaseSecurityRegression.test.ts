@@ -148,7 +148,7 @@ test('emergency stop blocks every isolated self-upgrade test execution path', ()
   assert.match(persisted, /requireAuth, requireExecutionEnabled/);
   assert.match(direct, /requireAuth, requireExecutionEnabled/);
   assert.match(server, /const requireExecutionEnabled =/);
-  assert.match(server, /res.status(423)/);
+  assert.match(server, /res\.status\(423\)/);
 });
 
 test('emergency stop keeps internal wallet journal recovery separate from external execution', () => {
