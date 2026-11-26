@@ -150,6 +150,26 @@ export default function App() {
     };
   }, [idToken]);
 
+  useEffect(() => {
+    if (!idToken) return;
+    let active = true;
+    apiFetch('/api/memory')
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error('Persistent memory load failed'))))
+      .then((payload: { entries?: MemoryEntry[] }) => {
+        if (!active || !Array.isArray(payload.entries)) return;
+        setState((previous) => {
+          const merged = new Map<string, MemoryEntry>();
+          for (const entry of previous.memories ?? []) merged.set(entry.id, entry);
+          for (const entry of payload.entries ?? []) merged.set(entry.id, entry);
+          return { ...previous, memories: [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) };
+        });
+      })
+      .catch(() => {
+        // Keep the existing workspace snapshot if the dedicated memory service is unavailable.
+      });
+    return () => { active = false; };
+  }, [idToken]);
+
   const commitState = useCallback(
     (updater: (prev: JerryState) => JerryState) => {
       setState((prev) => {
@@ -890,18 +910,29 @@ export default function App() {
     setState(normalizeJerryWalletState(data.state));
   };
 
-  const handleAddMemory = (entry: Omit<MemoryEntry, 'id' | 'createdAt'>) => {
-    commitState((prev) => ({
-      ...prev,
-      memories: [
-        {
-          ...entry,
-          id: `mem-${Date.now()}`,
-          createdAt: new Date().toISOString(),
-        },
-        ...prev.memories,
-      ],
-    }));
+  const handleAddMemory = async (entry: Omit<MemoryEntry, 'id' | 'createdAt'>) => {
+    const memoryEntry: MemoryEntry = {
+      ...entry,
+      id: `mem-${crypto.randomUUID()}`,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      const response = await apiFetch('/api/memory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entry: memoryEntry }),
+      });
+      const payload = await response.json() as { entry?: MemoryEntry; error?: string };
+      if (!response.ok || !payload.entry) {
+        throw new Error(payload.error || 'Jerry could not persist this memory.');
+      }
+      commitState((previous) => ({
+        ...previous,
+        memories: [payload.entry!, ...previous.memories.filter((item) => item.id !== payload.entry!.id)],
+      }));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Jerry memory could not be saved. Please retry.');
+    }
   };
 
   const activeNavLabel = NAV_ITEMS.find((item) => item.id === activeTab)?.label ?? 'Command Hub';
