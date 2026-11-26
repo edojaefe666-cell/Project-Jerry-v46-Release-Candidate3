@@ -53,6 +53,21 @@ export async function ensureWalletTransactionJournaled(uid: string, transaction:
 
   const lines = buildWalletJournalLines(transaction.type, amount, fee);
 
+  // Avoid double-posting transactions that were journaled before the
+  // cycle-aware key format was introduced. A later reorg/reconfirmation uses
+  // journalCycle > 0 and therefore receives a new posting identity.
+  if ((transaction.journalCycle ?? 0) === 0) {
+    const legacy = await client.query(
+      `SELECT id::text, status FROM journal_entries
+       WHERE user_id = (SELECT id FROM users WHERE uid = $1)
+         AND idempotency_key = $2`,
+      [uid, `wallet-tx:${transaction.id}:confirmed`],
+    );
+    if (legacy.rowCount && legacy.rows[0].status === 'posted') {
+      return { action: 'already-posted', journalEntryId: legacy.rows[0].id };
+    }
+  }
+
   const entry = await postJournalEntry({
     uid,
     idempotencyKey: baseKey,
