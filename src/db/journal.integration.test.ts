@@ -52,6 +52,23 @@ test('PostgreSQL journal posting, idempotency, reversal and tenant isolation', {
   const alternateKeyReplay = await reversePostedJournalEntry({ uid, originalEntryId: first.id, idempotencyKey: `second-reversal-key-${suffix}` });
   assert.equal(alternateKeyReplay.id, reversal.id, 'A different idempotency key must not create a second reversal of the same entry.');
   assert.equal(alternateKeyReplay.replayed, true);
+  const concurrentOriginal = await postJournalEntry({
+    ...input,
+    idempotencyKey: `concurrent-deposit-${suffix}`,
+    description: 'Concurrent reversal test deposit',
+  });
+  const competingReversals = await Promise.all(Array.from({ length: 8 }, (_, index) =>
+    reversePostedJournalEntry({
+      uid,
+      originalEntryId: concurrentOriginal.id,
+      idempotencyKey: `concurrent-reversal-${index}-${suffix}`,
+    }),
+  ));
+  assert.equal(new Set(competingReversals.map((entry) => entry.id)).size, 1,
+    'Concurrent reversal requests with different keys must converge on one posted reversal.');
+  assert.equal(competingReversals.filter((entry) => !entry.replayed).length, 1,
+    'Exactly one competing reversal request may create the posting.');
+  assert.ok(competingReversals.every((entry) => entry.reversalOf === concurrentOriginal.id));
   await assert.rejects(reversePostedJournalEntry({ uid: otherUid, originalEntryId: first.id, idempotencyKey: `cross-tenant-${suffix}` }), /Only an existing posted journal entry/);
   const after = await getJournalAccountBalances(uid);
   assert.ok(after.every((row) => row.netDebitUnits === '0'), 'A complete reversal must return all account net balances to zero.');
