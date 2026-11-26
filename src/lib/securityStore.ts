@@ -161,12 +161,15 @@ export class SecurityStore {
   }
 
   decideApproval(id: string, decision: 'approved' | 'rejected', actorUid: string): ApprovalRequest | null {
-    const existing = this.getApproval(id, actorUid);
-    if (!existing || existing.status !== 'pending' || isApprovalExpired(existing.createdAt)) return null;
     const decidedAt = now();
-    this.db.prepare("UPDATE approvals SET status=?, decided_at=?, decided_by=? WHERE id=? AND owner_uid=? AND status='pending'")
-      .run(decision, decidedAt, actorUid, id, actorUid);
-    this.audit(actorUid, 'approval.decided', { id, decision, actorUid });
+    const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
+    // Make the decision a single conditional write. A read-then-write check
+    // can race when two owner sessions submit different decisions concurrently.
+    const result = this.db.prepare(
+      "UPDATE approvals SET status=?, decided_at=?, decided_by=? WHERE id=? AND owner_uid=? AND status='pending' AND created_at>=?"
+    ).run(decision, decidedAt, actorUid, id, actorUid, cutoff);
+    if (Number(result.changes ?? 0) !== 1) return null;
+    this.audit(actorUid, 'approval.decided', { id, decision, actorUid, decidedAt });
     return this.getApproval(id, actorUid);
   }
 
