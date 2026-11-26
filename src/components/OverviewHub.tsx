@@ -513,7 +513,7 @@ export function OverviewHub({
                 <div>
                   <span className="text-slate-500">Internet Authority</span>
                   <p className="font-mono tabular-nums font-semibold text-slate-600">
-                    {latestSummary.metrics.internetAuthorityScore === null
+                    {latestSummary.financialDataStatus !== 'verified_from_ledger' || latestSummary.metrics.internetAuthorityScore === null
                       ? 'Not measured'
                       : `${latestSummary.metrics.internetAuthorityScore}%`}
                   </p>
