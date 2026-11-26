@@ -44,6 +44,23 @@ test('falls back to OpenAI when the preferred Google provider fails', async () =
   assert.equal(openAiBody.messages[0].content, 'Follow Jerry governance rules.');
 });
 
+test('aborts the active provider request and never falls back after emergency stop', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const pendingFetch = (_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    calls += 1;
+    init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    controller.abort(new Error('owner stop'));
+  });
+  await assert.rejects(() => generateWithModelFallback({
+    task: 'chat', prompt: 'hello',
+    configuration: { google: { apiKey: 'g-key' }, openai: { apiKey: 'o-key' } },
+    fetchImpl: pendingFetch as typeof fetch,
+    signal: controller.signal,
+  }), /cancelled by emergency stop/);
+  assert.equal(calls, 1, 'cancellation must prevent fallback provider requests');
+});
+
 test('uses Anthropic Messages response format', async () => {
   let headers: HeadersInit | undefined;
   const result = await generateWithModelFallback({
