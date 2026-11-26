@@ -70,6 +70,40 @@ function hashScope(scope?: Record<string, unknown>): string | undefined {
   return scope ? sha256(JSON.stringify(canonicalize(scope))) : undefined;
 }
 
+function validateApprovalCommitment(
+  action: HighImpactAction,
+  amountUsd: number | undefined,
+  scope: Record<string, unknown> | undefined,
+): void {
+  const financialActions: HighImpactAction[] = [
+    'outgoing_payment', 'bitcoin_transfer', 'purchase', 'subscription', 'contract', 'financial_commitment',
+  ];
+  if (!financialActions.includes(action)) return;
+  if (!scope || Array.isArray(scope) || typeof scope !== 'object' || Object.keys(scope).length === 0) {
+    throw new Error('Financial approval requires an explicit, immutable action scope.');
+  }
+  if (action === 'bitcoin_transfer') {
+    const amount = Number(scope.amount);
+    const fee = Number(scope.fee);
+    const destination = String(scope.destination ?? '');
+    if (scope.asset !== 'BTC' || scope.network !== 'Bitcoin Mainnet' ||
+        !/^(bc1|[13])[a-km-zA-HJ-NP-Z1-9]{25,90}$/.test(destination) ||
+        !Number.isFinite(amount) || amount <= 0 || amount > 21_000_000 ||
+        !Number.isFinite(fee) || fee < 0 || fee > amount ||
+        Math.abs(amount * 1e8 - Math.round(amount * 1e8)) > 1e-6 ||
+        Math.abs(fee * 1e8 - Math.round(fee * 1e8)) > 1e-6) {
+      throw new Error('Bitcoin transfer approval must bind BTC amount, fee, Bitcoin Mainnet and a valid destination address.');
+    }
+    return;
+  }
+  const recipient = String(scope.recipient ?? scope.destination ?? '').trim();
+  const purpose = String(scope.purpose ?? '').trim();
+  if (amountUsd === undefined || !Number.isFinite(amountUsd) || amountUsd <= 0 ||
+      !recipient || recipient.length > 254 || !purpose || purpose.length < 5 || purpose.length > 1000) {
+    throw new Error('Financial approval requires a positive USD limit, exact recipient or destination, and a clear purpose.');
+  }
+}
+
 const APPROVAL_TTL_MS = 15 * 60 * 1000;
 function isApprovalExpired(createdAt: string): boolean {
   const created = Date.parse(createdAt);
@@ -143,6 +177,7 @@ export class SecurityStore {
   }
 
   createApproval(input: { action: HighImpactAction; summary: string; amountUsd?: number; scope?: Record<string, unknown>; ownerUid: string }): ApprovalRequest {
+    validateApprovalCommitment(input.action, input.amountUsd, input.scope);
     const approval: ApprovalRequest = {
       id: randomBytes(16).toString('hex'),
       action: input.action,
