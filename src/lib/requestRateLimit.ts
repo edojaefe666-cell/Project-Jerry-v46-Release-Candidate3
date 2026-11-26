@@ -1,12 +1,4 @@
-export interface RateLimitRequest {
-  user?: { uid?: string };
-}
-
-export interface RateLimitResponse {
-  status(code: number): this;
-  setHeader(name: string, value: string): this;
-  json(body: unknown): unknown;
-}
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 export interface OwnerRateLimitOptions {
   limit: number;
@@ -32,8 +24,8 @@ export function createOwnerRateLimiter(options: OwnerRateLimitOptions) {
   const now = options.now ?? Date.now;
   const buckets = new Map<string, { startedAt: number; count: number; touchedAt: number }>();
 
-  return (req: RateLimitRequest, res: RateLimitResponse, next: () => void): void => {
-    const uid = req.user?.uid?.trim();
+  const middleware: RequestHandler = (req: Request, res: Response, next: NextFunction): void => {
+    const uid = (req as Request & { user?: { uid?: string } }).user?.uid?.trim();
     if (!uid) {
       res.status(401).json({ error: 'Authenticated owner identity is required.' });
       return;
@@ -74,4 +66,5 @@ export function createOwnerRateLimiter(options: OwnerRateLimitOptions) {
     }
     next();
   };
+  return middleware;
 }
