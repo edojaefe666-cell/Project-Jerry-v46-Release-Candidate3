@@ -1,7 +1,7 @@
 import { createPool } from './index.ts';
 import { postJournalEntry, reversePostedJournalEntry, getJournalAccountBalances } from './journal.ts';
 import { btcToSatoshis, buildWalletJournalLines } from '../lib/btcUnits.ts';
-import { calculateLegacyWalletSatoshis } from '../lib/financialReconciliationMath.ts';
+import { calculateLegacyWalletSatoshis, mapLegacyWalletTransactionRows } from '../lib/financialReconciliationMath.ts';
 import type { WalletTransaction } from '../lib/types.ts';
 
 export async function getAuthoritativeWalletBtcSatoshis(uid: string): Promise<bigint> {
@@ -39,7 +39,7 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
   const journalBalances = await getJournalAccountBalances(uid);
   const walletJournal = journalBalances.find((row) => row.accountCode === 'asset:btc:wallet' && row.asset === 'BTC');
   const journalWalletSatoshis = BigInt(walletJournal?.netDebitUnits ?? '0');
-  const legacyWalletSatoshis = BigInt(calculateLegacyWalletSatoshis(legacy.rows));
+  const legacyWalletSatoshis = BigInt(calculateLegacyWalletSatoshis(mapLegacyWalletTransactionRows(legacy.rows)));
   const deltaSatoshis = legacyWalletSatoshis - journalWalletSatoshis;
 
   const confirmedIds = new Set<string>();
