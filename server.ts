@@ -1628,74 +1628,76 @@ async function startServer() {
       };
     };
 
-    const ai = getGeminiClient();
-    if (!ai) {
+    const configuration = providerConfigurationFromEnvironment(process.env);
+    const hasProvider = Boolean(
+      configuration.google?.apiKey || configuration.openai?.apiKey ||
+      configuration.anthropic?.apiKey || (configuration.local?.enabled && configuration.local.baseUrl),
+    );
+    if (!hasProvider) {
       res.json({
         proposal: buildPolyglotFallback(),
-        modelUsed: 'Jerry Polyglot Engine (Offline Builder)',
+        modelUsed: 'Jerry Polyglot Engine (offline template; no AI provider configured)',
+        evidenceStatus: 'template_not_model_generated',
       });
       return;
     }
 
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents:
-          `You are Jerry's Polyglot Self-Programming Engine (fluent in all programming languages). ` +
-          `Write a clean, safe, self-contained ${chosenLang} capability module for "${targetModule}" accomplishing: "${cleanPrompt}". ` +
-          `Never bypass owner approval gates, never modify security policies, and never touch private keys or seed phrases. ` +
-          `Also provide a concise unit test snippet in ${chosenLang}.`,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              summary: { type: Type.STRING },
-              code: { type: Type.STRING },
-              testCode: { type: Type.STRING },
-            },
-          },
-        },
+      const generated = await generateWithModelFallback({
+        task: 'coding',
+        configuration,
+        systemInstruction:
+          'You are Jerry’s code-proposal engine. Produce a safe, self-contained code proposal and a concise test snippet. ' +
+          'Never bypass owner approval, change authorization policies, access secrets, deploy code, or claim tests were run. ' +
+          'Return only JSON with title, summary, code, and testCode.',
+        prompt:
+          `Draft a ${chosenLang} capability module for target module "${targetModule}" to address: "${cleanPrompt}". ` +
+          'Include code and a concise unit test snippet. Treat the output as an untrusted proposal requiring independent review.',
       });
-
-      const parsed = JSON.parse((response.text ?? '{}').trim()) as {
-        title?: string;
-        summary?: string;
-        code?: string;
-        testCode?: string;
+      const cleaned = generated.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      const parsed = JSON.parse(cleaned) as {
+        title?: unknown;
+        summary?: unknown;
+        code?: unknown;
+        testCode?: unknown;
       };
+      if (typeof parsed.code !== 'string' || !parsed.code.trim() ||
+          typeof parsed.testCode !== 'string' || !parsed.testCode.trim()) {
+        throw new Error('The configured model returned an incomplete code proposal.');
+      }
 
-      const generatedCode = parsed.code?.trim() || buildPolyglotFallback().code;
+      const generatedCode = parsed.code.trim().slice(0, 50_000);
+      const testCode = parsed.testCode.trim().slice(0, 20_000);
       const audit = auditSelfProgrammedCode(generatedCode);
-
       const proposal: SelfUpgradeProposal = {
         id: `upg-${Date.now()}`,
         prompt: cleanPrompt,
         language: chosenLang,
         targetModule,
-        title: parsed.title || `${targetModule} (${chosenLang}) Upgrade`,
-        summary: parsed.summary || `Generated ${chosenLang} module for ${targetModule}.`,
+        title: typeof parsed.title === 'string' && parsed.title.trim()
+          ? parsed.title.trim().slice(0, 240) : `${targetModule} (${chosenLang}) Upgrade`,
+        summary: typeof parsed.summary === 'string' && parsed.summary.trim()
+          ? parsed.summary.trim().slice(0, 2000) : `Generated ${chosenLang} proposal for ${targetModule}; independent verification required.`,
         code: generatedCode,
-        testCode: parsed.testCode?.trim() || buildPolyglotFallback().testCode,
+        testCode,
         securityAuditPassed: audit.passed,
         securityAuditNotes: audit.notes,
         testStatus: 'pending',
-        testReport: 'Awaiting test execution prior to owner permission.',
+        testReport: 'Awaiting isolated test execution prior to owner permission.',
         approvalStatus: 'awaiting_permission',
         createdAt: new Date().toISOString(),
       };
 
-      res.json({ proposal, modelUsed: 'gemini-4-hydrogen' });
+      res.json({
+        proposal,
+        modelUsed: generated.model,
+        evidenceStatus: 'model_generated_unverified_proposal',
+      });
     } catch (error) {
-      if (isQuotaError(error)) {
-        res.json({
-          proposal: buildPolyglotFallback(),
-          modelUsed: 'Jerry Polyglot Local Engine (Gemini quota reached; check Settings > Secrets)',
-        });
-        return;
-      }
-      res.status(502).json({ error: `Self-Programming error: ${formatCleanError(error, 'Failed to draft code upgrade')}` });
+      res.status(502).json({
+        error: `Self-Programming could not produce a valid proposal: ${formatCleanError(error, 'Model generation failed')}`,
+        proposalCreated: false,
+      });
     }
   });
 
