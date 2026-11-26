@@ -37,6 +37,7 @@ Configure only the providers you intend to use in the cloud server's secret mana
 - `GEMINI_API_KEY` (or `GOOGLE_AI_API_KEY`); optional model override `JERRY_GOOGLE_MODEL`
 - `OPENAI_API_KEY`; optional model override `JERRY_OPENAI_MODEL`
 - `ANTHROPIC_API_KEY`; optional model override `JERRY_ANTHROPIC_MODEL`
+- `TAVILY_API_KEY` for Opportunity Radar source retrieval; keep it server-side and configure provider usage limits.
 - Optional local OpenAI-compatible endpoint: `JERRY_LOCAL_MODEL_ENABLED=1`, `JERRY_LOCAL_MODEL_URL=http://127.0.0.1:11434`, and optional `JERRY_LOCAL_MODEL_NAME`. The local adapter rejects non-loopback hosts.
 
 Never place provider keys in `VITE_*` variables, Android resources, APK assets, source control, or chat messages. Do not configure a provider unless its endpoint, model identifier, billing and data-handling terms have been reviewed. The service returns an unavailable response when no provider is configured; it does not fabricate an AI answer.
@@ -55,4 +56,4 @@ These limits are a local abuse/cost guard, not a distributed quota system. A mul
 
 The authenticated goal-planning and opportunity-assessment routes use Jerry's provider-neutral server-side model adapters and per-owner rate limits. They return HTTP 503 when no model provider is configured and HTTP 502 when providers fail or return invalid structured output; they no longer present deterministic sample plans or hard-coded commercial projections as generated AI work.
 
-Opportunity assessment is explicitly model-only unless a separate research connector supplies current sources. It returns no verified facts and labels its output as estimates without live sources. Goal plans are proposals only; generated action steps do not execute, authorize spending, or approve external commitments.
+The Opportunity Radar (`POST /api/jerry/scan-opportunities`) retrieves bounded source extracts through Tavily when `TAVILY_API_KEY` is configured, then asks a configured provider-neutral research model to analyse them. Source references are separate from independently verified facts; retrieved sources and model summaries are not independently verified. The route fails closed with HTTP 503 when live research is unconfigured or returns no usable sources, and HTTP 502 when research/model processing fails. It never falls back to fabricated sample opportunities. Both live research and model provider credentials must be configured for a completed scan. Goal plans are proposals only; generated action steps do not execute, authorize spending, or approve external commitments.
