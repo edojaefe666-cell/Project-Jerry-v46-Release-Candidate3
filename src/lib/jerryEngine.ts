@@ -1272,7 +1272,7 @@ export function evaluateHumanUnderstandingProgress(
   );
 
   const todayGain = todayInsights.reduce((sum, i) => sum + i.clarityScoreGain, 0) + todayMemoryBonus;
-  const effectiveGain = todayGain > 0 ? todayGain : 2;
+  const effectiveGain = Math.max(0, todayGain);
   const todayScore = Math.min(99.5, Math.round((previousDayScore + effectiveGain) * 10) / 10);
   const improvementDeltaPts = Math.round((todayScore - previousDayScore) * 10) / 10;
 
@@ -1310,7 +1310,7 @@ export function evaluateInternetDominanceProgress(
     Math.round((baseFoundation + prior.reduce((sum, i) => sum + i.authorityGainPts, 0)) * 10) / 10
   );
   const todayGain = todayItems.reduce((sum, i) => sum + i.authorityGainPts, 0);
-  const effectiveGain = todayGain > 0 ? todayGain : 2;
+  const effectiveGain = Math.max(0, todayGain);
   const todayAuthorityScore = Math.min(
     99.5,
     Math.round((previousDayAuthorityScore + effectiveGain) * 10) / 10
