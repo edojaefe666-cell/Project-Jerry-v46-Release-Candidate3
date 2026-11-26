@@ -79,6 +79,16 @@ test('OpenAI transcription sends audio as multipart and returns provider transcr
   assert.equal((request?.headers as Record<string,string>).authorization, 'Bearer o-key');
 });
 
+test('transcription rejects uploads larger than the server JSON body budget', async () => {
+  let called = false;
+  await assert.rejects(() => transcribeAudioWithModelFallback({
+    audioBase64: 'A'.repeat(10_000_001), mimeType: 'audio/webm',
+    configuration: { openai: { apiKey: 'o-key' } },
+    fetchImpl: async () => { called = true; return response({ text: 'unexpected' }); },
+  }), /Invalid or oversized/);
+  assert.equal(called, false);
+});
+
 test('transcription rejects invalid media and malformed audio without network access', async () => {
   let called = false;
   const fetchImpl = async () => { called = true; return response({ text: 'no' }); };
