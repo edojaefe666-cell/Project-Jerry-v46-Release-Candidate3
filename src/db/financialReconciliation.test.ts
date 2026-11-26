@@ -83,7 +83,7 @@ test('ignores drafts and unrelated journal entries during integrity audit', () =
 
 
 test('journal audit detects duplicate confirmation generations', () => {
-  const suffix = ':confirmed:cycle-2:block-${'a'.repeat(64)}';
+  const suffix = `:confirmed:cycle-2:block-${'a'.repeat(64)}`;
   const audit = auditWalletJournalEntries([
     { id: '10', idempotency_key: `wallet-tx:tx-dup${suffix}`, reversal_of: null, status: 'posted' },
     { id: '11', idempotency_key: `wallet-tx:tx-dup${suffix}`, reversal_of: null, status: 'posted' },
