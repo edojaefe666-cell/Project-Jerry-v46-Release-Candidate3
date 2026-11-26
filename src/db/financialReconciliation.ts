@@ -51,7 +51,7 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
   const journaledIds = new Set<string>();
   const reversedIds = new Set<string>();
   for (const row of journaled.rows) {
-    const match = /^wallet-tx:(.+):(confirmed|reorg-reversal)$/.exec(row.idempotency_key);
+    const match = /^wallet-tx:(.+):(confirmed|reorg-reversal)(?::.+)?$/.exec(row.idempotency_key);
     if (!match) continue;
     if (match[2] === 'confirmed' && row.status === 'posted') journaledIds.add(match[1]);
     if (match[2] === 'reorg-reversal' && row.status === 'posted') reversedIds.add(match[1]);
