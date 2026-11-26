@@ -1510,7 +1510,7 @@ async function startServer() {
 
     try {
       const configuration = providerConfigurationFromEnvironment(process.env);
-      if (configuration.google?.apiKey || configuration.openai?.apiKey || configuration.anthropic?.apiKey || configuration.local?.baseUrl) {
+      if (configuration.google?.apiKey || configuration.openai?.apiKey || configuration.anthropic?.apiKey || (configuration.local?.enabled && configuration.local.baseUrl)) {
         const generated = await generateWithModelFallback({
           task: 'planning',
           configuration,
