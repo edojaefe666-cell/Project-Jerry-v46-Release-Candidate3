@@ -632,7 +632,7 @@ export function OverviewHub({
           {(state.dailyDiscoveries ?? []).slice(0, 3).map((way) => (
             <div key={way.id} className="space-y-1">
               <p className="text-xs font-mono tabular-nums text-blue-700 font-semibold">
-                {way.methodCategory} · +${way.estimatedDailyProfitUsd}/day · {way.estimatedHoursSavedPerWeek}h/wk saved
+                {way.methodCategory} · hypothetical ${way.estimatedDailyProfitUsd}/day scenario · {way.estimatedHoursSavedPerWeek}h/wk estimated saved
               </p>
               <h3 className="text-sm font-semibold text-slate-900">{way.title}</h3>
               <p className="text-xs text-slate-600 line-clamp-2">{way.whyEasierAndFaster}</p>
