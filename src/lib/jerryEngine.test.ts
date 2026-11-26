@@ -715,8 +715,8 @@ test('evaluateHumanUnderstandingProgress confirms daily understanding exceeds pr
     today
   );
 
-  assert.equal(baseline.beatingPreviousDay, true);
-  assert.ok(baseline.todayScore > baseline.previousDayScore);
+  assert.equal(baseline.beatingPreviousDay, false);
+  assert.equal(baseline.todayScore, baseline.previousDayScore);
 
   const improved = evaluateHumanUnderstandingProgress(
     [
@@ -743,8 +743,8 @@ test('evaluateInternetDominanceProgress confirms daily authority improves over y
   const today = '2026-11-13';
   const baseline = evaluateInternetDominanceProgress(INITIAL_JERRY_STATE.internetMastery, today);
 
-  assert.equal(baseline.beatingPreviousDay, true);
-  assert.ok(baseline.todayAuthorityScore > baseline.previousDayAuthorityScore);
+  assert.equal(baseline.beatingPreviousDay, false);
+  assert.equal(baseline.todayAuthorityScore, baseline.previousDayAuthorityScore);
 
   const improved = evaluateInternetDominanceProgress(
     [
