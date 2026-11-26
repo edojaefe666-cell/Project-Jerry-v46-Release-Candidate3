@@ -1221,66 +1221,56 @@ async function startServer() {
 
   app.post('/api/jerry/chat', requireAuth, async (req: AuthRequest, res) => {
     const { message, history = [], contextSummary = '' } = req.body as {
-      message?: string;
-      history?: Array<{ role: string; content: string }>;
-      contextSummary?: string;
+      message?: unknown;
+      history?: Array<{ role?: unknown; content?: unknown }>;
+      contextSummary?: unknown;
     };
 
-    if (!message || !message.trim()) {
-      res.status(400).json({ error: 'Message text is required.' });
+    if (typeof message !== 'string' || !message.trim() || message.length > 20_000) {
+      res.status(400).json({ error: 'Message must contain 1–20000 characters.' });
+      return;
+    }
+    if (!Array.isArray(history) || history.length > 8 ||
+        history.some((item) => !item || !['user', 'jerry'].includes(String(item.role)) ||
+          typeof item.content !== 'string' || item.content.length > 10_000)) {
+      res.status(400).json({ error: 'Conversation history is invalid.' });
+      return;
+    }
+    if (typeof contextSummary !== 'string' || contextSummary.length > 20_000) {
+      res.status(400).json({ error: 'Workspace context is invalid.' });
       return;
     }
 
-    const ai = getGeminiClient();
-    if (!ai) {
-      res.json({
-        reply:
-          `I analyzed your request ("${message.trim()}") against our active workspace state. Here is my structured recommendation:\n\n` +
-          `1. Immediate Focus: Keep capital exposure strictly under your $250 autonomous threshold until pilot demand is verified.\n` +
-          `2. Next Operational Step: Review the pending tasks in Tasks & Recovery, resume any interrupted batch cleanly, and lock the next Milestone in Goals & 8-Level Plans.\n` +
-          `3. Fact vs. Estimate: Revenue projections remain estimates until initial design-partner invoices settle in Jerry Wallet.`,
-        modelUsed: 'Jerry Core Heuristic (Configure GEMINI_API_KEY in Secrets for live Gemini 4 reasoning)',
-      });
-      return;
-    }
+    const formattedHistory = history
+      .map((item) => `${item.role === 'user' ? 'Owner' : 'Jerry'}: ${item.content}`)
+      .join('\n');
+    const systemInstruction =
+      'You are Jerry, the owner’s private, commercially intelligent AI business and productivity partner. ' +
+      'Be proactive, practical, analytical, and honest. Distinguish verified facts, assumptions, and estimates. ' +
+      'Do not invent research, market facts, balances, revenue, completed work, or external actions. ' +
+      'You may research, reason, plan, draft, and recommend independently. Never spend, transfer, trade, purchase, subscribe, borrow, sign, publish externally, or make another financial or sensitive commitment without explicit scoped owner approval. ' +
+      'Never claim an action was executed unless a connected tool confirms it. Respect the owner-controlled emergency stop and all authorization boundaries. ' +
+      'Protect private workspace information and keep responses clear, concise, and useful.';
 
     try {
-      const formattedHistory = history
-        .slice(-8)
-        .map((m) => `${m.role === 'user' ? 'Owner' : 'Jerry'}: ${m.content}`)
-        .join('\n');
-
-      const systemInstruction =
-        'You are Jerry, an ambitious, commercially intelligent, proactive AI business, productivity, and personal technology partner. ' +
-        'Your TOP-MOST PRIORITY TASK AND GOAL each day is generating and saving at least $1,000/day in net profit ($5,000+/week, $20,000+/month) inside the owner’s portfolio Profit Reserve—strictly separated from and not part of investment principal—by executing zero-investment-drawdown B2B services, automation retainers, API licenses, and authorized deliverables. ' +
-        'Rules: Distinguish verified facts from estimates, never guarantee profits, respect explicit owner approval for financial commitments/payments/contracts/confidential sharing, and never facilitate harm or fraud. ' +
-        'Keep responses crisp, practical, structured, and executive-ready.';
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Workspace Context:\n${contextSummary}\n\nRecent Conversation:\n${formattedHistory}\n\nOwner Message: ${message.trim()}`,
-        config: {
-          systemInstruction,
-        },
+      const result = await generateWithModelFallback({
+        task: 'chat',
+        systemInstruction,
+        prompt: `Workspace Context:\n${contextSummary}\n\nRecent Conversation:\n${formattedHistory}\n\nOwner Message:\n${message.trim()}`,
+        configuration: providerConfigurationFromEnvironment(process.env),
       });
-
       res.json({
-        reply: response.text ?? 'I processed your message, though no text output was returned.',
-        modelUsed: 'gemini-4-hydrogen',
+        reply: result.text,
+        modelUsed: `${result.provider}:${result.model}`,
       });
     } catch (error) {
-      if (isQuotaError(error)) {
-        res.json({
-          reply:
-            `I analyzed your request ("${message.trim()}") against our active goals, tasks, and treasury governance:\n\n` +
-            `1. Immediate Focus: Keep capital commitments under your autonomous threshold until pilot demand is verified.\n` +
-            `2. Operational Next Step: Review pending approval gates in Tasks & Recovery and advance your top 8-level plan.\n` +
-            `3. Fact vs. Estimate: Revenue projections remain estimates until design-partner invoices settle in Jerry Wallet.`,
-          modelUsed: 'Local Reasoning Engine (Gemini quota reached; check Settings > Secrets)',
-        });
-        return;
-      }
-      res.status(502).json({ error: `Jerry Brain error: ${formatCleanError(error, 'Gemini API call failed')}` });
+      const messageText = error instanceof Error ? error.message : 'Jerry Brain provider request failed.';
+      const unconfigured = messageText.includes('No model provider is configured');
+      res.status(unconfigured ? 503 : 502).json({
+        error: unconfigured
+          ? 'Jerry Brain has no configured model provider. Configure a server-side provider key.'
+          : 'Jerry Brain could not reach an available model provider. Please retry shortly.',
+      });
     }
   });
 
