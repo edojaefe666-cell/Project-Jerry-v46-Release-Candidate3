@@ -7,6 +7,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { INITIAL_JERRY_STATE } from './src/lib/seedData';
 import { auditSelfProgrammedCode } from './src/lib/jerryEngine';
+import { runIsolatedSelfUpgradeTests } from './src/lib/isolatedSelfUpgradeRunner.ts';
 import { btcToSatoshis } from './src/lib/btcUnits.ts';
 import { validateIncomingBitcoinPayment } from './src/lib/bitcoinSettlement.ts';
 import { resolveSettlementApprovalStatus } from './src/lib/settlementApproval.ts';
@@ -1789,26 +1790,20 @@ async function startServer() {
         const audit = auditSelfProgrammedCode(proposal.code);
         let securityAuditPassed = audit.passed;
         let securityAuditNotes = audit.notes;
-        let testStatus: SelfUpgradeProposal['testStatus'] = audit.passed ? 'pending' : 'failed';
+        let testStatus: SelfUpgradeProposal['testStatus'] = 'pending';
         let testReport = audit.passed
-          ? 'Security policy audit passed. Runtime tests have not been executed; owner approval remains blocked.'
+          ? 'Security policy audit passed. Awaiting isolated runtime verification.'
           : `Blocked by security policy: ${audit.notes}`;
         if (audit.passed) {
-          if (/^(typescript|javascript)$/i.test(proposal.language.trim())) {
-            try {
-              const esbuild = await import('esbuild');
-              await esbuild.transform(proposal.code, { loader: /typescript/i.test(proposal.language) ? 'ts' : 'js' });
-              if (proposal.testCode.trim()) await esbuild.transform(proposal.testCode, { loader: /typescript/i.test(proposal.language) ? 'ts' : 'js' });
-              testStatus = 'pending';
-              testReport = `${proposal.language} syntax transformation passed via esbuild. Test code was not executed in an isolated runtime; owner approval remains blocked.`;
-            } catch (err) {
-              testStatus = 'failed';
-              testReport = `Syntax error: ${err instanceof Error ? err.message : 'Invalid JS/TS syntax'}`;
-            }
-          } else {
-            testStatus = 'pending';
-            testReport = `No isolated runtime test adapter is configured for ${proposal.language}. Test code was not executed; owner approval remains blocked.`;
-          }
+          const isolated = await runIsolatedSelfUpgradeTests({
+            language: proposal.language,
+            source: proposal.code,
+            testCode: proposal.testCode,
+          });
+          testStatus = isolated.status === 'passed' ? 'passed' : isolated.status === 'failed' ? 'failed' : 'pending';
+          testReport = isolated.report;
+        } else {
+          testStatus = 'failed';
         }
         const updated = { ...proposal, securityAuditPassed, securityAuditNotes, testStatus, testReport, approvalStatus: 'awaiting_permission' as const };
         const state = { ...current, selfUpgrades: (current.selfUpgrades ?? []).map((item) => item.id === upgradeId ? updated : item) };
@@ -1840,40 +1835,12 @@ async function startServer() {
       return;
     }
 
-    if (/^(typescript|javascript)$/i.test(language.trim())) {
-      try {
-        const esbuild = await import('esbuild');
-        await esbuild.transform(code, {
-          loader: /typescript/i.test(language) ? 'ts' : 'js',
-        });
-        if (testCode.trim()) {
-          await esbuild.transform(testCode, {
-            loader: /typescript/i.test(language) ? 'ts' : 'js',
-          });
-        }
-        res.json({
-          securityAuditPassed: true,
-          securityAuditNotes: audit.notes,
-          testStatus: 'pending',
-          testReport: `${language} syntax transformation passed via esbuild. Runtime tests were not executed; owner approval remains blocked.`,
-        });
-        return;
-      } catch (err) {
-        res.json({
-          securityAuditPassed: true,
-          securityAuditNotes: audit.notes,
-          testStatus: 'failed',
-          testReport: `Syntax error: ${err instanceof Error ? err.message : 'Invalid JS/TS syntax'}`,
-        });
-        return;
-      }
-    }
-
+    const isolated = await runIsolatedSelfUpgradeTests({ language, source: code, testCode });
     res.json({
       securityAuditPassed: true,
       securityAuditNotes: audit.notes,
-      testStatus: 'pending',
-      testReport: `No isolated runtime test adapter is configured for ${language}. Test code was not executed; owner approval remains blocked.`,
+      testStatus: isolated.status === 'passed' ? 'passed' : isolated.status === 'failed' ? 'failed' : 'pending',
+      testReport: isolated.report,
     });
   });
 
