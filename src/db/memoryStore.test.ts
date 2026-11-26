@@ -32,3 +32,14 @@ test('rejects malformed tags, identifiers and timestamps', () => {
   assert.match(validateMemoryEntry({ ...validEntry, tags: ['x'.repeat(81)] }) ?? '', /tags/i);
   assert.match(validateMemoryEntry({ ...validEntry, createdAt: 'not-a-date' }) ?? '', /timestamp/i);
 });
+
+test('rejects a memory area that conflicts with its legacy category', () => {
+  assert.match(
+    validateMemoryEntry({ ...validEntry, area: 'owner_profile' }),
+    /area.*category/i,
+  );
+  assert.equal(
+    validateMemoryEntry({ ...validEntry, area: 'knowledge_experience' }),
+    null,
+  );
+});
