@@ -1,4 +1,4 @@
-import { and, desc, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
 import { db } from './index.ts';
 import { memoryEntries } from './schema.ts';
 import { getOrCreateUser } from './users.ts';
@@ -72,7 +72,7 @@ export async function saveMemoryEntryForUser(uid: string, email: string, entry: 
 export async function searchMemoryForUser(
   uid: string,
   email: string,
-  options: { query?: string; category?: string; area?: JerryMemoryArea; limit?: number } = {},
+  options: { query?: string; category?: string; area?: JerryMemoryArea; limit?: number; before?: { createdAt: string; id: string } } = {},
 ): Promise<MemoryEntry[]> {
   const user = await getOrCreateUser(uid, email);
   const conditions = [eq(memoryEntries.userId, user.id)];
@@ -91,6 +91,14 @@ export async function searchMemoryForUser(
     if (!MEMORY_CATEGORIES.has(options.category)) throw new Error('Memory category is invalid.');
     conditions.push(eq(memoryEntries.category, options.category));
   }
+  if (options.before) {
+    const beforeDate = new Date(options.before.createdAt);
+    if (Number.isNaN(beforeDate.getTime()) || !options.before.id) throw new Error('Memory pagination cursor is invalid.');
+    conditions.push(or(
+      lt(memoryEntries.createdAt, beforeDate),
+      and(eq(memoryEntries.createdAt, beforeDate), lt(memoryEntries.id, options.before.id)),
+    )!);
+  }
   const limit = Number.isSafeInteger(options.limit) ? Math.max(1, Math.min(1000, options.limit!)) : 50;
   const rows = await db.select({
     id: memoryEntries.id,
@@ -103,7 +111,7 @@ export async function searchMemoryForUser(
     createdAt: memoryEntries.createdAt,
   }).from(memoryEntries)
     .where(and(...conditions))
-    .orderBy(desc(memoryEntries.createdAt))
+    .orderBy(desc(memoryEntries.createdAt), desc(memoryEntries.id))
     .limit(limit);
   return rows.map((row) => ({
     ...row,
