@@ -241,9 +241,13 @@ export interface VisionAnalysisRecord {
   timestamp: string;
 }
 
+export type JerryMemoryArea = 'owner_profile' | 'mission_projects' | 'knowledge_experience';
+
 export interface MemoryEntry {
   id: string;
   category: 'goal' | 'decision' | 'lesson' | 'preference' | 'workflow';
+  /** Three top-level searchable memory spaces; optional for legacy callers. */
+  area?: JerryMemoryArea;
   title: string;
   content: string;
   outcome?: 'success' | 'correction' | 'insight';
