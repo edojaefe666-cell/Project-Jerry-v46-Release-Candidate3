@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import { createPool } from './index.ts';
 import { ensureWalletTransactionJournaled } from './walletJournal.ts';
 import type { WalletTransaction } from '../lib/types.ts';
-import { isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
+import { getWalletJournalEventKey, isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
 
 type PgQueryClient = {
   query: (text: string, values?: unknown[]) => Promise<unknown>;
@@ -20,7 +20,7 @@ export async function enqueueWalletJournalEvent(
   userId: number,
   transaction: WalletTransaction,
 ): Promise<void> {
-  const eventKey = `wallet-tx:${transaction.id}:${transaction.status === 'reorged' ? 'reorg' : transaction.status}`;
+  const eventKey = getWalletJournalEventKey(transaction);
   const payload = JSON.stringify(transaction);
 
   if ('execute' in client) {
