@@ -214,3 +214,21 @@ test('emergency stop requires an owner and a meaningful reason', () => {
     store.close();
   }
 });
+
+
+test('emergency stop prevents atomic reservation of an approved Bitcoin transfer', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    const scope = {
+      asset: 'BTC', network: 'Bitcoin Mainnet',
+      destination: 'bc1q' + 'a'.repeat(30), amount: 0.01, fee: 0.0001,
+    };
+    const approval = store.createApproval({ action: 'bitcoin_transfer', summary: 'Transfer before stop', scope, ownerUid: 'owner-stop' });
+    store.decideApproval(approval.id, 'approved', 'owner-stop');
+    store.setEmergencyStop(true, 'owner-stop', 'Emergency stop before transfer reservation');
+    assert.equal(store.reserveApproval(approval.id, 'bitcoin_transfer', 'owner-stop', 'e'.repeat(64), scope), null);
+    assert.equal(store.getApproval(approval.id, 'owner-stop')?.consumedAt ?? null, null);
+  } finally {
+    store.close();
+  }
+});
