@@ -53,3 +53,26 @@ test('HTTP 500 handlers return generic errors instead of raw exception messages'
     assert.doesNotMatch(match[1], /error\.message|message/);
   }
 });
+
+test('persistent memory export is owner-authenticated and cursor-paginated without a fixed record ceiling', () => {
+  const start = server.indexOf("app.get('/api/memory/export'");
+  const end = server.indexOf("app.get('/api/memory'", start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth/);
+  assert.match(route, /decodeMemoryPageCursor/);
+  assert.match(route, /encodeMemoryPageCursor/);
+  assert.match(route, /limit: rawLimit \+ 1/);
+  assert.match(route, /nextCursor/);
+  assert.doesNotMatch(route, /limit: 1000/);
+});
+
+test('outgoing Bitcoin transfer staging is blocked while the emergency stop is engaged', () => {
+  const route = server.match(/app\.post\('\/api\/wallet\/commands\/submit-transfer'[^\n]+/);
+  assert.ok(route);
+  assert.match(route[0], /requireAuth, requireExecutionEnabled/);
+  const executionStub = server.match(/app\.post\('\/api\/jerry\/execute-task'[^\n]+/);
+  assert.ok(executionStub);
+  const start = server.indexOf("app.post('/api/jerry/execute-task'");
+  const end = server.indexOf("app.post('/api/jerry/tasks/recover'", start);
+  assert.match(server.slice(start, end), /res\.status\(501\)/);
+});
