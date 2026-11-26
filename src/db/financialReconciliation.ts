@@ -142,7 +142,10 @@ export async function reconcileFinancialTruth(uid: string): Promise<FinancialTru
       .map((parsed) => parsed.transactionRef)
       .filter((txRef) => {
         const source = legacy.rows.find((row) => row.tx_ref === txRef);
-        return !source || !(source.status === 'confirmed' && source.is_verified_on_chain === true);
+        return !source || !(
+          (source.status === 'confirmed' && source.is_verified_on_chain === true) ||
+          source.status === 'reorged'
+        );
       })
   )];
 
