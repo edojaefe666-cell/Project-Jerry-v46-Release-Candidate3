@@ -1,6 +1,7 @@
 import { eq, desc, sql } from 'drizzle-orm';
 import { db } from './index.ts';
-import { enqueueWalletJournalEvent, isEligibleWalletJournalEvent } from './walletJournalOutbox.ts';
+import { enqueueWalletJournalEvent } from './walletJournalOutbox.ts';
+import { isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
 import { dailySummaryReports, idempotencyKeys, ledgerTransactions, taskExecutions, users, workspaces } from './schema.ts';
 import type { DailySummaryReport, JerryState, WalletTransaction } from '../lib/types.ts';
 import crypto from 'node:crypto';
