@@ -218,6 +218,24 @@ async function startServer() {
 
   const securityStore = new SecurityStore();
 
+  // The owner-controlled SQLite latch and the out-of-band environment switch
+  // are independent fail-closed controls. If the control store cannot be read,
+  // sensitive execution remains stopped.
+  const isEmergencyStopActive = (): boolean => {
+    if (process.env.JERRY_EMERGENCY_STOP === '1') return true;
+    try {
+      return securityStore.getEmergencyStop().stopped;
+    } catch {
+      return true;
+    }
+  };
+  const requireExecutionEnabled = (_req: AuthRequest, res: express.Response, next: express.NextFunction): void => {
+    if (isEmergencyStopActive()) {
+      res.status(423).json({ error: 'Jerry emergency stop is engaged. No external execution or transfer staging is permitted.' });
+      return;
+    }
+    next();
+  };
 
   const encryptSecurityBackup = (payload: unknown, passphrase: string): string => {
     const salt = randomBytes(16);
@@ -300,6 +318,48 @@ async function startServer() {
       res.status(409).json({ error: 'Approval is missing, already resolved, expired, or belongs to another owner.' }); return;
     }
     res.json({ approval });
+  });
+
+  app.get('/api/security/emergency-stop', requireAuth, (_req: AuthRequest, res) => {
+    try {
+      const control = securityStore.getEmergencyStop();
+      res.json({
+        ...control,
+        hardStop: process.env.JERRY_EMERGENCY_STOP === '1',
+        executionBlocked: isEmergencyStopActive(),
+      });
+    } catch {
+      res.status(503).json({ error: 'Emergency-stop control is unavailable; execution is blocked.' });
+    }
+  });
+
+  app.post('/api/security/emergency-stop', requireAuth, (req: AuthRequest, res) => {
+    const body = req.body as { action?: string; reason?: string; confirmation?: string };
+    const reason = String(body.reason ?? '').trim();
+    if (body.action !== 'stop' && body.action !== 'resume') {
+      res.status(400).json({ error: 'Action must be stop or resume.' });
+      return;
+    }
+    if (reason.length < 5 || reason.length > 1000) {
+      res.status(400).json({ error: 'A meaningful reason of 5–1000 characters is required.' });
+      return;
+    }
+    if (body.action === 'resume') {
+      if (process.env.JERRY_EMERGENCY_STOP === '1') {
+        res.status(423).json({ error: 'The out-of-band JERRY_EMERGENCY_STOP switch is active and cannot be cleared through the application.' });
+        return;
+      }
+      if (body.confirmation !== 'RESUME_JERRY_EXECUTION') {
+        res.status(400).json({ error: 'Explicit RESUME_JERRY_EXECUTION confirmation is required.' });
+        return;
+      }
+    }
+    try {
+      const control = securityStore.setEmergencyStop(body.action === 'stop', req.user!.uid, reason);
+      res.json({ ...control, hardStop: process.env.JERRY_EMERGENCY_STOP === '1', executionBlocked: isEmergencyStopActive() });
+    } catch {
+      res.status(503).json({ error: 'Emergency-stop state could not be safely updated.' });
+    }
   });
 
   app.get('/api/security/contacts', requireAuth, (req: AuthRequest, res) => {
@@ -743,7 +803,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/wallet/commands/submit-transfer', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/wallet/commands/submit-transfer', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     let approvalId = '';
     let reservationId = '';
     let approvalReserved = false;
