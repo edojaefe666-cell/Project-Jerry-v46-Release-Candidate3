@@ -80,17 +80,12 @@ export async function recordLedgerTransactionsForUser(
   if (txs.length === 0) return;
   try {
     const user = await getOrCreateUser(uid, email);
-    const existing = await db
-      .select({ txRef: ledgerTransactions.txRef })
-      .from(ledgerTransactions)
-      .where(eq(ledgerTransactions.userId, user.id));
-    const seen = new Set(existing.map((r) => r.txRef));
-    const toInsert = txs.filter((tx) => !seen.has(tx.id));
-    if (toInsert.length === 0) return;
-
+    // Upsert every supplied transaction, not only unseen IDs: a pending or
+    // previously unverified row may have become confirmed or reorged since
+    // the previous sync. The journal outbox event is committed atomically.
     await db.transaction(async (tx) => {
       await tx.insert(ledgerTransactions).values(
-      toInsert.map((tx) => ({
+      txs.map((tx) => ({
         userId: user.id,
         txRef: tx.id,
         timestamp: tx.timestamp,
