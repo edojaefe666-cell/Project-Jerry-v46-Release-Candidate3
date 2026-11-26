@@ -2252,49 +2252,21 @@ async function startServer() {
 
   // Automated Daily Summary Report Compiler (Gemini + Recharts Payload + Daily Notification)
   app.post('/api/jerry/daily-summary', requireAuth, async (req: AuthRequest, res) => {
-    const {
-      todayProfitUsd = 0,
-      previousDayProfitUsd = 1085,
-      dailyThresholdUsd = 1000,
-      activeTasksCount = 0,
-      completedTasksCount = 0,
-      interruptedTasksCount = 0,
-      awaitingApprovalCount = 0,
-      newRevenueInsightsCount = 0,
-      topDiscoveries = [],
-      dailyTrend = [],
-      internetAuthorityScore = 75,
-    } = req.body as {
-      todayProfitUsd?: number;
-      previousDayProfitUsd?: number;
-      dailyThresholdUsd?: number;
-      activeTasksCount?: number;
-      completedTasksCount?: number;
-      interruptedTasksCount?: number;
-      awaitingApprovalCount?: number;
-      newRevenueInsightsCount?: number;
-      topDiscoveries?: Array<{ title: string; estimatedDailyProfitUsd: number }>;
-      dailyTrend?: Array<{ date: string; profitUsd: number; isToday?: boolean }>;
-      internetAuthorityScore?: number;
+    // The client may provide workspace counters, but it is not an accounting
+    // authority. Never accept client-supplied profit, targets, or projections.
+    const body = req.body as Record<string, unknown>;
+    const safeCount = (value: unknown): number => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed >= 0
+        ? Math.min(1_000_000, Math.floor(parsed))
+        : 0;
     };
-
+    const activeTasksCount = safeCount(body.activeTasksCount);
+    const completedTasksCount = safeCount(body.completedTasksCount);
+    const interruptedTasksCount = safeCount(body.interruptedTasksCount);
+    const awaitingApprovalCount = safeCount(body.awaitingApprovalCount);
+    const newRevenueInsightsCount = safeCount(body.newRevenueInsightsCount);
     const todayIso = new Date().toISOString().slice(0, 10);
-    const beatYesterday = todayProfitUsd > previousDayProfitUsd;
-    const chartSeries = (
-      dailyTrend.length > 0
-        ? dailyTrend
-        : [
-            { date: '2026-11-10', profitUsd: 960 },
-            { date: '2026-11-11', profitUsd: previousDayProfitUsd },
-            { date: todayIso, profitUsd: todayProfitUsd, isToday: true },
-          ]
-    ).map((pt, idx) => ({
-      label: pt.isToday ? 'Today' : pt.date.slice(5),
-      profitUsd: pt.profitUsd,
-      insightPotentialUsd:
-        topDiscoveries[idx]?.estimatedDailyProfitUsd ??
-        Math.round(dailyThresholdUsd * (0.35 + idx * 0.12)),
-    }));
 
     const taskBreakdown = [
       { name: 'Active', count: activeTasksCount },
@@ -2303,80 +2275,28 @@ async function startServer() {
       { name: 'Approval Gate', count: awaitingApprovalCount },
     ];
 
-    const buildFallbackSummary = () => ({
-      headline: beatYesterday
-        ? `Daily Profit Beat Previous Day ($${todayProfitUsd.toLocaleString()} vs $${previousDayProfitUsd.toLocaleString()})`
-        : `Daily Briefing Ready · $${todayProfitUsd.toLocaleString()} / $${dailyThresholdUsd.toLocaleString()} Target`,
-      summaryText:
-        `Today's settled profit stands at $${todayProfitUsd.toLocaleString()} against yesterday's $${previousDayProfitUsd.toLocaleString()} benchmark, with ${activeTasksCount} active tasks, ${completedTasksCount} completed deliverables, and ${newRevenueInsightsCount} learned revenue insights. ` +
-        `Top revenue accelerators ready for execution: ${topDiscoveries.slice(0, 2).map((d) => `${d.title} (+$${d.estimatedDailyProfitUsd}/day)`).join('; ') || 'Daily B2B automation stack'}, while Internet Authority climbed to ${internetAuthorityScore}%.`,
-      modelUsed: 'Jerry Daily Compiler',
-    });
-
-    const ai = getGeminiClient();
-    let compiled = buildFallbackSummary();
-
-    if (ai) {
-      try {
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Daily summary timeout')), 9000)
-        );
-        const response = await Promise.race([
-          ai.models.generateContent({
-            model: 'gemini-4-hydrogen',
-            contents:
-              `Compile a concise 2-sentence executive Daily Summary Report for Jerry's Overview Hub notification.\n` +
-              `Metrics: Today Profit=$${todayProfitUsd}, Previous Day Profit=$${previousDayProfitUsd}, Daily Threshold=$${dailyThresholdUsd}, Active Tasks=${activeTasksCount}, Completed=${completedTasksCount}, Interrupted=${interruptedTasksCount}, Revenue Insights=${newRevenueInsightsCount}, Internet Authority=${internetAuthorityScore}%.\n` +
-              `Top new insights: ${topDiscoveries.slice(0, 3).map((d) => `${d.title} (+$${d.estimatedDailyProfitUsd}/day)`).join('; ') || 'None'}.\n` +
-              `Return valid JSON with headline (under 85 chars) and summaryText (2 crisp executive sentences).`,
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  headline: { type: Type.STRING },
-                  summaryText: { type: Type.STRING },
-                },
-              },
-            },
-          }),
-          timeoutPromise,
-        ]);
-        const parsed = JSON.parse((response.text ?? '{}').trim()) as {
-          headline?: string;
-          summaryText?: string;
-        };
-        if (parsed.headline && parsed.summaryText) {
-          compiled = {
-            headline: parsed.headline.trim(),
-            summaryText: parsed.summaryText.trim(),
-            modelUsed: 'gemini-4-hydrogen',
-          };
-        }
-      } catch {
-        // Keep clean fallback
-      }
-    }
-
     const report: DailySummaryReport = {
       id: `sum-${Date.now()}`,
       reportDate: todayIso,
       generatedAt: new Date().toISOString(),
-      headline: compiled.headline,
-      summaryText: compiled.summaryText,
+      headline: 'Daily Workspace Briefing',
+      summaryText:
+        `Workspace snapshot: ${activeTasksCount} active tasks, ${completedTasksCount} completed tasks, ${interruptedTasksCount} interrupted tasks, and ${awaitingApprovalCount} awaiting owner approval. ` +
+        `${newRevenueInsightsCount} revenue ideas are recorded; ideas and estimates are not verified income.`,
       notificationTitle: `Daily Summary Notification (${todayIso})`,
       notificationRead: false,
-      modelUsed: compiled.modelUsed,
+      modelUsed: 'Jerry Workspace Snapshot',
       metrics: {
-        todayProfitUsd,
-        previousDayProfitUsd,
+        todayProfitUsd: null,
+        previousDayProfitUsd: null,
         activeTasksCount,
         completedTasksCount,
         newRevenueInsightsCount,
-        internetAuthorityScore,
+        internetAuthorityScore: null,
       },
-      chartSeries,
+      chartSeries: [],
       taskBreakdown,
+      financialDataStatus: 'unavailable_not_loaded_from_verified_ledger',
     };
 
     res.json({ report });
