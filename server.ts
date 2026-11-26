@@ -2336,16 +2336,25 @@ async function startServer() {
   // The outbox is durable and tenant-scoped; the worker is best-effort and
   // deliberately does not affect HTTP availability.
   if (process.env.JERRY_DISABLE_JOURNAL_OUTBOX_WORKER !== '1') {
+    let outboxDrainInFlight = false;
     const drainOutboxWithStop = async () => {
+      // Prevent overlapping timer ticks from creating redundant drain loops.
+      // PostgreSQL SKIP LOCKED remains the cross-process concurrency control.
+      if (outboxDrainInFlight) return;
       if (isEmergencyStopActive()) {
         executionRegistry.setStopped(true, 'Emergency stop paused wallet journal outbox worker');
         return;
       }
       const execution = executionRegistry.register();
+      if (execution.signal.aborted) {
+        execution.release();
+        return;
+      }
+      outboxDrainInFlight = true;
       try {
-        if (execution.signal.aborted) return;
         await drainWalletJournalOutbox(undefined, 50, execution.signal);
       } finally {
+        outboxDrainInFlight = false;
         execution.release();
       }
     };
