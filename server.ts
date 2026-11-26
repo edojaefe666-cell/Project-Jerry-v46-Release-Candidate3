@@ -23,6 +23,7 @@ import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } f
 import { createOwnerRateLimiter } from './src/lib/requestRateLimit.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
+import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
 import { applyLearningEnhancement, createOwnerLearningEntry } from './src/lib/learningMemory.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
 import { sql } from 'drizzle-orm';
@@ -371,14 +372,32 @@ async function startServer() {
     lastWalletSyncAt: authoritative.lastWalletSyncAt,
   });
 
-  // Owner-only JSON export of the complete persistent memory set (bounded to 1,000 entries).
+  // Owner-only paginated JSON export. Stable (createdAt, id) cursors avoid
+  // offset skips when new memories are added while an export is in progress.
   app.get('/api/memory/export', requireAuth, async (req: AuthRequest, res) => {
     try {
-      const entries = await searchMemoryForUser(
+      const rawLimit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 500;
+      if (!Number.isSafeInteger(rawLimit) || rawLimit < 1 || rawLimit > 500) {
+        res.status(400).json({ error: 'Memory export page size must be between 1 and 500.' });
+        return;
+      }
+      const cursorValue = req.query.cursor;
+      const before = cursorValue === undefined ? undefined : decodeMemoryPageCursor(cursorValue);
+      if (cursorValue !== undefined && !before) {
+        res.status(400).json({ error: 'Memory export cursor is invalid.' });
+        return;
+      }
+      const page = await searchMemoryForUser(
         req.user!.uid,
         req.user!.email ?? 'owner@jerry.workspace',
-        { limit: 1000 },
+        { limit: rawLimit + 1, before: before ?? undefined },
       );
+      const hasMore = page.length > rawLimit;
+      const entries = hasMore ? page.slice(0, rawLimit) : page;
+      const lastEntry = entries[entries.length - 1];
+      const nextCursor = hasMore && lastEntry
+        ? encodeMemoryPageCursor({ createdAt: lastEntry.createdAt, id: lastEntry.id })
+        : null;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename="jerry-memory-export.json"');
       res.setHeader('Cache-Control', 'no-store');
@@ -387,10 +406,11 @@ async function startServer() {
         exportedAt: new Date().toISOString(),
         ownerUid: req.user!.uid,
         count: entries.length,
-        truncated: entries.length === 1000,
+        truncated: hasMore,
+        nextCursor,
         entries,
       });
-    } catch (error) {
+    } catch {
       res.status(500).json({ error: 'Memory export failed. Please try again.' });
     }
   });
