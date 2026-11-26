@@ -124,3 +124,26 @@ test('Bitcoin transfer approval is consumed only when its reservation is finaliz
   assert.ok(store.verifyAuditChain('owner-finalize').ok);
   store.close();
 });
+
+
+test('approval decision is single-use and an expired pending approval cannot be decided', () => {
+  const file = tempDb('approval-decision-race');
+  const store = new SecurityStore(file);
+  try {
+    const approval = store.createApproval({ action: 'high_impact_change', summary: 'Single decision', ownerUid: 'owner-decision' });
+    assert.equal(store.decideApproval(approval.id, 'approved', 'owner-decision')?.status, 'approved');
+    assert.equal(store.decideApproval(approval.id, 'rejected', 'owner-decision'), null);
+    assert.equal(store.getApproval(approval.id, 'owner-decision')?.status, 'approved');
+
+    const expired = store.createApproval({ action: 'high_impact_change', summary: 'Expired pending', ownerUid: 'owner-decision' });
+    const db = new DatabaseSync(file);
+    db.prepare('UPDATE approvals SET created_at=? WHERE id=?').run(new Date(Date.now() - 16 * 60 * 1000).toISOString(), expired.id);
+    db.close();
+    assert.equal(store.decideApproval(expired.id, 'approved', 'owner-decision'), null);
+    assert.equal(store.getApproval(expired.id, 'owner-decision')?.status, 'pending');
+    assert.equal(store.verifyAuditChain('owner-decision').ok, true);
+  } finally {
+    store.close();
+    rmSync(path.dirname(file), { recursive: true, force: true });
+  }
+});
