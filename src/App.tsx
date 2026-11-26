@@ -210,9 +210,10 @@ export default function App() {
           }),
         });
         if (res.ok) {
-          const data = (await res.json()) as { audioBase64?: string };
+          const data = (await res.json()) as { audioBase64?: string; mimeType?: string };
           if (data.audioBase64) {
-            const audio = new Audio(`data:audio/wav;base64,${data.audioBase64}`);
+            const safeMimeType = data.mimeType && /^audio\/[a-z0-9.+-]+$/i.test(data.mimeType) ? data.mimeType : 'audio/mpeg';
+            const audio = new Audio(`data:${safeMimeType};base64,${data.audioBase64}`);
             await audio.play();
             return;
           }
