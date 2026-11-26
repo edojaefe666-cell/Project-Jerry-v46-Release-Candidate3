@@ -1,6 +1,7 @@
 import { createPool } from './index.ts';
-import { postJournalEntry, reversePostedJournalEntry, getJournalAccountBalances } from './journal.ts';
-import { btcToSatoshis, buildWalletJournalLines } from '../lib/btcUnits.ts';
+import { reversePostedJournalEntry, getJournalAccountBalances } from './journal.ts';
+import { ensureWalletTransactionJournaled } from './walletJournal.ts';
+import { btcToSatoshis } from '../lib/btcUnits.ts';
 import { calculateLegacyWalletSatoshis, mapLegacyWalletTransactionRows } from '../lib/financialReconciliationMath.ts';
 import type { WalletTransaction } from '../lib/types.ts';
 
@@ -248,14 +249,13 @@ export async function backfillHistoricalWalletJournal(uid: string): Promise<{ po
       verifiedBlockHeight: row.verified_block_height ?? undefined,
       verifiedBlockHash: row.verified_block_hash ?? undefined,
     };
-    const lines = buildWalletJournalLines(tx.type, btcToSatoshis(tx.amount), btcToSatoshis(tx.fee ?? 0));
-    const entry = await postJournalEntry({
-      uid,
-      idempotencyKey: `wallet-tx:${tx.id}:confirmed`,
-      description: `Historical wallet transaction ${tx.id}`,
-      lines,
-    });
-    if (entry.replayed) replayed++; else posted++;
+    // Reuse the live event journaler so historical repair shares the exact
+    // generation identity and legacy-key compatibility rules with the outbox.
+    // This prevents a backfill from creating a second credit beside a live event.
+    const result = await ensureWalletTransactionJournaled(uid, tx);
+    if (result.action === 'posted') posted++;
+    else if (result.action === 'already-posted') replayed++;
+    else skipped++;
   }
   return { posted, replayed, reversed, skipped };
 }
