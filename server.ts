@@ -502,7 +502,7 @@ async function startServer() {
   // from server environment variables and never returned to the Android client.
   app.post('/api/brain/generate', requireAuth, async (req: AuthRequest, res) => {
     const body = req.body as { prompt?: unknown; task?: unknown; preferredProvider?: unknown };
-    const tasks = new Set(['chat', 'planning', 'research', 'coding', 'vision', 'speech', 'transcription']);
+    const tasks = new Set(['chat', 'planning', 'research', 'coding']);
     const providers = new Set(['google', 'openai', 'anthropic', 'local']);
     if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 100_000) {
       res.status(400).json({ error: 'Prompt must contain 1–100000 characters.' });
