@@ -67,8 +67,16 @@ export function auditWalletJournalEntries(rows: WalletJournalEntryAuditRow[]): W
     const originalPrefix = `wallet-tx:${parsed.transactionRef}:confirmed`;
     const originalGeneration = original.idempotency_key.slice(originalPrefix.length);
     // Legacy backfill keys bind directly to the original entry ID. Cycle-aware
-    // reversals must also match the exact cycle/block generation they reverse.
-    if (reversalGeneration.startsWith(':cycle-') && reversalGeneration !== originalGeneration) {
+    // reversals must match the exact cycle/block generation they reverse.
+    const legacyEntryId = reversalGeneration.startsWith(':entry-')
+      ? reversalGeneration.slice(':entry-'.length)
+      : null;
+    const matchesOriginal = reversalGeneration.startsWith(':cycle-')
+      ? reversalGeneration === originalGeneration
+      : legacyEntryId !== null
+        ? legacyEntryId === originalId
+        : reversalGeneration === '' && originalGeneration === '';
+    if (!matchesOriginal) {
       unmatchedReversalEntries.push(String(row.id));
       continue;
     }
