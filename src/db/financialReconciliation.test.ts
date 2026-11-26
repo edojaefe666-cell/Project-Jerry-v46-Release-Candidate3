@@ -112,3 +112,24 @@ test('journal audit accepts a reversal bound to the exact confirmation generatio
   assert.deepEqual(audit.unmatchedReversalEntries, []);
   assert.deepEqual([...audit.reversedOriginalEntryIds], ['30']);
 });
+
+
+test('legacy backfill reversal must name the exact original journal entry', () => {
+  const rows = [
+    { id: '60', idempotency_key: 'wallet-tx:tx-legacy:confirmed', reversal_of: null, status: 'posted' },
+    { id: '61', idempotency_key: 'wallet-tx:tx-legacy:reorg-reversal:entry-60', reversal_of: '60', status: 'posted' },
+  ];
+  const audit = auditWalletJournalEntries(rows);
+  assert.deepEqual(audit.unmatchedReversalEntries, []);
+  assert.deepEqual([...audit.reversedOriginalEntryIds], ['60']);
+});
+
+test('legacy reversal key pointing to another confirmation is flagged', () => {
+  const rows = [
+    { id: '70', idempotency_key: 'wallet-tx:tx-legacy:confirmed', reversal_of: null, status: 'posted' },
+    { id: '71', idempotency_key: 'wallet-tx:tx-legacy:reorg-reversal:entry-999', reversal_of: '70', status: 'posted' },
+  ];
+  const audit = auditWalletJournalEntries(rows);
+  assert.deepEqual(audit.unmatchedReversalEntries, ['71']);
+  assert.equal(audit.reversedOriginalEntryIds.size, 0);
+});
