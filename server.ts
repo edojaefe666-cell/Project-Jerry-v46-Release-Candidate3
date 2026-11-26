@@ -353,7 +353,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/security/restore', requireAuth, (req: AuthRequest, res) => {
+  app.post('/api/security/restore', requireAuth, requireExecutionEnabled, (req: AuthRequest, res) => {
     try {
       const body = req.body as { backup?: string; passphrase?: string; confirm?: string; approvalId?: string };
       if (body.confirm !== 'RESTORE_JERRY') { res.status(400).json({ error: 'Restore confirmation is required.' }); return; }
@@ -476,7 +476,7 @@ async function startServer() {
 
   // Provider-neutral Jerry Brain endpoint. Provider credentials are read only
   // from server environment variables and never returned to the Android client.
-  app.post('/api/brain/generate', requireAuth, brainRateLimit, async (req: AuthRequest, res) => {
+  app.post('/api/brain/generate', requireAuth, requireExecutionEnabled, brainRateLimit, async (req: AuthRequest, res) => {
     const body = req.body as { prompt?: unknown; task?: unknown; preferredProvider?: unknown };
     const tasks = new Set(['chat', 'planning', 'research', 'coding']);
     const providers = new Set(['google', 'openai', 'anthropic', 'local']);
@@ -775,7 +775,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/wallet/commands/record-income', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/wallet/commands/record-income', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -971,7 +971,7 @@ async function startServer() {
     };
   }
 
-  app.post('/api/wallet/sync-onchain', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/wallet/sync-onchain', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -1112,7 +1112,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/wallet/financial-truth/backfill', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/wallet/financial-truth/backfill', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       if (process.env.NODE_ENV === 'production' && process.env.JERRY_ALLOW_FINANCIAL_BACKFILL !== '1') {
         res.status(403).json({ error: 'Historical financial backfill is disabled in production.' }); return;
@@ -1126,7 +1126,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/wallet/commands/reconcile-tx', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/wallet/commands/reconcile-tx', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -1223,7 +1223,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/jerry/chat', requireAuth, chatRateLimit, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/chat', requireAuth, requireExecutionEnabled, chatRateLimit, async (req: AuthRequest, res) => {
     const { message, history = [], contextSummary = '' } = req.body as {
       message?: unknown;
       history?: Array<{ role?: unknown; content?: unknown }>;
@@ -1279,7 +1279,7 @@ async function startServer() {
   });
 
   // Jerry Goal Engine: Generate an owner-reviewed 8-level plan using configured providers.
-  app.post('/api/jerry/plan-goal', requireAuth, goalPlanRateLimit, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/plan-goal', requireAuth, requireExecutionEnabled, goalPlanRateLimit, async (req: AuthRequest, res) => {
     const { objective, availableCapitalUsd = 1000, weeklyHours = 10 } = req.body as {
       objective?: string;
       availableCapitalUsd?: number;
@@ -1383,7 +1383,7 @@ async function startServer() {
   });
 
   // Jerry Business: model-assisted opportunity assessment. No live research is implied.
-  app.post('/api/jerry/assess-opportunity', requireAuth, opportunityRateLimit, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/assess-opportunity', requireAuth, requireExecutionEnabled, opportunityRateLimit, async (req: AuthRequest, res) => {
     const { idea } = req.body as { idea?: string };
     if (typeof idea !== 'string' || !idea.trim() || idea.trim().length > 4_000) {
       res.status(400).json({ error: 'Business idea or market topic must contain 1–4,000 characters.' });
@@ -1429,7 +1429,7 @@ async function startServer() {
 
   // Jerry Vision: provider-neutral image / document analysis. No image is reported
   // as analyzed unless a configured provider returns a non-empty response.
-  app.post('/api/jerry/vision', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/vision', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     const { imageDataUrl, sampleImagePath, prompt } = req.body as {
       imageDataUrl?: string; sampleImagePath?: string; prompt?: string;
     };
@@ -1479,7 +1479,7 @@ async function startServer() {
   });
 
   // Jerry Voice TTS. Browser speech is offered only when no server provider is configured.
-  app.post('/api/jerry/tts', requireAuth, voiceRateLimit, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/tts', requireAuth, requireExecutionEnabled, voiceRateLimit, async (req: AuthRequest, res) => {
     const { text, voiceName = 'Charon', voiceStyle = 'Calm, warm, confident adult male voice' } = req.body as {
       text?: string; voiceName?: string; voiceStyle?: string;
     };
@@ -1504,7 +1504,7 @@ async function startServer() {
   });
 
   // Jerry Voice transcription. Audio is processed only by configured providers.
-  app.post('/api/jerry/transcribe', requireAuth, voiceRateLimit, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/transcribe', requireAuth, requireExecutionEnabled, voiceRateLimit, async (req: AuthRequest, res) => {
     const { audioBase64, mimeType = 'audio/webm' } = req.body as { audioBase64?: string; mimeType?: string };
     if (typeof audioBase64 !== 'string' || !audioBase64) {
       res.status(400).json({ error: 'Audio payload is required.' }); return;
@@ -1527,7 +1527,7 @@ async function startServer() {
   });
 
   // Jerry Proactive Opportunity Radar. All findings must be grounded in retrieved sources.
-  app.post('/api/jerry/scan-opportunities', requireAuth, opportunityRateLimit, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/scan-opportunities', requireAuth, requireExecutionEnabled, opportunityRateLimit, async (req: AuthRequest, res) => {
     const parsedRequest = parseOpportunityScanRequest(req.body as {
       interests?: unknown;
       availableCapitalUsd?: unknown;
@@ -1575,7 +1575,7 @@ async function startServer() {
   });
 
   // Jerry Direct Learning & Growth Prompt Box
-  app.post('/api/jerry/teach', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/teach', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     const body = req.body as { information?: unknown; category?: unknown };
     const categories = new Set<MemoryEntry['category']>(['goal', 'decision', 'lesson', 'preference', 'workflow']);
     if (typeof body.information !== 'string' || !body.information.trim() || body.information.length > 20_000) {
@@ -1642,7 +1642,7 @@ async function startServer() {
   });
 
   // Jerry Polyglot Self-Programming Engine (Permission-Gated)
-  app.post('/api/jerry/self-program', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/self-program', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     const { prompt, language = 'TypeScript', targetModule = 'Jerry Core' } = req.body as {
       prompt?: string;
       language?: string;
@@ -1909,7 +1909,7 @@ async function startServer() {
     });
   });
 
-  app.post('/api/jerry/tasks/recover', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/tasks/recover', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -1922,7 +1922,7 @@ async function startServer() {
   });
 
   // Jerry Daily Discovery: Find & Learn Easier/Faster Ways to Make More Money Than Previous Day
-  app.post('/api/jerry/discover-daily-ways', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/discover-daily-ways', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     const body = req.body as {
       focusHint?: unknown;
       existingTitles?: unknown;
@@ -2027,7 +2027,7 @@ async function startServer() {
   });
 
   // Jerry Daily Human Understanding: Deepen Empathy, Decision Psychology & Owner Alignment
-  app.post('/api/jerry/learn-human-insight', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/learn-human-insight', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     const {
       observationHint = '',
       existingTitles = [],
@@ -2145,7 +2145,7 @@ async function startServer() {
   });
 
   // Jerry Daily Internet Dominance: Learn Better Web Distribution, SEO & Viral Growth Daily
-  app.post('/api/jerry/learn-internet-growth', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/learn-internet-growth', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     const { focusHint = '', existingTitles = [] } = req.body as {
       focusHint?: string;
       existingTitles?: string[];
@@ -2254,7 +2254,7 @@ async function startServer() {
   });
 
   // Automated Daily Summary Report Compiler (Gemini + Recharts Payload + Daily Notification)
-  app.post('/api/jerry/daily-summary', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/daily-summary', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     // The client may provide workspace counters, but it is not an accounting
     // authority. Never accept client-supplied profit, targets, or projections.
     const body = req.body as Record<string, unknown>;
