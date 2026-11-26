@@ -282,7 +282,12 @@ export interface OpportunityAlert {
   profitabilityAnalysis: string;
   riskAnalysis: string;
   estimatedCapitalUsd: number;
+  /** Empty unless independently verified; sourceReferences are retrieved references only. */
   verifiedSources: Array<{ title: string; uri: string }>;
+  sourceReferences?: Array<{ title: string; uri: string; publishedDate: string | null }>;
+  evidenceStatus?: string;
+  verifiedFacts?: string[];
+  estimatesAndAssumptions?: string[];
   nextAction: string;
   status: 'new' | 'reviewed' | 'converted_to_goal' | 'dismissed';
   createdAt: string;
