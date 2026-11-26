@@ -39,6 +39,7 @@ export async function saveMemoryEntryForUser(uid: string, email: string, entry: 
     target: memoryEntries.id,
     set: {
       category: entry.category,
+      memoryArea: entry.area ?? memoryAreaForCategory(entry.category),
       title: entry.title.trim(),
       content: entry.content.trim(),
       outcome: entry.outcome ?? null,
@@ -98,6 +99,7 @@ export async function searchMemoryForUser(
   const rows = await db.select({
     id: memoryEntries.id,
     category: memoryEntries.category,
+    memoryArea: memoryEntries.memoryArea,
     title: memoryEntries.title,
     content: memoryEntries.content,
     outcome: memoryEntries.outcome,
