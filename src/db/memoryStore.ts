@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { db } from './index.ts';
 import { memoryEntries } from './schema.ts';
 import { getOrCreateUser } from './users.ts';
@@ -72,10 +72,14 @@ export async function searchMemoryForUser(
   const conditions = [eq(memoryEntries.userId, user.id)];
   const query = options.query?.trim().slice(0, 200);
   if (query) {
-    const pattern = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
+    const pattern = `%${query.replace(/[\\%_]/g, '\\    const pattern = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
     conditions.push(or(
       ilike(memoryEntries.title, pattern),
       ilike(memoryEntries.content, pattern),
+      sql`${memoryEntries.tags}::text ILIKE ${pattern}`,
+    )!);')}%`;
+    conditions.push(or(
+      sql`to_tsvector('simple', coalesce(${memoryEntries.title}, '') || ' ' || coalesce(${memoryEntries.content}, '')) @@ plainto_tsquery('simple', ${query})`,
       sql`${memoryEntries.tags}::text ILIKE ${pattern}`,
     )!);
   }
