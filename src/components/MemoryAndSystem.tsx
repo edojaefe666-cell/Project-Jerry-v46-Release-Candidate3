@@ -1,8 +1,9 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { Search, Plus, Upload, ShieldAlert, RotateCcw } from 'lucide-react';
 import { filterMemories } from '../lib/jerryEngine';
+import { memoryAreaForCategory } from '../lib/learningMemory';
 import { ARCHITECTURE_MODULES, DEVELOPMENT_ROADMAP } from '../lib/seedData';
-import type { MemoryEntry, OwnerProfile, PhoneIntegrationItem } from '../lib/types';
+import type { JerryMemoryArea, MemoryEntry, OwnerProfile, PhoneIntegrationItem } from '../lib/types';
 import { OwnerAvatar } from './OwnerAvatar';
 
 interface MemoryAndSystemProps {
@@ -26,6 +27,7 @@ export function MemoryAndSystem({
 }: MemoryAndSystemProps) {
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [memoryAreaFilter, setMemoryAreaFilter] = useState<'all' | JerryMemoryArea>('all');
   const [memTitle, setMemTitle] = useState('');
   const [memContent, setMemContent] = useState('');
   const [memCategory, setMemCategory] = useState<MemoryEntry['category']>('lesson');
@@ -45,13 +47,16 @@ export function MemoryAndSystem({
   const [identityMessage, setIdentityMessage] = useState<string | null>(null);
   const [resetApprovalId, setResetApprovalId] = useState('');
 
-  const visibleMemories = filterMemories(memories, query, categoryFilter);
+  const visibleMemories = filterMemories(memories, query, categoryFilter).filter((entry) =>
+    memoryAreaFilter === 'all' || (entry.area ?? memoryAreaForCategory(entry.category)) === memoryAreaFilter,
+  );
 
   const handleSaveMemory = (e: FormEvent) => {
     e.preventDefault();
     if (!memTitle.trim() || !memContent.trim()) return;
     onAddMemory({
       category: memCategory,
+      area: memoryAreaForCategory(memCategory),
       title: memTitle.trim(),
       content: memContent.trim(),
       outcome: memCategory === 'lesson' ? 'insight' : 'success',
@@ -103,6 +108,29 @@ export function MemoryAndSystem({
             </p>
           </div>
 
+          <div className="flex flex-wrap gap-2" aria-label="Persistent memory areas">
+            {([
+              ['all', 'All memory'],
+              ['owner_profile', 'Owner Profile'],
+              ['mission_projects', 'Mission & Projects'],
+              ['knowledge_experience', 'Knowledge & Experience'],
+            ] as const).map(([area, label]) => (
+              <button
+                key={area}
+                type="button"
+                onClick={() => setMemoryAreaFilter(area)}
+                aria-pressed={memoryAreaFilter === area}
+                className={`px-3 py-1.5 text-xs font-medium rounded-full border cursor-pointer ${
+                  memoryAreaFilter === area
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-white text-slate-600 border-slate-300 hover:border-slate-500'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -141,6 +169,7 @@ export function MemoryAndSystem({
                 onClick={() => {
                   setQuery('');
                   setCategoryFilter('all');
+                  setMemoryAreaFilter('all');
                 }}
                 className="mt-2 text-xs font-medium text-blue-700 hover:text-blue-800 cursor-pointer"
               >
@@ -153,7 +182,7 @@ export function MemoryAndSystem({
                 <div key={entry.id} className="py-3.5 first:pt-1 last:pb-0 space-y-1">
                   <div className="flex items-center justify-between text-xs text-slate-500">
                     <span className="capitalize font-medium text-blue-700">
-                      {entry.category}
+                      {entry.area ?? memoryAreaForCategory(entry.category)} · {entry.category}
                       {entry.tags.length > 0 ? ` · ${entry.tags.join(' · ')}` : ''}
                     </span>
                     <span className="font-mono tabular-nums">{entry.createdAt.slice(0, 10)}</span>
