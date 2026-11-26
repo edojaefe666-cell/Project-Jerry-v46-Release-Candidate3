@@ -100,19 +100,20 @@ test('self-upgrade persistence ignores client-supplied security and test pass cl
   assert.doesNotMatch(route, /Boolean\(proposal\.securityAuditPassed\)/);
 });
 
-test('self-upgrade static syntax checks cannot claim runtime tests passed', () => {
+test('self-upgrade verification only promotes status from the isolated runner attestation', () => {
   const start = server.indexOf("app.post('/api/jerry/self-upgrades/:id/verify'");
   const end = server.indexOf("app.post('/api/jerry/verify-upgrade'", start);
   const persistedVerify = server.slice(start, end);
-  assert.match(persistedVerify, /testStatus = 'pending'/);
-  assert.doesNotMatch(persistedVerify, /testStatus = 'passed'/);
-  assert.match(persistedVerify, /not executed in an isolated runtime/);
+  assert.match(persistedVerify, /runIsolatedSelfUpgradeTests\(/);
+  assert.match(persistedVerify, /isolated\.status === 'passed' \? 'passed'/);
+  assert.doesNotMatch(persistedVerify, /esbuild\.transform/);
 
   const directStart = end;
   const directEnd = server.indexOf("app.post('/api/jerry/execute-task'", directStart);
   const directVerify = server.slice(directStart, directEnd);
-  assert.match(directVerify, /testStatus: 'pending'/);
-  assert.doesNotMatch(directVerify, /testStatus: 'passed'/);
+  assert.match(directVerify, /runIsolatedSelfUpgradeTests\(/);
+  assert.match(directVerify, /isolated\.status === 'passed' \? 'passed'/);
+  assert.doesNotMatch(directVerify, /esbuild\.transform/);
 });
 
 
