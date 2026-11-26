@@ -11,9 +11,9 @@ test('calls the configured Google provider and returns provider-neutral output',
   let headers: HeadersInit | undefined;
   const result = await generateWithModelFallback({
     task: 'chat', prompt: 'hello', configuration: { google: { apiKey: 'secret', model: 'gemini-test' } },
-    fetchImpl: async (input) => {
+    fetchImpl: async (input, init) => {
       requested = String(input);
-      headers = (arguments as unknown as { 0?: RequestInfo | URL; 1?: RequestInit })[1]?.headers;
+      headers = init?.headers;
       return jsonResponse({ candidates: [{ content: { parts: [{ text: 'Hi there' }] } }] });
     },
   });
