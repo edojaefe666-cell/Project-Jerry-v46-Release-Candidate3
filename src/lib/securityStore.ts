@@ -154,6 +154,15 @@ export class SecurityStore {
         updated_at TEXT NOT NULL,
         owner_uid TEXT
       );
+      CREATE TABLE IF NOT EXISTS emergency_control (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        stopped INTEGER NOT NULL CHECK(stopped IN (0,1)),
+        reason TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        owner_uid TEXT NOT NULL
+      );
+      INSERT OR IGNORE INTO emergency_control(id, stopped, reason, updated_at, owner_uid)
+        VALUES(1, 0, 'Emergency stop not engaged', '2026-11-26T10:54:35.255Z', 'system');
       CREATE TABLE IF NOT EXISTS idempotency (
         idempotency_key TEXT PRIMARY KEY,
         actor_uid TEXT NOT NULL,
@@ -174,6 +183,25 @@ export class SecurityStore {
     try { this.db.exec('ALTER TABLE approvals ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE approved_contacts ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE audit_log ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
+  }
+
+  getEmergencyStop(): { stopped: boolean; reason: string; updatedAt: string; ownerUid: string } {
+    const row = this.db.prepare(
+      'SELECT stopped, reason, updated_at AS updatedAt, owner_uid AS ownerUid FROM emergency_control WHERE id=1'
+    ).get() as { stopped: number; reason: string; updatedAt: string; ownerUid: string } | undefined;
+    if (!row) throw new Error('Emergency-stop control record is missing.');
+    return { stopped: row.stopped === 1, reason: row.reason, updatedAt: row.updatedAt, ownerUid: row.ownerUid };
+  }
+
+  setEmergencyStop(stopped: boolean, ownerUid: string, reason: string): { stopped: boolean; reason: string; updatedAt: string; ownerUid: string } {
+    const cleanReason = reason.trim().slice(0, 1000);
+    if (!ownerUid.trim() || cleanReason.length < 5) throw new Error('Owner UID and a meaningful emergency-control reason are required.');
+    const updatedAt = now();
+    this.db.prepare(
+      'UPDATE emergency_control SET stopped=?, reason=?, updated_at=?, owner_uid=? WHERE id=1'
+    ).run(stopped ? 1 : 0, cleanReason, updatedAt, ownerUid);
+    this.audit(ownerUid, stopped ? 'emergency_stop.engaged' : 'emergency_stop.released', { reason: cleanReason, updatedAt });
+    return this.getEmergencyStop();
   }
 
   createApproval(input: { action: HighImpactAction; summary: string; amountUsd?: number; scope?: Record<string, unknown>; ownerUid: string }): ApprovalRequest {
