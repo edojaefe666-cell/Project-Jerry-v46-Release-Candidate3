@@ -70,3 +70,11 @@ jobs:
       - name: Build debug APK, run unit tests and lint
         working-directory: android-native
         run: gradle --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+
+      - name: Publish debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jerry-debug-apk-${{ github.sha }}
+          path: android-native/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
