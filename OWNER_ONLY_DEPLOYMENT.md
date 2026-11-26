@@ -117,3 +117,8 @@ Read-only market/on-chain lookups, research, planning, memory, and security reco
 
 
 In-flight isolated verification requests are tracked by the server process. When the owner engages the application emergency stop, Jerry aborts their HTTP requests; the runner adapter propagates that cancellation signal and discards any result returned after cancellation. A remote runner must honor client cancellation and terminate its disposable execution environment. This request cancellation is not a substitute for the remote runner's mandatory process-tree kill, independent network isolation, or infrastructure-level emergency control.
+
+
+## Daily summary financial-data migration
+
+Migration `0009_nullable_daily_summary_profit.sql` makes the legacy `daily_summary_reports.daily_profit_usd` column nullable. Existing recorded values are preserved; new summaries without a verified ledger amount store SQL `NULL`. Apply the ordered SQL migrations before deploying code that writes unavailable financial metrics. Consumers must treat `NULL` as unavailable, never as zero income.
