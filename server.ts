@@ -1516,10 +1516,6 @@ async function startServer() {
     }
   });
 
-are being presented as researched or verified.',
-    });
-  });
-
   // Jerry Direct Learning & Growth Prompt Box
   app.post('/api/jerry/teach', requireAuth, async (req: AuthRequest, res) => {
     const { information, category = 'lesson' } = req.body as {
