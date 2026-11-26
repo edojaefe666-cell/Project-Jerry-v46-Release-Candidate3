@@ -50,6 +50,16 @@
 6. Verify emergency-stop behavior, restart/recovery, backup/restore and audit integrity.
 7. Produce a release candidate only after all gates pass; retain source provenance and a signed/hashed release manifest.
 
+## Financial journal/outbox remediation added on the reconciliation branch
+
+- Centralized the eligibility rule for wallet journal events: only confirmed, independently on-chain-verified BTC on Bitcoin Mainnet, plus reorg events, are eligible.
+- Ledger sync now upserts all supplied wallet transaction states and enqueues eligible outbox events in the same database transaction. This fixes the earlier-state gap where an existing pending/unverified record could become confirmed/reorged but be skipped because its transaction reference already existed.
+- Atomic workspace updates and idempotent workspace commands also enqueue eligible events inside their existing transaction.
+- Outbox draining now validates its batch limit (1–500) and reclaims rows stuck in `processing` for more than five minutes. Journal posting is designed to be idempotent to make retry after worker interruption safe.
+- Added eligibility tests and included them in the standard test script.
+
+**Not yet proven:** these changes have not been executed against a live PostgreSQL test database or run through the complete TypeScript/test/build pipeline. The outbox worker's retry and stale-lease behavior still requires integration tests under concurrent workers and simulated crashes. Historical Phase 2.40B parity is not yet established.
+
 ## Current result
 
-This register records the inspected lineage and decisions. It does not claim that all Dropbox ZIPs have been byte-extracted and compared, that branches have been merged, or that Jerry is release-ready.
+This register records the inspected lineage and committed remediation decisions. It does not claim that all Dropbox ZIPs have been byte-extracted and compared, that branches have been merged, or that Jerry is release-ready.
