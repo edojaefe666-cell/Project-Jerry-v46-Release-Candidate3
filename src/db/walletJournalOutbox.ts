@@ -59,6 +59,9 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50): Promis
   retried: number;
   failed: number;
 }> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+    throw new Error('Outbox drain limit must be an integer between 1 and 500.');
+  }
   const pool = createPool();
   const client = await pool.connect();
   let processed = 0;
@@ -70,7 +73,10 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50): Promis
       `WITH picked AS (
          SELECT o.id FROM wallet_journal_outbox o
          JOIN users u ON u.id = o.user_id
-         WHERE o.status = 'pending' AND o.available_at <= now()
+         WHERE (
+             (o.status = 'pending' AND o.available_at <= now())
+             OR (o.status = 'processing' AND o.updated_at < now() - interval '5 minutes')
+           )
            ${uid ? 'AND u.uid = $1' : ''}
          ORDER BY o.id
          FOR UPDATE SKIP LOCKED
