@@ -8,17 +8,20 @@ const jsonResponse = (value: unknown, status = 200) => new Response(JSON.stringi
 
 test('calls the configured Google provider and returns provider-neutral output', async () => {
   let requested = '';
+  let headers: HeadersInit | undefined;
   const result = await generateWithModelFallback({
     task: 'chat', prompt: 'hello', configuration: { google: { apiKey: 'secret', model: 'gemini-test' } },
     fetchImpl: async (input) => {
       requested = String(input);
+      headers = (arguments as unknown as { 0?: RequestInfo | URL; 1?: RequestInit })[1]?.headers;
       return jsonResponse({ candidates: [{ content: { parts: [{ text: 'Hi there' }] } }] });
     },
   });
   assert.equal(result.text, 'Hi there');
   assert.equal(result.provider, 'google');
   assert.match(requested, /gemini-test/);
-  assert.match(requested, /secret/);
+  assert.doesNotMatch(requested, /secret/);
+  assert.equal(new Headers(headers).get('x-goog-api-key'), 'secret');
 });
 
 test('falls back to OpenAI when the preferred Google provider fails', async () => {
