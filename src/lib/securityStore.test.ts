@@ -263,3 +263,66 @@ test('explicit owner resume is preserved across security store initialization', 
     rmSync(path.dirname(file), { recursive: true, force: true });
   }
 });
+
+
+test('security backup restore consumes approval and replaces records atomically', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    const existing = store.createContact({ name: 'Existing contact', email: 'existing@example.com', purpose: 'Existing test contact', ownerUid: 'owner-restore' });
+    const snapshot = store.exportSnapshot('owner-restore');
+    const approval = store.createApproval({
+      action: 'high_impact_change',
+      summary: 'Restore validated Jerry security backup',
+      scope: { operation: 'security_backup_restore' },
+      ownerUid: 'owner-restore',
+    });
+    store.decideApproval(approval.id, 'approved', 'owner-restore');
+
+    store.restoreSnapshotWithApproval(snapshot, 'owner-restore', approval.id);
+
+    assert.equal(store.getApproval(approval.id, 'owner-restore'), null);
+    assert.equal(store.getContact(existing.id, 'owner-restore')?.name, 'Existing contact');
+    assert.equal(store.verifyAuditChain('owner-restore').ok, true);
+    const restoredAudit = store.listAudit(20, 'owner-restore');
+    assert.equal(restoredAudit[0]?.event, 'security.backup.restored');
+    assert.equal((restoredAudit[0]?.details as { approvalId?: string })?.approvalId, approval.id);
+  } finally {
+    store.close();
+  }
+});
+
+test('failed security backup restore rolls back approval consumption and all record changes', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    const approval = store.createApproval({
+      action: 'high_impact_change',
+      summary: 'Attempt invalid restore',
+      scope: { operation: 'security_backup_restore' },
+      ownerUid: 'owner-restore-fail',
+    });
+    store.decideApproval(approval.id, 'approved', 'owner-restore-fail');
+    const duplicate = {
+      id: 'duplicate-snapshot-approval',
+      action: 'high_impact_change',
+      summary: 'Duplicate',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    const invalidSnapshot = {
+      version: 1,
+      approvals: [duplicate, duplicate],
+      contacts: [],
+      audit: [],
+    };
+
+    assert.throws(
+      () => store.restoreSnapshotWithApproval(invalidSnapshot, 'owner-restore-fail', approval.id),
+    );
+    const preserved = store.getApproval(approval.id, 'owner-restore-fail');
+    assert.equal(preserved?.status, 'approved');
+    assert.equal(preserved?.consumedAt ?? null, null);
+    assert.equal(store.verifyAuditChain('owner-restore-fail').ok, true);
+  } finally {
+    store.close();
+  }
+});
