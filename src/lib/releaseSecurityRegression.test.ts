@@ -159,6 +159,10 @@ test('emergency stop keeps internal wallet journal recovery separate from extern
   assert.match(worker, /executionRegistry\.register\(\)/);
   assert.match(worker, /drainWalletJournalOutbox\(undefined, 50, execution\.signal\)/);
   assert.match(worker, /execution\.release\(\)/);
+  assert.match(worker, /let outboxDrainInFlight = false/);
+  assert.match(worker, /if \(outboxDrainInFlight\) return/);
+  assert.match(worker, /outboxDrainInFlight = true/);
+  assert.match(worker, /outboxDrainInFlight = false/);
   assert.doesNotMatch(worker, /submit-transfer|broadcast|external execution/i);
 });
 
