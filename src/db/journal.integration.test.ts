@@ -207,6 +207,40 @@ test('PostgreSQL journal posting, idempotency, reversal and tenant isolation', {
   assert.equal(repairReplay.posted, 0, 'A repeated repair must not create another posting.');
   assert.equal(repairReplay.replayed, 1, 'A repeated repair must report the existing journal posting as replayed.');
 
+  // A historical reorg repair and the live reorg outbox worker may race.
+  // Both must converge on exactly one reversal of the same confirmation.
+  const repairReorgTx = {
+    ...repairTx,
+    status: 'reorged' as const,
+    isVerifiedOnChain: false,
+  };
+  await pool.query(
+    'UPDATE ledger_transactions SET status = \'reorged\', is_verified_on_chain = false WHERE user_id = (SELECT id FROM users WHERE uid = $1) AND tx_ref = $2',
+    [uid, repairTx.id],
+  );
+  const reorgEventKey = getWalletJournalEventKey(repairReorgTx);
+  await pool.query(
+    `INSERT INTO wallet_journal_outbox
+      (user_id, event_key, tx_ref, payload_json, status, available_at)
+     VALUES ((SELECT id FROM users WHERE uid = $1), $2, $3, $4::jsonb, 'pending', now())`,
+    [uid, reorgEventKey, repairReorgTx.id, JSON.stringify(repairReorgTx)],
+  );
+  const [reorgRepairResult, reorgWorkerResult] = await Promise.all([
+    backfillHistoricalWalletJournal(uid),
+    drainWalletJournalOutbox(uid, 10),
+  ]);
+  assert.equal(reorgWorkerResult.failed, 0, 'Live reorg outbox processing must not fail during historical repair.');
+  assert.equal(reorgRepairResult.skipped, 1,
+    'Only the pending/unverified fixture may be skipped during reorg repair.');
+  const repairReversalRows = await pool.query(
+    `SELECT id::text, reversal_of::text FROM journal_entries
+      WHERE user_id = (SELECT id FROM users WHERE uid = $1)
+        AND reversal_of = $2 AND status = 'posted'`,
+    [uid, repairJournalRows.rows[0].id],
+  );
+  assert.equal(repairReversalRows.rowCount, 1,
+    'Historical repair and live reorg delivery must create exactly one reversal for the confirmation.');
+
   // Pending/unverified historical records are deliberately excluded from repair.
   const pendingRef = `pending-repair-${suffix}`;
   await pool.query(
