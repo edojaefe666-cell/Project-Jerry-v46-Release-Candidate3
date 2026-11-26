@@ -1920,92 +1920,25 @@ async function startServer() {
 
   // Jerry Daily Discovery: Find & Learn Easier/Faster Ways to Make More Money Than Previous Day
   app.post('/api/jerry/discover-daily-ways', requireAuth, async (req: AuthRequest, res) => {
-    const {
-      focusHint = '',
-      existingTitles = [],
-      dailyTargetUsd = 1000,
-      previousDayProfitUsd = 1085,
-      targetToBeatUsd = 1220,
-    } = req.body as {
-      focusHint?: string;
-      existingTitles?: string[];
-      dailyTargetUsd?: number;
-      previousDayProfitUsd?: number;
-      targetToBeatUsd?: number;
+    const body = req.body as {
+      focusHint?: unknown;
+      existingTitles?: unknown;
     };
-
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const seen = new Set(existingTitles.map((t) => t.trim().toLowerCase()));
-    const cleanFocus = focusHint.trim();
-    const minBatchTarget = Math.max(dailyTargetUsd, targetToBeatUsd, previousDayProfitUsd + 125);
-    const perWayFloor = Math.max(380, Math.ceil((minBatchTarget * 1.05) / 3));
-
-    const buildOfflineDiscoveries = (): DailyMoneyDiscovery[] => {
-      const candidates: Array<Omit<DailyMoneyDiscovery, 'id' | 'discoveredDate' | 'status'>> = [
-        {
-          title: cleanFocus
-            ? `${cleanFocus}: Pre-Built Automated Deliverable & Instant Invoice Kit`
-            : 'Pre-Built Automated Deliverable & Instant Invoice Kit',
-          methodCategory: 'Automation Template',
-          whyEasierAndFaster:
-            `Turns bespoke consulting into a 5-minute standardized kit scaled above yesterday's $${previousDayProfitUsd.toLocaleString()} daily benchmark.`,
-          executionShortcut:
-            'Clone standardized deliverable template -> run automated validation script -> send instant payment link.',
-          estimatedHoursSavedPerWeek: 5,
-          estimatedDailyProfitUsd: perWayFloor,
-          startupCapitalUsd: 0,
-        },
-        {
-          title: 'Automated B2B Renewal & Expansion Audit Trigger',
-          methodCategory: 'Retainer Upsell',
-          whyEasierAndFaster:
-            'Captures high-margin recurring upgrades from existing happy accounts in 1 click instead of cold prospecting from scratch.',
-          executionShortcut:
-            'Compile 30-day savings report automatically -> propose 1-click $450/mo retainer add-on.',
-          estimatedHoursSavedPerWeek: 4,
-          estimatedDailyProfitUsd: perWayFloor + 35,
-          startupCapitalUsd: 0,
-        },
-        {
-          title: 'Scheduled Niche Data Enrichment & Lead Digest Feed',
-          methodCategory: 'Data & API Feed',
-          whyEasierAndFaster:
-            'Generates an automated daily prospect/compliance feed once and licenses it to multiple non-competing operators simultaneously.',
-          executionShortcut:
-            'Run public registry diff job each morning -> push CSV/JSON digest to subscribed desks.',
-          estimatedHoursSavedPerWeek: 6,
-          estimatedDailyProfitUsd: perWayFloor + 65,
-          startupCapitalUsd: 0,
-        },
-        {
-          title: 'White-Label AI Document Triage & Exception Alerts Widget',
-          methodCategory: 'AI Micro-Tool',
-          whyEasierAndFaster:
-            'Packages existing OCR/schema validation into a lightweight drop-in widget requiring zero ongoing manual labor.',
-          executionShortcut:
-            'Generate scoped API token -> auto-meter document volume -> settle weekly overages.',
-          estimatedHoursSavedPerWeek: 5,
-          estimatedDailyProfitUsd: perWayFloor + 85,
-          startupCapitalUsd: 0,
-        },
-      ];
-
-      return candidates
-        .filter((c) => !seen.has(c.title.toLowerCase()))
-        .slice(0, 3)
-        .map((c, idx) => ({
-          ...c,
-          id: `disc-way-${Date.now()}-${idx}`,
-          discoveredDate: todayIso,
-          status: 'discovered' as const,
-        }));
-    };
-
+    const focusHint = typeof body.focusHint === 'string' ? body.focusHint.trim().slice(0, 500) : '';
+    if (body.existingTitles !== undefined &&
+        (!Array.isArray(body.existingTitles) ||
+         body.existingTitles.length > 100 ||
+         body.existingTitles.some((title) => typeof title !== 'string' || title.length > 200))) {
+      res.status(400).json({ error: 'existingTitles must be an array of at most 100 short strings.' });
+      return;
+    }
+    const existingTitles = (body.existingTitles as string[] | undefined) ?? [];
+    const seen = new Set(existingTitles.map((title) => title.trim().toLowerCase()));
     const ai = getGeminiClient();
     if (!ai) {
-      res.json({
-        discoveries: buildOfflineDiscoveries(),
-        modelUsed: 'Jerry Daily Discovery Engine (Heuristic)',
+      res.status(503).json({
+        error: 'Live research is unavailable. No business opportunity estimates were generated.',
+        status: 'not_generated',
       });
       return;
     }
@@ -2014,22 +1947,17 @@ async function startServer() {
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
         contents:
-          `You are Jerry, proactively finding and learning NEW, faster, easier, legitimate ways each day so today's daily profit strictly exceeds yesterday's $${previousDayProfitUsd} (target >= $${minBatchTarget}/day combined net profit without touching investment capital). ` +
-          `${cleanFocus ? `Owner focus hint: "${cleanFocus}". ` : ''}` +
-          `Avoid repeating these existing titles: ${existingTitles.slice(0, 12).join('; ') || 'none'}. ` +
-          `Return ONLY a valid JSON array of 3 concrete methods with keys: title, methodCategory (one of "Automation Template", "Productized Service", "AI Micro-Tool", "Retainer Upsell", "Data & API Feed"), whyEasierAndFaster, executionShortcut, estimatedHoursSavedPerWeek (number), estimatedDailyProfitUsd (number, at least $${perWayFloor} so all 3 exceed yesterday), startupCapitalUsd (number, prefer 0). Distinguish estimates conservatively.`,
-        config: {
-          tools: [{ googleSearch: {} }],
-        },
+          'You are Jerry. Research practical, legitimate business opportunities. Do not claim or guarantee revenue, profit, customers, conversion, or savings. Do not invent historical owner performance or a target that must be beaten. For each opportunity, provide a conservative, explicitly hypothetical daily-profit scenario only if you can state the assumptions that produce it; otherwise set estimatedDailyProfitUsd to 0. All numeric financial values are scenarios, not actual income, verified forecasts, or promises. Do not imply any opportunity has been validated or executed. ' +
+          (focusHint ? `Owner focus hint: "${focusHint}". ` : '') +
+          `Avoid repeating these titles: ${existingTitles.slice(0, 12).join('; ') || 'none'}. ` +
+          'Return ONLY a valid JSON array of up to 3 methods with keys: title, methodCategory (one of "Automation Template", "Productized Service", "AI Micro-Tool", "Retainer Upsell", "Data & API Feed"), whyEasierAndFaster, executionShortcut, estimatedHoursSavedPerWeek (number), estimatedDailyProfitUsd (number), startupCapitalUsd (number). Explain pricing, volume, cost and capacity assumptions for any nonzero financial scenario. Prefer estimatedDailyProfitUsd 0 when assumptions cannot be substantiated.',
+        config: { tools: [{ googleSearch: {} }] },
       });
 
       const rawText = (response.text ?? '').trim();
       const jsonMatch = rawText.match(/\[[\s\S]*\]/);
       if (!jsonMatch) {
-        res.json({
-          discoveries: buildOfflineDiscoveries(),
-          modelUsed: 'gemini-4-hydrogen (fallback structure)',
-        });
+        res.status(502).json({ error: 'Research provider returned no valid opportunity list.', status: 'not_generated' });
         return;
       }
 
@@ -2040,45 +1968,57 @@ async function startServer() {
         'Retainer Upsell',
         'Data & API Feed',
       ]);
-
       const parsed = JSON.parse(jsonMatch[0]) as Array<Partial<DailyMoneyDiscovery>>;
-      const discoveries: DailyMoneyDiscovery[] = parsed
-        .filter((item) => item.title && !seen.has(item.title.trim().toLowerCase()))
-        .slice(0, 3)
-        .map((item, idx) => ({
-          id: `disc-way-${Date.now()}-${idx}`,
-          discoveredDate: todayIso,
-          title: item.title!.trim(),
-          methodCategory: allowedCategories.has(item.methodCategory ?? '')
-            ? (item.methodCategory as DailyMoneyDiscovery['methodCategory'])
-            : 'Automation Template',
-          whyEasierAndFaster:
-            item.whyEasierAndFaster ||
-            'Eliminates manual fulfillment bottlenecks with reusable automation.',
-          executionShortcut:
-            item.executionShortcut ||
-            'Standardize deliverable template and automate recurring settlement.',
-          estimatedHoursSavedPerWeek: Math.max(1, Number(item.estimatedHoursSavedPerWeek ?? 4)),
-          estimatedDailyProfitUsd: Math.max(perWayFloor, Number(item.estimatedDailyProfitUsd ?? perWayFloor)),
-          startupCapitalUsd: Math.max(0, Number(item.startupCapitalUsd ?? 0)),
-          status: 'discovered',
-        }));
-
-      res.json({
-        discoveries: discoveries.length > 0 ? discoveries : buildOfflineDiscoveries(),
-        modelUsed: 'gemini-4-hydrogen + Google Search',
-      });
-    } catch (error) {
-      if (isQuotaError(error)) {
-        res.json({
-          discoveries: buildOfflineDiscoveries(),
-          modelUsed: 'Jerry Daily Discovery Engine (Local fallback — quota reached)',
-        });
+      if (!Array.isArray(parsed) || parsed.length > 3) {
+        res.status(502).json({ error: 'Research provider returned an invalid opportunity list.', status: 'not_generated' });
         return;
       }
+      const discoveries: DailyMoneyDiscovery[] = parsed
+        .filter((item) =>
+          typeof item.title === 'string' &&
+          item.title.trim().length > 0 &&
+          !seen.has(item.title.trim().toLowerCase()))
+        .map((item, idx) => {
+          const profit = Number(item.estimatedDailyProfitUsd);
+          const capital = Number(item.startupCapitalUsd);
+          const hours = Number(item.estimatedHoursSavedPerWeek);
+          if (!Number.isFinite(profit) || profit < 0 || profit > 1_000_000 ||
+              !Number.isFinite(capital) || capital < 0 || capital > 1_000_000 ||
+              !Number.isFinite(hours) || hours < 0 || hours > 168) {
+            throw new Error('Research provider returned invalid numeric scenario fields.');
+          }
+          const explanation = typeof item.whyEasierAndFaster === 'string'
+            ? item.whyEasierAndFaster.trim().slice(0, 2000)
+            : '';
+          return {
+            id: `disc-way-${Date.now()}-${idx}`,
+            discoveredDate: new Date().toISOString().slice(0, 10),
+            title: item.title!.trim().slice(0, 180),
+            methodCategory: allowedCategories.has(item.methodCategory ?? '')
+              ? (item.methodCategory as DailyMoneyDiscovery['methodCategory'])
+              : 'Automation Template',
+            whyEasierAndFaster: `UNVERIFIED HYPOTHETICAL SCENARIO — not actual income or a forecast. ${explanation || 'Validate customer demand, pricing, costs and delivery capacity before relying on this idea.'}`,
+            executionShortcut: typeof item.executionShortcut === 'string'
+              ? item.executionShortcut.trim().slice(0, 2000)
+              : 'Prepare a validation plan; no external action has been taken.',
+            estimatedHoursSavedPerWeek: hours,
+            estimatedDailyProfitUsd: profit,
+            startupCapitalUsd: capital,
+            status: 'discovered',
+          };
+        });
+
       res.json({
-        discoveries: buildOfflineDiscoveries(),
-        modelUsed: 'Jerry Daily Discovery Engine (Local fallback)',
+        discoveries,
+        modelUsed: 'gemini-4-hydrogen + Google Search',
+        financialValuesAre: 'unverified_hypothetical_scenarios',
+        executionStatus: 'ideas_only_no_external_actions',
+      });
+    } catch (error) {
+      console.error('Daily opportunity research failed:', error);
+      res.status(502).json({
+        error: 'Opportunity research failed validation or the provider was unavailable. No fallback figures were generated.',
+        status: 'not_generated',
       });
     }
   });
