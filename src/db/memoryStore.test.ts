@@ -34,10 +34,9 @@ test('rejects malformed tags, identifiers and timestamps', () => {
 });
 
 test('rejects a memory area that conflicts with its legacy category', () => {
-  assert.match(
-    validateMemoryEntry({ ...validEntry, area: 'owner_profile' }),
-    /area.*category/i,
-  );
+  const error = validateMemoryEntry({ ...validEntry, area: 'owner_profile' });
+  assert.ok(error);
+  assert.match(error, /area.*category/i);
   assert.equal(
     validateMemoryEntry({ ...validEntry, area: 'knowledge_experience' }),
     null,
