@@ -470,7 +470,7 @@ export function SelfGrowthStudio({
                     ) : (
                       <>
                         <Play className="w-3.5 h-3.5" />
-                        Execute Way (+${item.estimatedDailyProfitUsd})
+                        Run Validation Steps
                       </>
                     )}
                   </button>
