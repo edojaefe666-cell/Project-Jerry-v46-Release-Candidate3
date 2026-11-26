@@ -44,8 +44,17 @@ jobs:
       - name: Build Jerry web UI for Android asset origin
         env:
           VITE_BASE_PATH: "/public/"
-          VITE_API_BASE_URL: "https://jerry-backend.invalid"
+          VITE_API_BASE_URL: ${{ vars.JERRY_BACKEND_ORIGIN || 'https://jerry-backend.invalid' }}
         run: |
+          node --input-type=module -e '
+            const value = process.env.VITE_API_BASE_URL;
+            const url = new URL(value);
+            if (url.protocol !== "https:" || url.username || url.password ||
+                url.pathname !== "/" || url.search || url.hash) {
+              throw new Error("JERRY_BACKEND_ORIGIN must be a clean HTTPS origin.");
+            }
+            console.log("Android backend origin:", url.origin);
+          '
           bun run build
           mkdir -p android-native/app/src/main/assets/public
           cp -R dist/. android-native/app/src/main/assets/public/
