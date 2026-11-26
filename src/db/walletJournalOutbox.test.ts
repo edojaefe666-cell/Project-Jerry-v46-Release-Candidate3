@@ -85,6 +85,7 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
 
   const concurrentTx = makeTransaction(`concurrent-${suffix}`, 'a');
   const staleTx = makeTransaction(`stale-${suffix}`, 'b');
+  const duplicateDeliveryTx = makeTransaction(`duplicate-delivery-${suffix}`, 'c');
   const { getWalletJournalEventKey } = await import('../lib/walletJournalPolicy.ts');
   const insertOutbox = async (tx: WalletTransaction, status: 'pending' | 'processing') => {
     await pool.query(
@@ -99,19 +100,29 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
 
   await insertOutbox(concurrentTx, 'pending');
   await insertOutbox(staleTx, 'processing');
+  // Simulate the same confirmed settlement being delivered twice through
+  // distinct outbox event identities (e.g. replay from a repaired producer).
+  await insertOutbox(duplicateDeliveryTx, 'pending');
+  await pool.query(
+    `INSERT INTO wallet_journal_outbox
+      (user_id, event_key, tx_ref, payload_json, status, available_at)
+     VALUES ($1, $2, $3, $4::jsonb, 'pending', now() - interval '10 minutes')
+     ON CONFLICT (user_id, event_key) DO NOTHING`,
+    [user.id, `duplicate-delivery-replay:${suffix}`, duplicateDeliveryTx.id, JSON.stringify(duplicateDeliveryTx)],
+  );
 
   const concurrentDrains = await Promise.all(
     Array.from({ length: 8 }, () => drainWalletJournalOutbox(uid, 1)),
   );
-  assert.equal(concurrentDrains.reduce((sum, result) => sum + result.processed, 0), 2,
-    'Concurrent workers must process the pending event and reclaim the stale processing event exactly once.');
+  assert.equal(concurrentDrains.reduce((sum, result) => sum + result.processed, 0), 4,
+    'Concurrent workers must process pending, stale, and duplicate-delivery events.');
 
-  const eventKeys = [getWalletJournalEventKey(concurrentTx), getWalletJournalEventKey(staleTx)];
+  const eventKeys = [getWalletJournalEventKey(concurrentTx), getWalletJournalEventKey(staleTx), getWalletJournalEventKey(duplicateDeliveryTx), `duplicate-delivery-replay:${suffix}`];
   const outboxRows = await pool.query(
     'SELECT event_key, status, attempts FROM wallet_journal_outbox WHERE user_id = $1 AND event_key = ANY($2::text[])',
     [user.id, eventKeys],
   );
-  assert.equal(outboxRows.rowCount, 2);
+  assert.equal(outboxRows.rowCount, 4);
   assert.ok(outboxRows.rows.every((row) => row.status === 'processed'));
   assert.ok(outboxRows.rows.every((row) => row.attempts >= 1));
 
@@ -119,5 +130,5 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
     'SELECT idempotency_key FROM journal_entries WHERE user_id = $1 AND idempotency_key = ANY($2::text[]) AND status = \'posted\'',
     [user.id, eventKeys],
   );
-  assert.equal(journalRows.rowCount, 2, 'Each claimed event must result in exactly one posted journal entry.');
+  assert.equal(journalRows.rowCount, 3, 'Duplicate delivery must produce only one posted journal entry for the same settlement.');
 });
