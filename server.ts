@@ -1416,7 +1416,11 @@ async function startServer() {
       res.json({ transcript: result.transcript, provider: result.provider, modelUsed: result.model, evidenceStatus: 'machine_transcription_not_human_verified' });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Transcription failed.';
-      res.status(502).json({ error: `Jerry transcription failed: ${message.slice(0,  // Jerry Proactive Opportunity Radar. All findings must be grounded in retrieved sources.
+      res.status(502).json({ error: `Jerry transcription failed: ${message.slice(0, 240)}` });
+    }
+  });
+
+  // Jerry Proactive Opportunity Radar. All findings must be grounded in retrieved sources.
   app.post('/api/jerry/scan-opportunities', requireAuth, opportunityRateLimit, async (req: AuthRequest, res) => {
     const body = req.body as { interests?: unknown; availableCapitalUsd?: unknown };
     const interests = Array.isArray(body.interests)
