@@ -105,14 +105,14 @@ test('self-upgrade verification only promotes status from the isolated runner at
   const start = server.indexOf("app.post('/api/jerry/self-upgrades/:id/verify'");
   const end = server.indexOf("app.post('/api/jerry/verify-upgrade'", start);
   const persistedVerify = server.slice(start, end);
-  assert.match(persistedVerify, /runIsolatedSelfUpgradeTests\(/);
+  assert.match(persistedVerify, /runIsolatedTestsWithStop\(/);
   assert.match(persistedVerify, /isolated\.status === 'passed' \? 'passed'/);
   assert.doesNotMatch(persistedVerify, /esbuild\.transform/);
 
   const directStart = end;
   const directEnd = server.indexOf("app.post('/api/jerry/execute-task'", directStart);
   const directVerify = server.slice(directStart, directEnd);
-  assert.match(directVerify, /runIsolatedSelfUpgradeTests\(/);
+  assert.match(directVerify, /runIsolatedTestsWithStop\(/);
   assert.match(directVerify, /isolated\.status === 'passed' \? 'passed'/);
   assert.doesNotMatch(directVerify, /esbuild\.transform/);
 });
