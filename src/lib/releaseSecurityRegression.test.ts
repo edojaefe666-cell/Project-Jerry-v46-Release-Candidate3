@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const securityUi = fs.readFileSync(path.join(root, 'src/components/SecurityApprovals.tsx'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -112,4 +113,9 @@ test('self-upgrade static syntax checks cannot claim runtime tests passed', () =
   const directVerify = server.slice(directStart, directEnd);
   assert.match(directVerify, /testStatus: 'pending'/);
   assert.doesNotMatch(directVerify, /testStatus: 'passed'/);
+});
+
+
+test('security UI creates restore approvals with the exact immutable operation scope', () => {
+  assert.match(securityUi, /action === 'high_impact_change' \? \{ scope: \{ operation: 'security_backup_restore' \} \}/);
 });
