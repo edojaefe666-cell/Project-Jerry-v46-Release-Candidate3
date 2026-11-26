@@ -134,6 +134,7 @@ async function startServer() {
   const chatRateLimit = createOwnerRateLimiter({ limit: 30, windowMs: 60_000, maxKeys: 1_000 });
   const goalPlanRateLimit = createOwnerRateLimiter({ limit: 10, windowMs: 60_000, maxKeys: 1_000 });
   const opportunityRateLimit = createOwnerRateLimiter({ limit: 10, windowMs: 60_000, maxKeys: 1_000 });
+  const voiceRateLimit = createOwnerRateLimiter({ limit: 20, windowMs: 60_000, maxKeys: 1_000 });
 
   const encryptSecurityBackup = (payload: unknown, passphrase: string): string => {
     const salt = randomBytes(16);
@@ -1371,7 +1372,7 @@ async function startServer() {
   });
 
   // Jerry Voice TTS. Browser speech is offered only when no server provider is configured.
-  app.post('/api/jerry/tts', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/tts', requireAuth, voiceRateLimit, async (req: AuthRequest, res) => {
     const { text, voiceName = 'Charon', voiceStyle = 'Calm, warm, confident adult male voice' } = req.body as {
       text?: string; voiceName?: string; voiceStyle?: string;
     };
@@ -1396,7 +1397,7 @@ async function startServer() {
   });
 
   // Jerry Voice transcription. Audio is processed only by configured providers.
-  app.post('/api/jerry/transcribe', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/transcribe', requireAuth, voiceRateLimit, async (req: AuthRequest, res) => {
     const { audioBase64, mimeType = 'audio/webm' } = req.body as { audioBase64?: string; mimeType?: string };
     if (typeof audioBase64 !== 'string' || !audioBase64) {
       res.status(400).json({ error: 'Audio payload is required.' }); return;
