@@ -1,7 +1,6 @@
 import { createPool } from './index.ts';
 import { reversePostedJournalEntry, getJournalAccountBalances } from './journal.ts';
 import { ensureWalletTransactionJournaled } from './walletJournal.ts';
-import { btcToSatoshis } from '../lib/btcUnits.ts';
 import { calculateLegacyWalletSatoshis, mapLegacyWalletTransactionRows } from '../lib/financialReconciliationMath.ts';
 import type { WalletTransaction } from '../lib/types.ts';
 
