@@ -76,3 +76,13 @@ test('outgoing Bitcoin transfer staging is blocked while the emergency stop is e
   const end = server.indexOf("app.post('/api/jerry/tasks/recover'", start);
   assert.match(server.slice(start, end), /res\.status\(501\)/);
 });
+
+
+test('security backup restore consumes its scoped approval and commits the replacement atomically', () => {
+  const start = server.indexOf("app.post('/api/security/restore'");
+  const end = server.indexOf("app.get('/api/health'", start);
+  const route = server.slice(start, end);
+  assert.match(route, /restoreSnapshotWithApproval\(/);
+  assert.doesNotMatch(route, /consumeApproval\(/);
+  assert.doesNotMatch(route, /importSnapshot\(/);
+});
