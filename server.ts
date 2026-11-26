@@ -14,6 +14,7 @@ import { resolveSettlementApprovalStatus } from './src/lib/settlementApproval.ts
 import { requireAuth, type AuthRequest } from './src/middleware/auth.ts';
 import { adminAuth } from './src/lib/firebase-admin.ts';
 import { SecurityStore } from './src/lib/securityStore.ts';
+import { ExecutionRegistry } from './src/lib/executionRegistry.ts';
 import { db } from './src/db/index.ts';
 import { ensureWalletTransactionJournaled } from './src/db/walletJournal.ts';
 import { drainWalletJournalOutbox } from './src/db/walletJournalOutbox.ts';
@@ -135,21 +136,23 @@ async function startServer() {
 
   // Track in-flight isolated code verification requests so an owner stop command
   // can abort their HTTP requests immediately rather than only blocking new work.
-  const activeIsolatedExecutions = new Set<AbortController>();
+  const executionRegistry = new ExecutionRegistry(isEmergencyStopActive());
   const runIsolatedTestsWithStop = async (input: { language: string; source: string; testCode: string }) => {
     if (isEmergencyStopActive()) {
       return { status: 'unavailable' as const, report: 'Emergency stop is active. Isolated verification was not started.' };
     }
-    const controller = new AbortController();
-    activeIsolatedExecutions.add(controller);
+    const execution = executionRegistry.register();
     try {
-      const result = await runIsolatedSelfUpgradeTests(input, { signal: controller.signal });
-      if (controller.signal.aborted) {
+      if (execution.signal.aborted) {
+        return { status: 'unavailable' as const, report: 'Emergency stop interrupted isolated verification before it started.' };
+      }
+      const result = await runIsolatedSelfUpgradeTests(input, { signal: execution.signal });
+      if (execution.signal.aborted) {
         return { status: 'unavailable' as const, report: 'Emergency stop interrupted isolated verification; no verified test result was accepted.' };
       }
       return result;
     } finally {
-      activeIsolatedExecutions.delete(controller);
+      execution.release();
     }
   };
 
@@ -280,9 +283,9 @@ async function startServer() {
     }
     try {
       const control = securityStore.setEmergencyStop(body.action === 'stop', req.user!.uid, reason);
-      if (body.action === 'stop') {
-        for (const controller of activeIsolatedExecutions) controller.abort(new Error('Owner emergency stop engaged'));
-      }
+      executionRegistry.setStopped(body.action === 'stop', body.action === 'stop'
+        ? 'Owner emergency stop engaged'
+        : 'Owner explicitly resumed execution');
       res.json({ ...control, hardStop: process.env.JERRY_EMERGENCY_STOP === '1', executionBlocked: isEmergencyStopActive() });
     } catch {
       res.status(503).json({ error: 'Emergency-stop state could not be safely updated.' });
