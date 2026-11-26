@@ -428,7 +428,7 @@ export interface DailySummaryReport {
     name: string;
     count: number;
   }>;
-  financialDataStatus: 'unavailable_not_loaded_from_verified_ledger';
+  financialDataStatus: 'unavailable_not_loaded_from_verified_ledger' | 'verified_from_ledger';
 }
 
 export interface JerryState {
