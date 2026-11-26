@@ -1,5 +1,13 @@
 import type { MemoryEntry } from './types.ts';
 
+import type { JerryMemoryArea } from './types.ts';
+
+export function memoryAreaForCategory(category: MemoryEntry['category']): JerryMemoryArea {
+  if (category === 'preference') return 'owner_profile';
+  if (category === 'goal' || category === 'workflow') return 'mission_projects';
+  return 'knowledge_experience';
+}
+
 export type LearningEnhancement = {
   title?: unknown;
   content?: unknown;
@@ -22,6 +30,7 @@ export function createOwnerLearningEntry(
   return {
     id,
     category,
+    area: memoryAreaForCategory(category),
     title: content.length > 64 ? `${content.slice(0, 61)}...` : content,
     content,
     outcome: 'insight',
