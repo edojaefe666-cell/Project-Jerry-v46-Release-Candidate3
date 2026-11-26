@@ -139,4 +139,20 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
     [user.id, eventKeys],
   );
   assert.equal(journalRows.rowCount, 3, 'Duplicate delivery must produce only one posted journal entry for the same settlement.');
+
+  // Emergency stop after claim but before execution must preserve the row
+  // and return it to pending rather than losing or falsely processing it.
+  const pausedTx = makeTransaction(`paused-${suffix}`, 'd');
+  await insertOutbox(pausedTx, 'pending');
+  const stopController = new AbortController();
+  stopController.abort(new Error('Owner emergency stop'));
+  const pausedResult = await drainWalletJournalOutbox(uid, 10, stopController.signal);
+  assert.equal(pausedResult.processed, 0);
+  const pausedRow = await pool.query(
+    'SELECT status, last_error FROM wallet_journal_outbox WHERE user_id = $1 AND event_key = $2',
+    [user.id, getWalletJournalEventKey(pausedTx)],
+  );
+  assert.equal(pausedRow.rowCount, 1);
+  assert.equal(pausedRow.rows[0].status, 'pending');
+  assert.match(pausedRow.rows[0].last_error, /emergency stop/i);
 });
