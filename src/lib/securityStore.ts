@@ -271,7 +271,8 @@ export class SecurityStore {
       const existing = this.getApproval(id, actorUid);
       return existing?.consumedAt ? existing : null;
     }
-    this.audit(actorUid, 'approval.consumed', { id, action: 'bitcoin_transfer', consumedAt, reservationId });
+    const reservedApproval = this.getApproval(id, actorUid);
+    this.audit(actorUid, 'approval.consumed', { id, action: reservedApproval?.action ?? 'unknown', consumedAt, reservationId });
     return this.getApproval(id, actorUid);
   }
 
