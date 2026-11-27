@@ -123,6 +123,7 @@ test('reserves a shared operation slot before every provider fallback attempt', 
       openai: { apiKey: 'o-key', model: 'gpt-test' },
     },
     reserveTokens: async (input) => ({
+      reservationId: 'token-reservation-fallback-test',
       ownerUid: input.ownerUid,
       day: '2026-11-27',
       reservedTokens: input.reserveTokens,
@@ -179,6 +180,7 @@ test('reserves and reconciles exact configured model USD cost from provider inpu
         },
       },
       reserveTokens: async (input) => ({
+        reservationId: 'token-reservation-cost-test',
         ownerUid: input.ownerUid, day: '2026-11-27',
         reservedTokens: input.reserveTokens, dailyLimitTokens: input.dailyLimitTokens,
       }),
@@ -248,6 +250,7 @@ test('reserves a USD cost ceiling independently for each failed and fallback pro
         },
       },
       reserveTokens: async (input) => ({
+        reservationId: 'token-reservation-cost-fallback-test',
         ownerUid: input.ownerUid, day: '2026-11-27',
         reservedTokens: input.reserveTokens, dailyLimitTokens: input.dailyLimitTokens,
       }),
