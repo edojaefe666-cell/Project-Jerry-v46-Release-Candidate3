@@ -145,6 +145,19 @@ export const deviceApprovalChallenges = pgTable('device_approval_challenges', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const encryptedMemoryRecords = pgTable('encrypted_memory_records', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  keyVersion: integer('key_version').notNull(),
+  revision: integer('revision').notNull(),
+  iv: text('iv').notNull(),
+  ciphertext: text('ciphertext').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  ownerUpdatedIndex: index('encrypted_memory_records_owner_updated_idx').on(table.userId, table.updatedAt, table.id),
+}));
+
 export const memoryEntries = pgTable('memory_entries', {
   id: text('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
@@ -172,6 +185,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   idempotencyKeys: many(idempotencyKeys),
   taskExecutions: many(taskExecutions),
   memoryEntries: many(memoryEntries),
+  encryptedMemoryRecords: many(encryptedMemoryRecords),
   storageObjects: many(storageObjects),
   deviceRegistrations: many(deviceRegistrations),
 }));
