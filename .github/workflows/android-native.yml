@@ -31,6 +31,7 @@ concurrency:
 jobs:
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -89,6 +90,7 @@ jobs:
           sha256sum app/build/outputs/apk/release/app-release-unsigned.apk > app/build/outputs/apk/release/app-release-unsigned.apk.sha256
 
       - name: Smoke test Jerry on an Android 10 emulator
+        timeout-minutes: 15
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
@@ -98,7 +100,10 @@ jobs:
           disable-animations: true
           script: cd android-native && gradle --no-daemon :app:connectedDebugAndroidTest
 
+      # Publish compiled candidates even if the emulator smoke test fails, so
+      # a device-installable diagnostic build is not lost with the test result.
       - name: Publish Android build candidates and SHA-256 checksums
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: jerry-android-candidates-${{ github.sha }}
@@ -107,5 +112,5 @@ jobs:
             android-native/app/build/outputs/apk/debug/app-debug.apk.sha256
             android-native/app/build/outputs/apk/release/app-release-unsigned.apk
             android-native/app/build/outputs/apk/release/app-release-unsigned.apk.sha256
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
