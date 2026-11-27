@@ -526,11 +526,11 @@ async function startServer() {
     }
   });
 
-  app.post('/api/memory', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/memory', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
-      const entry = await saveMemoryEntryForUser(uid, email, req.body?.entry);
+      const entry = await withSharedExecutionLease(() => saveMemoryEntryForUser(uid, email, req.body?.entry));
       res.status(200).json({ entry, persisted: true });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'Memory persistence failed.' });
@@ -621,7 +621,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/state', requireAuth, async (req: AuthRequest, res) => {
+  app.put('/api/state', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -638,9 +638,9 @@ async function startServer() {
       // Re-read and merge under the same per-user DB lock as financial and
       // approval commands so an ordinary workspace save cannot restore stale
       // protected state after a concurrent authorization decision.
-      await updateWorkspaceForUserAtomic(uid, email, (latest) =>
+      await withSharedExecutionLease(() => updateWorkspaceForUserAtomic(uid, email, (latest) =>
         mergeClientWorkspaceState(latest, incoming)
-      );
+      ));
       res.json({ ok: true });
     } catch (error) {
       console.error('Internal server error:', error);
@@ -720,7 +720,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/cloudsql/workspace', requireAuth, async (req: AuthRequest, res) => {
+  app.put('/api/cloudsql/workspace', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -745,7 +745,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/cloudsql/daily-summary', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/cloudsql/daily-summary', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -754,7 +754,7 @@ async function startServer() {
         res.status(400).json({ error: 'Invalid daily summary payload' });
         return;
       }
-      await saveDailySummaryForUser(uid, email, report);
+      await withSharedExecutionLease(() => saveDailySummaryForUser(uid, email, report));
       res.json({ ok: true });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to persist daily summary';
