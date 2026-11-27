@@ -12,6 +12,7 @@ const sharedApprovalStore = fs.readFileSync(path.join(root, 'src/db/approvalStor
 const sharedRateLimitStore = fs.readFileSync(path.join(root, 'src/db/rateLimitStore.ts'), 'utf8');
 const sharedProviderOperationStore = fs.readFileSync(path.join(root, 'src/db/providerOperationStore.ts'), 'utf8');
 const multimodalAdapters = fs.readFileSync(path.join(root, 'src/lib/multimodalAdapters.ts'), 'utf8');
+const opportunityRadar = fs.readFileSync(path.join(root, 'src/lib/opportunityRadar.ts'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -1068,4 +1069,6 @@ test('multimodal and direct SDK provider attempts consume a shared daily owner o
   assert.match(sharedProviderOperationStore, /ON CONFLICT\(owner_uid,usage_day\) DO UPDATE/);
   assert.match(sharedProviderOperationStore, /used_operations < jerry_provider_daily_operations\.daily_limit_operations/);
   assert.match(sharedProviderOperationStore, /JERRY_DAILY_PROVIDER_OPERATION_LIMIT/);
+  assert.match(server, /researchApiKey: process\.env\.TAVILY_API_KEY,\s*ownerUid: req\.user!\.uid/);
+  assert.match(opportunityRadar, /reserveConfiguredProviderOperation\(options\.ownerUid\)/);
 });
