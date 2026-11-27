@@ -634,6 +634,7 @@ async function startServer() {
       return { envelope: {
         id: row.envelope.id,
         keyVersion: row.envelope.keyVersion,
+        version: 1,
         envelopeVersion: 1,
         algorithm: row.envelope.algorithm,
         context: { ownerUid, deviceId: proofChallenge.deviceId, keyVersion: row.envelope.keyVersion },
