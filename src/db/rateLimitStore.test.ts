@@ -20,8 +20,8 @@ test('shared owner limiter uses one atomic PostgreSQL upsert for cross-instance 
   assert.equal(result.resetAt,70_000);
   const upsert=calls.find(call=>call.query.includes('INSERT INTO jerry_owner_rate_limits'));
   assert.ok(upsert);
-  assert.match(upsert!.query,/request_count=jerry_owner_rate_limits\\.request_count \\+ 1/);
-  assert.match(upsert!.query,/request_count=jerry_owner_rate_limits\\.request_count \\+ 1/);
+  assert.match(upsert!.query,/request_count=jerry_owner_rate_limits\.request_count \+ 1/);
+  assert.match(upsert!.query,/request_count=jerry_owner_rate_limits\.request_count \+ 1/);
 });
 
 test('shared rate limiter rejects over-limit decisions and reports retry metadata', async () => {
