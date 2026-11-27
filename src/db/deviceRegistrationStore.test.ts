@@ -48,3 +48,10 @@ test('rejects private key material', () => {
     ...valid, exchangePublicKey: { ...valid.exchangePublicKey, d: 'private-material' } as never,
   }));
 });
+
+test('rejects private material in the separate signing public key', () => {
+  assert.throws(() => assertValidDeviceRegistrationInput({
+    ...valid,
+    signingPublicKey: { ...valid.signingPublicKey, d: 'must-not-be-stored' } as never,
+  }));
+});
