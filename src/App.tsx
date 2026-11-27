@@ -80,7 +80,7 @@ const NAV_ITEMS: Array<{ id: WorkspaceTab; label: string; icon: typeof LayoutDas
 ];
 
 export default function App() {
-  const { user, idToken, authError, signInWithGoogle, signOutUser } = useAuth();
+  const { user, idToken, loading: authLoading, authError, signInWithGoogle, signOutUser } = useAuth();
   const [state, setState] = useState<JerryState>(INITIAL_JERRY_STATE);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
