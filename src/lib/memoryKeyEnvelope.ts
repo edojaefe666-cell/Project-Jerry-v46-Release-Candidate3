@@ -35,6 +35,13 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const CONTEXT_FIELDS = ['ownerUid', 'deviceId', 'keyVersion'] as const;
 
+// Copy views into a definite ArrayBuffer for TypeScript 7 Web Crypto types.
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
 function validateContext(context: MemoryKeyContext): void {
   if (!context || typeof context.ownerUid !== 'string' || !context.ownerUid.trim() ||
       context.ownerUid.length > 160 || typeof context.deviceId !== 'string' ||
@@ -97,7 +104,7 @@ export async function importMemoryDataKey(
   if (!(rawKey instanceof Uint8Array) || rawKey.byteLength !== 32) {
     throw new Error('Memory data key must contain exactly 32 bytes.');
   }
-  return cryptoProvider.subtle.importKey('raw', rawKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  return cryptoProvider.subtle.importKey('raw', toArrayBuffer(rawKey), { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
 
 async function deriveEnvelopeKey(
@@ -117,8 +124,8 @@ async function deriveEnvelopeKey(
   return cryptoProvider.subtle.deriveKey({
     name: 'HKDF',
     hash: 'SHA-256',
-    salt,
-    info: encoder.encode('Jerry memory key envelope v1\u0000' + decoder.decode(contextBytes)),
+    salt: toArrayBuffer(salt),
+    info: toArrayBuffer(encoder.encode('Jerry memory key envelope v1\u0000' + decoder.decode(contextBytes))),
   }, hkdfKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
 
@@ -139,9 +146,9 @@ export async function wrapMemoryKeyForDevice(
     ephemeral.privateKey, recipientPublicKey, salt, contextBytes, cryptoProvider,
   );
   const ciphertext = await cryptoProvider.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: contextBytes, tagLength: 128 },
+    { name: 'AES-GCM', iv: toArrayBuffer(iv), additionalData: toArrayBuffer(contextBytes), tagLength: 128 },
     wrappingKey,
-    rawMemoryKey,
+    toArrayBuffer(rawMemoryKey),
   );
   return {
     version: 1,
@@ -179,9 +186,9 @@ export async function unwrapMemoryKeyForDevice(
     recipientPrivateKey, envelope.ephemeralPublicKey, salt, contextBytes, cryptoProvider,
   );
   const rawKey = new Uint8Array(await cryptoProvider.subtle.decrypt(
-    { name: 'AES-GCM', iv, additionalData: contextBytes, tagLength: 128 },
+    { name: 'AES-GCM', iv: toArrayBuffer(iv), additionalData: toArrayBuffer(contextBytes), tagLength: 128 },
     wrappingKey,
-    ciphertext,
+    toArrayBuffer(ciphertext),
   ));
   try {
     return await importMemoryDataKey(rawKey, cryptoProvider);
