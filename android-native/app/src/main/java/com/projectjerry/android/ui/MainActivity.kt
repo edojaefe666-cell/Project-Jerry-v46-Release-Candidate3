@@ -22,6 +22,7 @@ import androidx.credentials.exceptions.GetCredentialException
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.JavaScriptReplyProxy
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
@@ -197,7 +198,8 @@ class MainActivity : AppCompatActivity() {
 
         // WebMessageListener enforces both the trusted origin and main-frame caller.
         // Unlike addJavascriptInterface, it does not expose a callable object to every frame.
-        WebViewCompat.addWebMessageListener(
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(
             webView,
             "JerryNativeAuth",
             setOf("https://localhost"),
@@ -216,7 +218,8 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread { beginNativeGoogleSignIn() }
                 }
             }
-        )
+            )
+        }
 
         setContentView(webView)
         webView.loadUrl("https://localhost/public/index.html")
