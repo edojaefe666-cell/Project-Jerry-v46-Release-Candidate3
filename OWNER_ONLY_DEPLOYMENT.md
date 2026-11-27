@@ -34,6 +34,23 @@ This control does not replace action-level approvals, audit logging, tenant isol
 The Android CI workflow reads the non-secret GitHub Actions repository variable `JERRY_BACKEND_ORIGIN` and embeds that HTTPS origin as `VITE_API_BASE_URL` in the Android web assets. Configure it under **Repository Settings → Secrets and variables → Actions → Variables** only after a real backend is deployed and its HTTPS origin is verified. The variable must be a clean origin (scheme and host only; no path, credentials, query or fragment). If it is absent, CI deliberately falls back to `https://jerry-backend.invalid`; that APK is a build-verification artifact, not a connected release APK. The workflow validates the origin before building. After setting the variable, rebuild and verify Firebase owner authentication, database migrations, emergency-stop behavior and provider configuration against that deployment. Never put provider credentials or owner UID values in Vite variables or APK assets.
 
 
+## Cloud backend container
+
+The repository now includes a multi-stage `Dockerfile` for the production API and bundled web UI. The image runs `bun server.ts` with `NODE_ENV=production`; it does not contain a provider key, Firebase service-account key, owner UID, database password, or backend origin. `.dockerignore` excludes local environment files, Git history, Android outputs, and build artifacts from the build context.
+
+Release sequence (run only after selecting and authorizing a hosting environment):
+
+1. Build the image with `docker build -t jerry-backend .`.
+2. Provision a PostgreSQL database and configure the application secrets/environment variables in the hosting platform's secret manager.
+3. Run the migration command once as a release job using the exact same image and production database configuration: `bun run db:migrate`.
+4. Start the application container with the same database and authentication configuration. Do not run schema migrations concurrently from every replica.
+5. Verify owner-only Firebase authentication, database readiness, shared emergency-stop state, provider budgets, and API smoke tests before configuring the Android backend origin.
+6. Set the non-secret GitHub Actions repository variable `JERRY_BACKEND_ORIGIN` to the verified HTTPS origin and rebuild the Android APK.
+
+Required production configuration includes `JERRY_OWNER_UID`, Firebase Admin Application Default Credentials (prefer the hosting platform's workload identity; otherwise use a secret-mounted credentials file), PostgreSQL connection variables (`SQL_HOST`, `SQL_USER`, `SQL_PASSWORD`, `SQL_DB_NAME`), and the explicitly approved provider/budget settings. Never bake credentials into the container image or Vite/Android assets.
+
+This adds reproducible packaging only. No cloud provider has been selected, no database has been provisioned, no secrets have been configured, and no production deployment has occurred. Hosting costs and production deployment require explicit owner approval.
+
 ## Jerry Brain model providers
 
 The authenticated chat route `POST /api/jerry/chat` and the provider-neutral generation route `POST /api/brain/generate` use server-side model adapters. They do not expose provider credentials to the browser or Android APK.
