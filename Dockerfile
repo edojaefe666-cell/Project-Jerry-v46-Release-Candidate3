@@ -26,4 +26,9 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/firebase-applet-config.json ./firebase-applet-config.json
 
 EXPOSE 3000
+
+# Readiness includes owner-only production configuration, PostgreSQL, applied
+# migration registry, and the durable shared execution-control record.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 CMD ["bun", "-e", "const port = process.env.PORT || '3000'; const response = await fetch('http://127.0.0.1:' + port + '/readyz'); if (!response.ok) process.exit(1)"]
+
 CMD ["bun", "server.ts"]
