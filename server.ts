@@ -195,6 +195,39 @@ async function generateDirectGeminiWithBudget<T extends {
 async function startServer() {
   const app = express();
 
+  // Liveness is intentionally independent of PostgreSQL so an orchestrator
+  // can distinguish a running process from a dependency-readiness failure.
+  app.get('/healthz', (_req, res) => {
+    res.status(200).json({ status: 'ok' });
+  });
+
+  // Readiness is deliberately non-diagnostic: never disclose database,
+  // owner UID, migration, or emergency-control details to unauthenticated
+  // callers. A production instance is not ready until owner auth is pinned,
+  // PostgreSQL is reachable, migrations have been initialized, and the
+  // durable shared execution-control row can be read.
+  app.get('/readyz', async (_req, res) => {
+    try {
+      if (process.env.NODE_ENV === 'production' && !process.env.JERRY_OWNER_UID?.trim()) {
+        res.status(503).json({ status: 'not_ready' });
+        return;
+      }
+      await db.execute(sql`SELECT 1`);
+      const migrationRegistry = await db.execute(sql`
+        SELECT to_regclass('public.app_sql_migrations') AS migration_table
+      `);
+      const migrationTable = (migrationRegistry.rows[0] as { migration_table?: string | null } | undefined)?.migration_table;
+      if (!migrationTable) {
+        res.status(503).json({ status: 'not_ready' });
+        return;
+      }
+      await readSharedExecutionControl();
+      res.status(200).json({ status: 'ready' });
+    } catch {
+      res.status(503).json({ status: 'not_ready' });
+    }
+  });
+
   // Baseline HTTP hardening. Jerry is a same-origin application; CORS is
   // deliberately not opened globally. These headers reduce browser-side
   // attack surface without requiring an additional runtime dependency.
