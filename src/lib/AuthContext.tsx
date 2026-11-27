@@ -18,7 +18,7 @@ import { auth, googleAuthProvider } from './firebase';
 
 declare global {
   interface Window {
-    JerryNativeAuth?: { signInWithGoogle: () => void };
+    JerryNativeAuth?: { postMessage: (message: string) => void };
   }
 }
 
@@ -95,9 +95,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signInWithGoogle = useCallback(async () => {
     setAuthError(null);
-    if (window.JerryNativeAuth?.signInWithGoogle) {
+    if (window.JerryNativeAuth?.postMessage) {
       try {
-        window.JerryNativeAuth.signInWithGoogle();
+        window.JerryNativeAuth.postMessage('signInWithGoogle');
       } catch {
         setAuthError('Android Google sign-in could not be started.');
       }
