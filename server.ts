@@ -16,7 +16,7 @@ import { adminAuth } from './src/lib/firebase-admin.ts';
 import { SecurityStore } from './src/lib/securityStore.ts';
 import { ExecutionRegistry } from './src/lib/executionRegistry.ts';
 import { db } from './src/db/index.ts';
-import { readSharedExecutionControl, updateSharedExecutionControl } from './src/db/executionControl.ts';
+import { readSharedExecutionControl, updateSharedExecutionControl, withSharedExecutionLease } from './src/db/executionControl.ts';
 import { ensureWalletTransactionJournaled } from './src/db/walletJournal.ts';
 import { drainWalletJournalOutbox } from './src/db/walletJournalOutbox.ts';
 import { saveMemoryEntryForUser, searchMemoryForUser } from './src/db/memoryStore.ts';
@@ -761,7 +761,7 @@ async function startServer() {
       }
       const payload = { kind: input.kind, subjectId: input.subjectId.trim(), title: input.title.trim(), reason: input.reason.trim() };
       const command = `approval-create:${JSON.stringify(payload)}`;
-      const result = await runIdempotentWorkspaceCommand(uid, email, key, command, async (current) => {
+      const result = await withSharedExecutionLease(() => runIdempotentWorkspaceCommand(uid, email, key, command, async (current) => {
         const subjectExists = payload.kind === 'autonomous_task'
           ? current.tasks.some((item) => item.id === payload.subjectId)
           : payload.kind === 'self_upgrade'
@@ -795,7 +795,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/approvals/:id/decision', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/approvals/:id/decision', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -807,7 +807,7 @@ async function startServer() {
       }
       const key = String(req.header('Idempotency-Key') ?? '').trim();
       if (!key) { res.status(400).json({ error: 'Idempotency-Key header is required.' }); return; }
-      const result = await runIdempotentWorkspaceCommand(uid, email, key, `approval-decision:${approvalId}:${decision}`, async (current) => {
+      const result = await withSharedExecutionLease(() => runIdempotentWorkspaceCommand(uid, email, key, `approval-decision:${approvalId}:${decision}`, async (current) => {
         const approvals = current.approvals ?? [];
         const target = approvals.find((item) => item.id === approvalId);
         if (!target) throw new Error('Approval request not found.');
@@ -834,7 +834,7 @@ async function startServer() {
         const selfUpgrades = (current.selfUpgrades ?? []).map((upgrade) => target.kind === 'self_upgrade' && upgrade.id === target.subjectId ? { ...upgrade, approvalStatus: decision === 'approved' ? 'approved' as const : 'rejected' as const } : upgrade);
         const state = { ...current, approvals: updatedApprovals, transactions, tasks, selfUpgrades };
         return { state, response: { approval: state.approvals.find((item) => item.id === approvalId), state } };
-      });
+      }));
       res.json({ ...result.response, replayed: result.replayed });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to resolve approval.';
@@ -917,7 +917,8 @@ async function startServer() {
         settlementMode: 'on_chain', approvalId: approval.id,
       };
       const command = `wallet-record-income:${JSON.stringify({ amount: input.amount, counterparty: input.counterparty, note: input.note, txHash: cleanHash ?? null, asset: 'BTC', network: 'Bitcoin Mainnet' })}`;
-      const result = await runIdempotentWorkspaceCommand(uid, email, key, command, async (current) => {
+      const result = await withSharedExecutionLease(async () => {
+        const commandResult = await runIdempotentWorkspaceCommand(uid, email, key, command, async (current) => {
         const currentReceivingAddresses = (current.walletAssets ?? [])
           .filter((asset) => asset.symbol === 'BTC' && asset.network === 'Bitcoin Mainnet' && typeof asset.address === 'string')
           .map((asset) => asset.address!.trim());
@@ -929,7 +930,7 @@ async function startServer() {
         }
         const state = { ...current, approvals: [approval, ...(current.approvals ?? [])], transactions: [tx, ...(current.transactions ?? [])] };
         return { state, response: { transaction: tx, approval, state } };
-      });
+      }));
       res.status(result.replayed ? 200 : 201).json({ ...result.response, replayed: result.replayed });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to submit settlement evidence.';
@@ -990,15 +991,17 @@ async function startServer() {
         };
         const state = { ...current, transactions: [submitted, ...(current.transactions ?? [])] };
         return { state, response: { transaction: submitted, approval, state } };
+        });
+        databaseCommitted = true;
+        const finalizedApproval = securityStore.finalizeApprovalReservation(approvalId, uid, reservationId);
+        if (!finalizedApproval) {
+          throw new Error('Transfer is durably recorded but its approval finalization is pending; retry the same idempotency key.');
+        }
+        return { ...commandResult, finalizedApproval };
       });
-      databaseCommitted = true;
       // Finalize the SQLite authorization only after PostgreSQL has durably committed
       // the idempotent transfer command. Replays also retry finalization after a crash.
-      const finalizedApproval = securityStore.finalizeApprovalReservation(approvalId, uid, reservationId);
-      if (!finalizedApproval) {
-        throw new Error('Transfer is durably recorded but its approval finalization is pending; retry the same idempotency key.');
-      }
-      res.status(result.replayed ? 200 : 201).json({ ...result.response, approval: finalizedApproval, replayed: result.replayed });
+      res.status(result.replayed ? 200 : 201).json({ ...result.response, approval: result.finalizedApproval, replayed: result.replayed });
     } catch (error) {
       if (approvalReserved && !databaseCommitted) securityStore.releaseApprovalReservation(approvalId, req.user!.uid, reservationId);
       console.error('Internal server error:', error);
@@ -1238,7 +1241,8 @@ async function startServer() {
 
       const key = String(req.header('Idempotency-Key') ?? '').trim();
       if (!key) { res.status(400).json({ error: 'Idempotency-Key header is required.' }); return; }
-      const result = await runIdempotentWorkspaceCommand(uid, email, key, `wallet-reconcile:${txId}:${cleanHash}`, (state) => {
+      const result = await withSharedExecutionLease(async () => {
+        const commandResult = await runIdempotentWorkspaceCommand(uid, email, key, `wallet-reconcile:${txId}:${cleanHash}`, (state) => {
         const latest = (state.transactions ?? []).find((item) => item.id === txId);
         if (!latest || latest.txHash?.toLowerCase() !== cleanHash) throw new Error('Transaction changed during reconciliation; retry with a fresh request.');
         const latestWasFinal = Boolean(latest.isVerifiedOnChain && latest.verifiedBlockHeight && latest.verifiedBlockHash);
@@ -1281,9 +1285,11 @@ async function startServer() {
           blockHeight: chainTx.block_height,
           blockHash: chainTx.block_hash,
         } };
+        });
+        const journal = await ensureWalletTransactionJournaled(uid, commandResult.response.transaction);
+        return { ...commandResult, journal };
       });
-      const journal = await ensureWalletTransactionJournaled(uid, result.response.transaction);
-      res.json({ ...result.response, journal, replayed: result.replayed });
+      res.json({ ...result.response, journal: result.journal, replayed: result.replayed });
     } catch (error) {
       console.error('Internal server error:', error);
       res.status(500).json({ error: 'Internal server error.' });
