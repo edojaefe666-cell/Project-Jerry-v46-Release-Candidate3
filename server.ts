@@ -14,6 +14,10 @@ import { resolveSettlementApprovalStatus } from './src/lib/settlementApproval.ts
 import { requireAuth, type AuthRequest } from './src/middleware/auth.ts';
 import { adminAuth } from './src/lib/firebase-admin.ts';
 import { SecurityStore } from './src/lib/securityStore.ts';
+import {
+  createSharedApproval, listSharedApprovals, decideSharedApproval,
+  reserveSharedApproval, finalizeSharedApprovalReservation, releaseSharedApprovalReservation,
+} from './src/db/approvalStore.ts';
 import { synchronizeLocalEmergencyControl } from './src/lib/emergencyStopSync.ts';
 import { ExecutionRegistry } from './src/lib/executionRegistry.ts';
 import { db } from './src/db/index.ts';
