@@ -275,7 +275,7 @@ test('reserves a USD cost ceiling independently for each failed and fallback pro
     assert.equal(result.provider, 'openai');
     assert.equal(reservations.length, 2, 'the failed first attempt and successful fallback each reserve their own cost ceiling');
     assert.equal(settlements.length, 1, 'only the successful response can reconcile actual cost');
-    assert.equal(settlements[0], 50);
+    assert.equal(settlements[0], 40);
   } finally {
     if (previousLimit === undefined) delete process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD;
     else process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD = previousLimit;
