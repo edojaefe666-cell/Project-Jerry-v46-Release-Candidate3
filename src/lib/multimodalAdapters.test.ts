@@ -8,6 +8,21 @@ process.env.JERRY_PAID_SERVICES_ENABLED = '1';
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 const image = { prompt: 'Read this image', mimeType: 'image/png', base64Data: 'aGVsbG8=', configuration: { google: { apiKey: 'g-key', model: 'gemini-test' } } };
 
+test('does not send multimodal requests while pre-revenue spending is disabled', async () => {
+  const previous = process.env.JERRY_PAID_SERVICES_ENABLED;
+  let called = false;
+  try {
+    process.env.JERRY_PAID_SERVICES_ENABLED = '0';
+    await assert.rejects(() => analyzeImageWithModelFallback({
+      ...image,
+      fetchImpl: async () => { called = true; return response({}); },
+    }), /Hosted provider spending is disabled/);
+    assert.equal(called, false);
+  } finally {
+    process.env.JERRY_PAID_SERVICES_ENABLED = previous ?? '1';
+  }
+});
+
 test('sends image bytes to Google using a server-side API key header', async () => {
   let url = '';
   let headers: HeadersInit | undefined;
