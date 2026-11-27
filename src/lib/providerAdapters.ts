@@ -2,6 +2,7 @@ import { resolveModelRoute, type ModelProvider, type ModelTask, type ProviderCon
 import { reserveProviderTokens, settleProviderTokens, type ProviderUsageReservation } from '../db/providerUsageStore.ts';
 import { reserveConfiguredProviderOperation } from '../db/providerOperationStore.ts';
 import { withSharedExecutionLease } from '../db/executionControl.ts';
+import { assertHostedProviderSpendEnabled } from './providerSpendPolicy.ts';
 import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, type ProviderCostReservation, type ProviderModelPricing } from '../db/providerCostStore.ts';
 
 export interface ModelGenerationResult {
@@ -166,6 +167,7 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
   const failures: string[] = [];
   for (const route of routes) {
     if (options.signal?.aborted) throw new Error('Jerry Brain request cancelled by emergency stop or client disconnect.');
+    if (route.provider !== 'local') assertHostedProviderSpendEnabled(`${route.provider}/${route.model}`);
     try {
       const executeAttempt = async (): Promise<ModelGenerationResult> => {
         let reservation: ProviderUsageReservation | undefined;
