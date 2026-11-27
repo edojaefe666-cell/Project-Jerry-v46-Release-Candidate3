@@ -100,3 +100,19 @@ test('transcription rejects invalid media and malformed audio without network ac
   }), /Invalid or oversized/);
   assert.equal(called, false);
 });
+
+test('vision cancellation aborts active provider and prevents fallback', async () => {
+ const controller=new AbortController();let calls=0;const fetchImpl:typeof fetch=async(_i,init)=>{calls++;return await new Promise<Response>((_r,reject)=>init?.signal?.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));};
+ const pending=analyzeImageWithModelFallback({...image,signal:controller.signal,configuration:{google:{apiKey:'g-key'},openai:{apiKey:'o-key'}},fetchImpl});
+ await new Promise(resolve=>setImmediate(resolve));controller.abort(new Error('owner stop'));await assert.rejects(pending,/owner stop/);assert.equal(calls,1);
+});
+test('speech cancellation aborts active provider and prevents fallback', async () => {
+ const controller=new AbortController();let calls=0;const fetchImpl:typeof fetch=async(_i,init)=>{calls++;return await new Promise<Response>((_r,reject)=>init?.signal?.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));};
+ const pending=synthesizeSpeechWithModelFallback({text:'hello',signal:controller.signal,configuration:{openai:{apiKey:'o-key'},google:{apiKey:'g-key'}},fetchImpl});
+ await new Promise(resolve=>setImmediate(resolve));controller.abort(new Error('owner stop'));await assert.rejects(pending,/owner stop/);assert.equal(calls,1);
+});
+test('transcription cancellation aborts active provider and prevents fallback', async () => {
+ const controller=new AbortController();let calls=0;const fetchImpl:typeof fetch=async(_i,init)=>{calls++;return await new Promise<Response>((_r,reject)=>init?.signal?.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));};
+ const pending=transcribeAudioWithModelFallback({audioBase64:'AQIDBA==',mimeType:'audio/webm',signal:controller.signal,configuration:{google:{apiKey:'g-key'},openai:{apiKey:'o-key'}},fetchImpl});
+ await new Promise(resolve=>setImmediate(resolve));controller.abort(new Error('owner stop'));await assert.rejects(pending,/owner stop/);assert.equal(calls,1);
+});
