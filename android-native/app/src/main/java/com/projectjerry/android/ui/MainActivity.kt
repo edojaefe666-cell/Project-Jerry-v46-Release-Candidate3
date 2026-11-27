@@ -140,7 +140,8 @@ class MainActivity : AppCompatActivity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
-            settings.allowContentAccess = true
+            // The app loads bundled assets through WebViewAssetLoader; content:// access is unnecessary.
+            settings.allowContentAccess = false
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             settings.javaScriptCanOpenWindowsAutomatically = false
             settings.setSupportMultipleWindows(false)
@@ -188,7 +189,9 @@ class MainActivity : AppCompatActivity() {
                     request: android.webkit.WebResourceRequest
                 ): Boolean {
                     val uri = request.url
-                    if (uri.scheme == "https" && uri.host == "localhost") return false
+                    val trustedLocalOrigin = uri.scheme == "https" &&
+                        uri.host == "localhost" && (uri.port == -1 || uri.port == 443)
+                    if (trustedLocalOrigin) return false
                     if (uri.scheme == "https") {
                         startActivity(Intent(Intent.ACTION_VIEW, uri))
                     }
