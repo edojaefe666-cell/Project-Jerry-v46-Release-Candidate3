@@ -148,3 +148,24 @@ export async function getNativeDeviceMemoryExchangePublicKey(): Promise<DeviceSi
 export async function deleteNativeDeviceMemoryExchangeKey(): Promise<void> {
   await requestNative<NativeBridgeReply>('deleteDeviceMemoryExchangeKey');
 }
+
+/**
+ * Installs a server-delivered owner/device/key-version-bound envelope.
+ * Android performs ECDH, HKDF and AES-GCM natively; raw data-key bytes never
+ * cross the WebView bridge. The caller must obtain the envelope through the
+ * authenticated owner/device key-envelope API first.
+ */
+export async function unwrapNativeDeviceMemoryKeyEnvelope(
+  envelope: DeviceKeyEnvelope,
+  expectedContext: { ownerUid: string; deviceId: string; keyVersion: number },
+): Promise<void> {
+  const reply = await requestNative<NativeBridgeReply>('unwrapDeviceMemoryKeyEnvelope', {
+    envelope,
+    ownerUid: expectedContext.ownerUid,
+    deviceId: expectedContext.deviceId,
+    keyVersion: expectedContext.keyVersion,
+  });
+  if (reply.installed !== true) {
+    throw new Error('Android did not confirm protected memory-key installation.');
+  }
+}
