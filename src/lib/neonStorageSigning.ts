@@ -8,7 +8,7 @@ export type NeonStorageSigningEnvironment = {
 };
 
 export type PresignedStorageRequest = {
-  method: 'GET' | 'PUT';
+  method: 'GET' | 'PUT' | 'DELETE';
   bucket: string;
   objectKey: string;
   expiresInSeconds?: number;
@@ -43,7 +43,7 @@ function validateObjectKey(key: string): void {
 export function createNeonStoragePresignedUrl(
   request: PresignedStorageRequest,
   environment: NeonStorageSigningEnvironment = process.env,
-): { url: string; method: 'GET' | 'PUT'; headers: Record<string, string>; expiresAt: string } {
+): { url: string; method: 'GET' | 'PUT' | 'DELETE'; headers: Record<string, string>; expiresAt: string } {
   const accessKeyId = environment.AWS_ACCESS_KEY_ID?.trim();
   const secretAccessKey = environment.AWS_SECRET_ACCESS_KEY?.trim();
   const endpointValue = environment.AWS_ENDPOINT_URL_S3?.trim();
@@ -63,6 +63,9 @@ export function createNeonStoragePresignedUrl(
   }
   if (request.method === 'PUT' && (!request.contentType || request.contentType.length > 128)) {
     throw new Error('A valid content type is required for storage uploads.');
+  }
+  if (request.method !== 'PUT' && request.contentType) {
+    throw new Error('Content type is only permitted for storage uploads.');
   }
   if (request.contentType && /[\r\n]/.test(request.contentType)) {
     throw new Error('Storage content type is invalid.');
