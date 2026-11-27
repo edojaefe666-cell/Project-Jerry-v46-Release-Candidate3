@@ -465,7 +465,7 @@ class MainActivity : AppCompatActivity() {
                                 if (deviceRevocation) {
                                     "Jerry is requesting to revoke trusted device registration " +
                                         targetPath.removePrefix("/api/devices/").removeSuffix("/revoke") +
-                                        ". Its future signed requests and key-envelope access will be blocked. Encrypted memory records will be preserved. Only continue if you initiated this action."
+                                        ". Its future signed requests and key-envelope access will be blocked. Encrypted memory records will be preserved. This cannot remotely erase data or keys already on that device. Only continue if you initiated this action."
                                 } else {
                                     "Jerry is requesting to " + method + " encrypted memory.\\n\\n" +
                                         "Target: " + targetPath + "\\n\\n" +
