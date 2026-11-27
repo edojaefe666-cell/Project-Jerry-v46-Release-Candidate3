@@ -123,6 +123,7 @@ export const deviceRegistrations = pgTable('device_registrations', {
   deviceName: text('device_name').notNull(),
   platform: text('platform').notNull(),
   exchangePublicKey: jsonb('exchange_public_key').notNull(),
+  signingPublicKey: jsonb('signing_public_key'),
   status: text('status').notNull().default('pending'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   approvedAt: timestamp('approved_at', { withTimezone: true }),
@@ -132,6 +133,17 @@ export const deviceRegistrations = pgTable('device_registrations', {
   ownerDeviceUnique: uniqueIndex('device_registrations_owner_device_unique').on(table.userId, table.deviceId),
   ownerCreatedIndex: index('device_registrations_owner_created_idx').on(table.userId, table.createdAt),
 }));
+
+export const deviceApprovalChallenges = pgTable('device_approval_challenges', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  approverRegistrationId: text('approver_registration_id').references(() => deviceRegistrations.id, { onDelete: 'cascade' }).notNull(),
+  targetRegistrationId: text('target_registration_id').references(() => deviceRegistrations.id, { onDelete: 'cascade' }).notNull(),
+  nonce: text('nonce').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const memoryEntries = pgTable('memory_entries', {
   id: text('id').primaryKey(),

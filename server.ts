@@ -34,6 +34,13 @@ import { generateWithModelFallback, providerConfigurationFromEnvironment } from 
 import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
+import { requestDeviceRegistrationForUser, listDeviceRegistrationsForUser } from './src/db/deviceRegistrationStore.ts';
+import {
+  createDeviceApprovalChallengeForUser,
+  getDeviceApprovalChallengeForUser,
+  consumeDeviceApprovalChallengeAndApproveForUser,
+} from './src/db/deviceApprovalChallengeStore.ts';
+import { verifyDeviceApprovalProof } from './src/lib/deviceApprovalSigningProof.ts';
 import { reserveConfiguredProviderOperation } from './src/db/providerOperationStore.ts';
 import { reserveProviderTokens, settleProviderTokens, getProviderUsageAudit, type ProviderUsageReservation } from './src/db/providerUsageStore.ts';
 import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, getProviderCostAudit, type ProviderCostReservation } from './src/db/providerCostStore.ts';
@@ -227,7 +234,7 @@ async function startServer() {
       }
       const latestMigration = await db.execute(sql`
         SELECT 1 FROM app_sql_migrations
-        WHERE migration_name = '0017_provider_token_reservations.sql'
+        WHERE migration_name = '0021_device_approval_challenges.sql'
         LIMIT 1
       `);
       if (latestMigration.rows.length !== 1) {
@@ -446,6 +453,89 @@ async function startServer() {
       }
     },
   );
+
+  const deviceApprovalRateLimit = createSharedOwnerRateLimiter('device-approval', 8, 60_000);
+
+  // Device enrollment is owner-scoped. New devices always remain pending until
+  // an already-active device proves possession of its separate ECDSA signing key.
+  app.get('/api/devices', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const devices = await listDeviceRegistrationsForUser(
+        req.user!.uid, req.user!.email ?? 'owner@jerry.local',
+      );
+      res.json({ devices });
+    } catch {
+      res.status(503).json({ error: 'Device registrations are unavailable.' });
+    }
+  });
+
+  app.post('/api/devices/register', requireAuth, requireExecutionEnabled, deviceApprovalRateLimit, async (req: AuthRequest, res) => {
+    try {
+      const registration = await withSharedExecutionLease(() => requestDeviceRegistrationForUser(
+        req.user!.uid,
+        req.user!.email ?? 'owner@jerry.local',
+        req.body as Parameters<typeof requestDeviceRegistrationForUser>[2],
+      ));
+      res.status(201).json({ registration });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Device registration was rejected.' });
+    }
+  });
+
+  app.post('/api/devices/:registrationId/approval-challenge', requireAuth, requireExecutionEnabled, deviceApprovalRateLimit, async (req: AuthRequest, res) => {
+    try {
+      const approverDeviceId = (req.body as { approverDeviceId?: unknown })?.approverDeviceId;
+      if (typeof approverDeviceId !== 'string') {
+        res.status(400).json({ error: 'An enrolled approver device ID is required.' });
+        return;
+      }
+      const challenge = await withSharedExecutionLease(() => createDeviceApprovalChallengeForUser(
+        req.user!.uid,
+        req.user!.email ?? 'owner@jerry.local',
+        approverDeviceId,
+        req.params.registrationId,
+      ));
+      res.status(201).json({ challenge });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to create device approval challenge.' });
+    }
+  });
+
+  app.post('/api/devices/approval/complete', requireAuth, requireExecutionEnabled, deviceApprovalRateLimit, async (req: AuthRequest, res) => {
+    try {
+      const body = req.body as { challengeId?: unknown; signature?: unknown };
+      if (typeof body?.challengeId !== 'string' || typeof body.signature !== 'string') {
+        res.status(400).json({ error: 'A challenge ID and ECDSA signature are required.' });
+        return;
+      }
+      const ownerUid = req.user!.uid;
+      const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+      const challenge = await getDeviceApprovalChallengeForUser(ownerUid, ownerEmail, body.challengeId);
+      if (!challenge || !challenge.approverSigningPublicKey) {
+        res.status(409).json({ error: 'Approval challenge is missing, expired, consumed, or no longer valid.' });
+        return;
+      }
+      const verified = await verifyDeviceApprovalProof(
+        challenge,
+        { challengeId: body.challengeId, signature: body.signature },
+        challenge.approverSigningPublicKey,
+      );
+      if (!verified) {
+        res.status(403).json({ error: 'The active device signing proof is invalid.' });
+        return;
+      }
+      const approved = await withSharedExecutionLease(() =>
+        consumeDeviceApprovalChallengeAndApproveForUser(ownerUid, ownerEmail, body.challengeId as string),
+      );
+      if (!approved) {
+        res.status(409).json({ error: 'The challenge was already consumed or device state changed.' });
+        return;
+      }
+      res.json({ approved: true });
+    } catch {
+      res.status(503).json({ error: 'Secure device approval is unavailable; no device was activated.' });
+    }
+  });
 
   app.get('/api/storage/files', requireAuth, async (req: AuthRequest, res) => {
     try {
