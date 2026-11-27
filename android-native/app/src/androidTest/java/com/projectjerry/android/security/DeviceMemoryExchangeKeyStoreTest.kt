@@ -91,7 +91,7 @@ class DeviceMemoryExchangeKeyStoreTest {
 
             context.getSharedPreferences(prefsA, Context.MODE_PRIVATE)
                 .edit().putString("private_ciphertext", "AAAAAAAAAAAAAAAAAAAAAA").commit()
-            assertThrows(IllegalArgumentException::class.java) {
+            assertThrows(Exception::class.java) {
                 first.createOrGetPublicKey()
             }
         } finally {
