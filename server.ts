@@ -493,6 +493,7 @@ async function startServer() {
     req: RawBodyAuthRequest,
     res: express.Response,
     operation: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0], ownerId: number) => Promise<unknown>,
+    serializeOwnerFirst = false,
   ): Promise<void> => {
     const challengeId = req.header('x-jerry-challenge-id') ?? '';
     const signature = req.header('x-jerry-device-signature') ?? '';
@@ -527,7 +528,7 @@ async function startServer() {
           const [owner] = await tx.select({ id: users.id }).from(users).where(eq(users.uid, ownerUid)).limit(1);
           if (!owner) throw new Error('Owner account is unavailable.');
           return operation(tx, owner.id);
-        }),
+        }, serializeOwnerFirst),
       );
       if (result === null) {
         res.status(409).json({ error: 'Device request challenge was already used, expired, or revoked.' });
@@ -661,6 +662,80 @@ async function startServer() {
         createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
       })) };
     });
+  });
+
+  // Device revocation is a signed, owner-confirmed command. It retains records
+  // and challenge evidence, but atomically blocks the target device and its
+  // key envelopes. The last active device and the authorizing device cannot
+  // revoke themselves through this path.
+  app.post('/api/devices/:registrationId/revoke', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    const body = req.body as Record<string, unknown> | undefined;
+    const targetRegistrationId = req.params.registrationId;
+    if (!body || Object.keys(body).length !== 0 ||
+        !/^[A-Za-z0-9_-]{16,128}$/.test(targetRegistrationId)) {
+      res.status(400).json({ error: 'A valid device registration target and empty command body are required.' });
+      return;
+    }
+    const ownerUid = req.user!.uid;
+    const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+    const challengeId = req.header('x-jerry-challenge-id') ?? '';
+    const proofChallenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
+    if (!proofChallenge || proofChallenge.method !== 'POST' ||
+        proofChallenge.path !== `/api/devices/${targetRegistrationId}/revoke` ||
+        proofChallenge.deviceId.length < 16) {
+      res.status(403).json({ error: 'An active trusted-device signature is required.' });
+      return;
+    }
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      // Serialize all revocations for this owner so two concurrent requests
+      // cannot each observe two active devices and revoke both.
+      const [owner] = await tx.select({ id: users.id }).from(users)
+        .where(eq(users.uid, ownerUid)).limit(1).for('update');
+      if (!owner || owner.id !== ownerId) throw new Error('Owner account is unavailable.');
+      const [target] = await tx.select().from(deviceRegistrations)
+        .where(and(
+          eq(deviceRegistrations.userId, ownerId),
+          eq(deviceRegistrations.id, targetRegistrationId),
+          eq(deviceRegistrations.status, 'active'),
+        )).limit(1).for('update');
+      if (!target) throw new Error('The selected device is not active or does not belong to this owner.');
+      const [authorizer] = await tx.select({ id: deviceRegistrations.id }).from(deviceRegistrations)
+        .where(and(
+          eq(deviceRegistrations.userId, ownerId),
+          eq(deviceRegistrations.deviceId, proofChallenge.deviceId),
+          eq(deviceRegistrations.status, 'active'),
+        )).limit(1);
+      if (!authorizer) throw new Error('The authorizing device is no longer active.');
+      if (target.id === authorizer.id) throw new Error('Use another trusted device to revoke this phone.');
+      const active = await tx.select({ id: deviceRegistrations.id }).from(deviceRegistrations)
+        .where(and(eq(deviceRegistrations.userId, ownerId), eq(deviceRegistrations.status, 'active')));
+      if (active.length <= 1) throw new Error('Jerry will not revoke the last active owner device.');
+      const revokedAt = new Date();
+      const [revoked] = await tx.update(deviceRegistrations)
+        .set({ status: 'revoked', revokedAt })
+        .where(and(
+          eq(deviceRegistrations.userId, ownerId),
+          eq(deviceRegistrations.id, target.id),
+          eq(deviceRegistrations.status, 'active'),
+        )).returning({ id: deviceRegistrations.id, deviceName: deviceRegistrations.deviceName });
+      if (!revoked) throw new Error('Device state changed before revocation could be committed.');
+      const revokedEnvelopes = await tx.update(deviceMemoryKeyEnvelopes)
+        .set({ status: 'revoked', revokedAt })
+        .where(and(
+          eq(deviceMemoryKeyEnvelopes.userId, ownerId),
+          eq(deviceMemoryKeyEnvelopes.deviceRegistrationId, target.id),
+          eq(deviceMemoryKeyEnvelopes.status, 'active'),
+        )).returning({ id: deviceMemoryKeyEnvelopes.id });
+      // Outstanding challenges become unusable immediately because every
+      // challenge lookup and consumption joins the registry and requires
+      // status='active'. Keep the rows as revocation evidence until expiry.
+      return {
+        revoked: true,
+        deviceName: revoked.deviceName,
+        revokedKeyEnvelopeCount: revokedEnvelopes.length,
+        recordsPreserved: true,
+      };
+    }, true);
   });
 
   app.post('/api/memory/encrypted', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {

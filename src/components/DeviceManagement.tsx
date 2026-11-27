@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, KeyRound, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 import { apiJson } from '../lib/apiClient';
 import { useAuth } from '../lib/AuthContext';
-import { fetchAndInstallDeviceMemoryKeyEnvelope, isAndroidMemoryKeyInstalled, shareAndroidMemoryKeyWithApprovedDevice } from '../lib/encryptedMemoryApi';
+import { fetchAndInstallDeviceMemoryKeyEnvelope, isAndroidMemoryKeyInstalled, revokeApprovedJerryDevice, shareAndroidMemoryKeyWithApprovedDevice } from '../lib/encryptedMemoryApi';
 import { bootstrapFirstJerryOwnerDevice, requestAndroidDeviceEnrollment, approvePendingJerryDevice } from '../lib/deviceEnrollmentApi';
 import { getOrCreateJerryDeviceId } from '../lib/deviceIdentity';
 
@@ -30,6 +30,7 @@ export function DeviceManagement() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState('Jerry Android phone');
+  const [confirmRevokeDeviceId, setConfirmRevokeDeviceId] = useState<string | null>(null);
   const { user } = useAuth();
 
   const currentDeviceId = useMemo(() => {
@@ -129,6 +130,20 @@ export function DeviceManagement() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Memory-key sharing failed.'); }
     finally { setBusy(false); }
   };
+  const revokeDevice = async (target: DeviceRecord) => {
+    if (!currentRecord || currentRecord.status !== 'active' || target.status !== 'active' ||
+        target.deviceId === currentDeviceId || !nativeAvailable) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      const result = await revokeApprovedJerryDevice(target.id);
+      setConfirmRevokeDeviceId(null);
+      setMessage(`${result.deviceName} was revoked. ${result.revokedKeyEnvelopeCount} key envelope(s) were disabled; encrypted memory records were preserved.`);
+      await loadDevices();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Device revocation failed.');
+    } finally { setBusy(false); }
+  };
+
   const pendingDevices = devices.filter((device) => device.status === 'pending' && device.deviceId !== currentDeviceId);
 
   return (
@@ -171,11 +186,20 @@ export function DeviceManagement() {
             {device.status === 'active' && <p className="mt-3 flex items-center gap-2 text-xs text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Owner-approved device</p>}
             {device.status === 'active' && device.deviceId === currentDeviceId && <button type="button" onClick={() => void restoreMemoryKey()} disabled={busy || !nativeAvailable || !user?.uid} className="mt-3 rounded-lg border border-cyan-500/40 px-3 py-2 text-xs font-semibold text-cyan-200 disabled:opacity-40">Restore encrypted-memory key to this phone</button>}
             {device.status === 'active' && device.deviceId !== currentDeviceId && currentRecord?.status === 'active' && <button type="button" onClick={() => void shareMemoryKey(device)} disabled={busy || !nativeAvailable || !user?.uid} className="mt-3 rounded-lg border border-cyan-500/40 px-3 py-2 text-xs font-semibold text-cyan-200 disabled:opacity-40">Share memory key to this approved device</button>}
+            {device.status === 'active' && device.deviceId !== currentDeviceId && currentRecord?.status === 'active' && <button type="button" onClick={() => setConfirmRevokeDeviceId(device.id)} disabled={busy || !nativeAvailable} className="mt-3 ml-2 rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-200 disabled:opacity-40">Revoke device</button>}
+            {confirmRevokeDeviceId === device.id && <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3">
+              <p className="text-xs font-semibold text-rose-100">Revoke {device.deviceName}?</p>
+              <p className="mt-1 text-xs text-rose-200">This blocks future server requests and disables this device's stored key envelopes. Encrypted memory records and revocation evidence are preserved. It cannot remotely erase data or keys already present on the other phone. This phone cannot revoke itself, and Jerry will not revoke the last active owner device.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" onClick={() => void revokeDevice(device)} disabled={busy || !nativeAvailable} className="rounded-lg bg-rose-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">{busy ? 'Revoking…' : 'Confirm revocation'}</button>
+                <button type="button" onClick={() => setConfirmRevokeDeviceId(null)} disabled={busy} className="rounded-lg border border-slate-600 px-3 py-2 text-xs text-slate-200">Cancel</button>
+              </div>
+            </div>}
           </article>
         ))}
       </div>
       {pendingDevices.length > 0 && !devices.some((device) => device.status === 'active' && device.deviceId === currentDeviceId) && <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">An already-active device is required to approve pending devices. This phone cannot approve itself.</p>}
-      <div className="rounded-lg border border-slate-800 p-4 text-xs text-slate-500"><KeyRound className="mr-2 inline h-4 w-4" />Memory-key sharing is a separate owner action. Android confirms the recipient before wrapping; recovery requires an envelope previously shared to this approved phone. Device revocation and key rotation remain separate protected operations.</div>
+      <div className="rounded-lg border border-slate-800 p-4 text-xs text-slate-500"><KeyRound className="mr-2 inline h-4 w-4" />Memory-key sharing is a separate owner action. Android confirms the recipient before wrapping; recovery requires an envelope previously shared to this approved phone. Key rotation remains a separate protected operation.</div>
     </section>
   );
 }
