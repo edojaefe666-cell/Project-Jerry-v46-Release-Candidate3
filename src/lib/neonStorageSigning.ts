@@ -78,7 +78,7 @@ export function createNeonStoragePresignedUrl(
     throw new Error('Neon storage endpoint must be a clean HTTPS URL.');
   }
   const endpointMatch = endpoint.hostname.match(
-    /^br-[a-z0-9-]+\\.storage\\.c-\\d+\\.([a-z0-9-]+)\\.aws\\.neon\\.tech$/,
+    /^br-[a-z0-9-]+\.storage\.c-\d+\.([a-z0-9-]+)\.aws\.neon\.tech$/,
   );
   if (!endpointMatch || endpointMatch[1] !== region || endpoint.port ||
       (endpoint.pathname !== '/' && endpoint.pathname !== '')) {
