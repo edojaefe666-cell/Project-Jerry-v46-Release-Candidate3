@@ -312,14 +312,14 @@ async function startServer() {
   // by Firebase UID and backed by the durable security store. Keep this boundary
   // separate from the financial Cloud SQL ledger so security records cannot leak
   // across Jerry owners.
-  app.get('/api/security/approvals', requireAuth, (req: AuthRequest, res) => {
+  app.get('/api/security/approvals', requireAuth, async (req: AuthRequest, res) => {
     const status = typeof req.query.status === 'string' && ['pending', 'approved', 'rejected'].includes(req.query.status)
       ? req.query.status as 'pending' | 'approved' | 'rejected'
       : undefined;
-    res.json({ approvals: securityStore.listApprovals(req.user!.uid, status) });
+    res.json({ approvals: await listSharedApprovals(req.user!.uid, status) });
   });
 
-  app.post('/api/security/approvals', requireAuth, (req: AuthRequest, res) => {
+  app.post('/api/security/approvals', requireAuth, async (req: AuthRequest, res) => {
     try {
       const body = req.body as { action?: string; summary?: string; amountUsd?: unknown; scope?: Record<string, unknown> };
       const actions = ['outgoing_payment', 'bitcoin_transfer', 'purchase', 'subscription', 'contract', 'financial_commitment', 'confidential_external_share', 'high_impact_change'] as const;
@@ -334,19 +334,19 @@ async function startServer() {
       if (amountUsd !== undefined && (!Number.isFinite(amountUsd) || amountUsd < 0)) {
         res.status(400).json({ error: 'amountUsd must be a non-negative finite number.' }); return;
       }
-      const approval = securityStore.createApproval({ action: body.action as typeof actions[number], summary, amountUsd, scope: body.scope, ownerUid: req.user!.uid });
+      const approval = await createSharedApproval({ action: body.action as typeof actions[number], summary, amountUsd, scope: body.scope, ownerUid: req.user!.uid });
       res.status(201).json({ approval });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to create approval.' });
     }
   });
 
-  app.post('/api/security/approvals/:id/decision', requireAuth, (req: AuthRequest, res) => {
+  app.post('/api/security/approvals/:id/decision', requireAuth, async (req: AuthRequest, res) => {
     const decision = (req.body as { decision?: string }).decision;
     if (decision !== 'approved' && decision !== 'rejected') {
       res.status(400).json({ error: 'Decision must be approved or rejected.' }); return;
     }
-    const approval = securityStore.decideApproval(req.params.id, decision, req.user!.uid);
+    const approval = await decideSharedApproval(req.params.id, decision, req.user!.uid);
     if (!approval) {
       res.status(409).json({ error: 'Approval is missing, already resolved, expired, or belongs to another owner.' }); return;
     }
@@ -738,7 +738,7 @@ async function startServer() {
     // Reserve the exact, owner-approved reset scope before touching workspace
     // data. A reservation prevents concurrent sessions or replay from reusing it.
     const reservationId = createHash('sha256').update(`${uid}:${approvalId}:workspace_reset`).digest('hex');
-    const approval = securityStore.reserveApproval(
+    const approval = await reserveSharedApproval(
       approvalId,
       'high_impact_change',
       uid,
@@ -771,7 +771,7 @@ async function startServer() {
           },
         );
         resetCommitted = true;
-        const consumed = securityStore.finalizeApprovalReservation(approvalId, uid, reservationId);
+        const consumed = await finalizeSharedApprovalReservation(approvalId, uid, reservationId);
         return { resetState: commandResult.response, consumed, replayed: commandResult.replayed };
       });
       if (!resetResult.consumed) {
@@ -781,7 +781,7 @@ async function startServer() {
       }
       res.json(resetResult.resetState);
     } catch (error) {
-      if (!resetCommitted) securityStore.releaseApprovalReservation(approvalId, uid, reservationId);
+      if (!resetCommitted) await releaseSharedApprovalReservation(approvalId, uid, reservationId);
       console.error('Internal server error:', error);
       res.status(500).json({ error: 'Internal server error.' });
     }
@@ -1088,7 +1088,7 @@ async function startServer() {
           throw new Error(`Insufficient authoritative spendable BTC balance after pending transfer reservations. Available: ${(Number(remainingSatoshis) / 100_000_000).toFixed(8)} BTC.`);
         }
 
-        const approval = securityStore.reserveApproval(approvalId, 'bitcoin_transfer', uid, reservationId, {
+        const approval = await reserveSharedApproval(approvalId, 'bitcoin_transfer', uid, reservationId, {
           asset: 'BTC', network: 'Bitcoin Mainnet', destination: counterparty, amount, fee,
         });
         if (!approval) {
@@ -1105,7 +1105,7 @@ async function startServer() {
         return { state, response: { transaction: submitted, approval, state } };
       });
         databaseCommitted = true;
-        const finalizedApproval = securityStore.finalizeApprovalReservation(approvalId, uid, reservationId);
+        const finalizedApproval = await finalizeSharedApprovalReservation(approvalId, uid, reservationId);
         if (!finalizedApproval) {
           throw new Error('Transfer is durably recorded but its approval finalization is pending; retry the same idempotency key.');
         }
@@ -1113,7 +1113,7 @@ async function startServer() {
       });
       res.status(result.replayed ? 200 : 201).json({ ...result.response, approval: result.finalizedApproval, replayed: result.replayed });
     } catch (error) {
-      if (approvalReserved && !databaseCommitted) securityStore.releaseApprovalReservation(approvalId, req.user!.uid, reservationId);
+      if (approvalReserved && !databaseCommitted) await releaseSharedApprovalReservation(approvalId, req.user!.uid, reservationId);
       console.error('Internal server error:', error);
       res.status(500).json({ error: 'Internal server error.' });
     }
