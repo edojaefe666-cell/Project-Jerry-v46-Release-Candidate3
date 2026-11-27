@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   android:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 40
     steps:
       - name: Check out source
@@ -148,7 +148,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -memory 2048 -cores 2
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -memory 4096 -cores 2 -wipe-data
           emulator-boot-timeout: 900
           disable-animations: true
           script: |
