@@ -1,4 +1,5 @@
 import { resolveModelRoute, type ModelProvider, type ModelTask, type ProviderConfiguration } from './modelRouter';
+import { reserveProviderTokens, settleProviderTokens, type ProviderUsageReservation } from '../db/providerUsageStore.ts';
 
 export interface ModelGenerationResult {
   text: string;
@@ -15,6 +16,7 @@ export interface ModelGenerationOptions {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
+  ownerUid?: string;
 }
 
 function safeLocalEndpoint(baseUrl: string): URL {
@@ -88,25 +90,27 @@ async function generateFromProvider(
   timeoutMs: number,
   fetchImpl: typeof fetch,
   signal?: AbortSignal
-): Promise<string> {
+): Promise<{ text: string; usageTokens?: number }> {
   if (provider === 'google') {
     const key = configuration.google?.apiKey;
     if (!key) throw new Error('Google provider is not configured.');
     const body = await requestJson(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}), contents: [{ role: 'user', parts: [{ text: prompt }] }] }) },
+      { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}), contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 2048 } }) },
       timeoutMs, fetchImpl, signal
     );
-    return extractText(provider, body);
+    const usage = Number(body.usageMetadata?.totalTokenCount);
+    return { text: extractText(provider, body), ...(Number.isSafeInteger(usage) && usage >= 0 ? { usageTokens: usage } : {}) };
   }
   if (provider === 'openai') {
     const key = configuration.openai?.apiKey;
     if (!key) throw new Error('OpenAI provider is not configured.');
     const body = await requestJson('https://api.openai.com/v1/chat/completions', {
       method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model, messages: [...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []), { role: 'user', content: prompt }] }),
+      body: JSON.stringify({ model, max_tokens: 2048, messages: [...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []), { role: 'user', content: prompt }] }),
     }, timeoutMs, fetchImpl, signal);
-    return extractText(provider, body);
+    const usage = Number(body.usage?.total_tokens ?? (Number(body.usage?.prompt_tokens) + Number(body.usage?.completion_tokens)));
+    return { text: extractText(provider, body), ...(Number.isSafeInteger(usage) && usage >= 0 ? { usageTokens: usage } : {}) };
   }
   if (provider === 'anthropic') {
     const key = configuration.anthropic?.apiKey;
@@ -116,7 +120,8 @@ async function generateFromProvider(
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({ model, max_tokens: 2048, ...(systemInstruction ? { system: systemInstruction } : {}), messages: [{ role: 'user', content: prompt }] }),
     }, timeoutMs, fetchImpl, signal);
-    return extractText(provider, body);
+    const usage = Number(body.usage?.input_tokens) + Number(body.usage?.output_tokens);
+    return { text: extractText(provider, body), ...(Number.isSafeInteger(usage) && usage >= 0 ? { usageTokens: usage } : {}) };
   }
   const local = configuration.local;
   if (!local?.enabled || !local.baseUrl) throw new Error('Local provider is not configured.');
@@ -124,9 +129,10 @@ async function generateFromProvider(
   const endpoint = new URL('/v1/chat/completions', base);
   const body = await requestJson(endpoint.toString(), {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model, messages: [...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []), { role: 'user', content: prompt }] }),
+    body: JSON.stringify({ model, max_tokens: 2048, messages: [...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []), { role: 'user', content: prompt }] }),
   }, timeoutMs, fetchImpl, signal);
-  return extractText(provider, body);
+  const usage = Number(body.usage?.total_tokens ?? (Number(body.usage?.prompt_tokens) + Number(body.usage?.completion_tokens)));
+  return { text: extractText(provider, body), ...(Number.isSafeInteger(usage) && usage >= 0 ? { usageTokens: usage } : {}) };
 }
 
 /**
@@ -145,8 +151,27 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
   for (const route of routes) {
     if (options.signal?.aborted) throw new Error('Jerry Brain request cancelled by emergency stop or client disconnect.');
     try {
-      const text = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl, options.signal);
-      return { text, provider: route.provider, model: route.model };
+      let reservation: ProviderUsageReservation | undefined;
+      if (options.ownerUid) {
+        const dailyLimitTokens = Number(process.env.JERRY_DAILY_PROVIDER_TOKEN_LIMIT);
+        if (!Number.isSafeInteger(dailyLimitTokens) || dailyLimitTokens < 1) {
+          throw new Error('JERRY_DAILY_PROVIDER_TOKEN_LIMIT must be configured as a positive integer before Jerry can call external model providers.');
+        }
+        const maxOutputTokens = 2048;
+        const inputEstimate = Math.max(1, Math.ceil((prompt.length + (options.systemInstruction?.length ?? 0)) / 3));
+        reservation = await reserveProviderTokens({
+          ownerUid: options.ownerUid,
+          reserveTokens: inputEstimate + maxOutputTokens,
+          dailyLimitTokens,
+        });
+      } else if (process.env.NODE_ENV === 'production') {
+        throw new Error('Authenticated owner identity is required for provider usage budgeting.');
+      }
+      const generated = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl, options.signal);
+      if (reservation && generated.usageTokens !== undefined) {
+        try { await settleProviderTokens(reservation, generated.usageTokens); } catch { /* reservation remains charged */ }
+      }
+      return { text: generated.text, provider: route.provider, model: route.model };
     } catch (error) {
       if (options.signal?.aborted) throw new Error('Jerry Brain request cancelled by emergency stop or client disconnect.');
       failures.push(`${route.provider}: ${error instanceof Error ? error.message : 'request failed'}`);
