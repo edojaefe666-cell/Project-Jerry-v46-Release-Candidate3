@@ -285,7 +285,7 @@ async function startServer() {
           staleEpoch = true;
           return;
         }
-        if (execution.signal.aborted || isEmergencyStopActive() || res.destroyed || res.writableEnded) return;
+        if (execution.signal.aborted || (await readSharedExecutionControl()).stopped || res.destroyed || res.writableEnded) return;
         deliver();
       });
       if (staleEpoch || execution.signal.aborted || isEmergencyStopActive()) {
