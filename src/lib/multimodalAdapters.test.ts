@@ -131,6 +131,20 @@ test('vision refuses a provider body when emergency stop occurs during JSON pars
   assert.equal(calls, 1);
 });
 
+test('vision rejects a response body that completes after its request timeout', async () => {
+  const fetchImpl = async () => {
+    const res = response({ candidates: [{ content: { parts: [{ text: 'late response' }] } }] });
+    res.json = async () => {
+      await new Promise(resolve => setTimeout(resolve, 1_050));
+      return { candidates: [{ content: { parts: [{ text: 'late response' }] } }] };
+    };
+    return res;
+  };
+  await assert.rejects(() => analyzeImageWithModelFallback({
+    ...image, timeoutMs: 1_000, fetchImpl: fetchImpl as typeof fetch,
+  }), /timed out/);
+});
+
 test('speech refuses audio bytes when emergency stop occurs during response reading', async () => {
   const controller = new AbortController();
   let calls = 0;
