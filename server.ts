@@ -164,7 +164,7 @@ async function generateDirectGeminiWithBudget<T extends {
   }
 
   return withSharedExecutionLease(async () => {
-    if (signal.aborted || isEmergencyStopActive()) throw new Error('Jerry direct Gemini request cancelled by emergency stop.');
+    if (signal.aborted) throw new Error('Jerry direct Gemini request cancelled by emergency stop.');
     const tokenReservation = await reserveDirectGeminiTokens(ownerUid, prompt);
     await reserveConfiguredProviderOperation(ownerUid);
     let costReservation: ProviderCostReservation | undefined;
