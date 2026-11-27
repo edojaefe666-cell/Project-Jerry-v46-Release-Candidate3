@@ -215,3 +215,17 @@ test('Vision, TTS, and transcription provider calls are cancellable on stop and 
     assert.match(route,/execution\.release\(\)/);
   }
 });
+
+test('Opportunity Radar and Learning cancel provider work on emergency stop or client disconnect', () => {
+  for (const routePath of ['/api/jerry/scan-opportunities', '/api/jerry/teach']) {
+    const start = server.indexOf(`app.post('${routePath}'`);
+    const end = server.indexOf('\n  // Jerry ', start + 1);
+    const route = server.slice(start, end > start ? end : server.length);
+    assert.ok(start >= 0, `missing route ${routePath}`);
+    assert.match(route, /executionRegistry\.register\(\)/);
+    assert.match(route, /res\.once\('close', cancelOnDisconnect\)/);
+    assert.match(route, /execution\.cancel\(/);
+    assert.match(route, /execution\.release\(\)/);
+    assert.match(route, /signal: execution\.signal/);
+  }
+});
