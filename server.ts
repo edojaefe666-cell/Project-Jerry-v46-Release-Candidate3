@@ -1450,103 +1450,58 @@ async function startServer() {
     }
   });
 
-  // Jerry Vision: provider-neutral image / document analysis. No image is reported
-  // as analyzed unless a configured provider returns a non-empty response.
+  // Vision and Voice use the shared execution registry: owner stop and disconnect cancel provider requests.
   app.post('/api/jerry/vision', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
-    const { imageDataUrl, sampleImagePath, prompt } = req.body as {
-      imageDataUrl?: string; sampleImagePath?: string; prompt?: string;
-    };
-    const effectivePrompt = prompt?.trim() || 'Analyze this document or screenshot and extract key financial metrics, risks, and action items. Return JSON with "analysis" and "extractedActions".';
-    let mimeType = 'image/jpeg';
-    let base64Data = '';
+    const {imageDataUrl,sampleImagePath,prompt}=req.body as {imageDataUrl?:string;sampleImagePath?:string;prompt?:string};
+    const effectivePrompt=prompt?.trim()||'Analyze this document or screenshot and extract key financial metrics, risks, and action items. Return JSON with "analysis" and "extractedActions".';
+    let mimeType='image/jpeg',base64Data='';
     try {
-      if (imageDataUrl && imageDataUrl.startsWith('data:')) {
-        const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
-        if (!match) { res.status(400).json({ error: 'Invalid base64 image payload.' }); return; }
-        mimeType = match[1];
-        base64Data = match[2];
-      } else if (sampleImagePath && sampleImagePath.startsWith('/src/assets/images/')) {
-        const safePath = path.resolve(process.cwd(), `.${sampleImagePath}`);
-        const allowedRoot = path.resolve(process.cwd(), 'src/assets/images') + path.sep;
-        if (!safePath.startsWith(allowedRoot)) { res.status(400).json({ error: 'Invalid sample image path.' }); return; }
-        const buf = await fs.readFile(safePath);
-        base64Data = buf.toString('base64');
-        mimeType = sampleImagePath.endsWith('.png') ? 'image/png' : sampleImagePath.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
-      } else {
-        res.status(400).json({ error: 'Provide an uploaded image or sample document.' }); return;
-      }
-    } catch {
-      res.status(400).json({ error: 'Could not read image source.' }); return;
-    }
-    try {
-      const result = await analyzeImageWithModelFallback({
-        prompt: `${effectivePrompt}\nReturn valid JSON with "analysis" (concise paragraph) and "extractedActions" (array of concrete next steps).`,
-        mimeType, base64Data, configuration: providerConfigurationFromEnvironment(process.env),
-      });
-      let parsed: { analysis?: string; extractedActions?: string[] };
-      try {
-        parsed = JSON.parse(result.text) as { analysis?: string; extractedActions?: string[] };
-      } catch {
-        res.status(502).json({ error: 'Vision provider returned an invalid structured response. The image analysis was not accepted.' }); return;
-      }
-      if (typeof parsed.analysis !== 'string' || !parsed.analysis.trim() ||
-          (parsed.extractedActions !== undefined && (!Array.isArray(parsed.extractedActions) || parsed.extractedActions.some((item) => typeof item !== 'string')))) {
-        res.status(502).json({ error: 'Vision provider response failed validation. The image analysis was not accepted.' }); return;
-      }
-      res.json({ analysis: parsed.analysis.trim(), extractedActions: parsed.extractedActions ?? [], provider: result.provider, modelUsed: result.model, evidenceStatus: 'model_generated_not_independently_verified' });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Vision analysis failed.';
-      const unavailable = /No vision provider|All configured vision providers failed/.test(message);
-      res.status(unavailable ? 503 : 502).json({ error: `Jerry Vision: ${message.slice(0, 240)} The image was not accepted as analyzed.` });
-    }
+      if(imageDataUrl?.startsWith('data:')){const match=imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);if(!match){res.status(400).json({error:'Invalid base64 image payload.'});return;}mimeType=match[1];base64Data=match[2];}
+      else if(sampleImagePath?.startsWith('/src/assets/images/')){const safePath=path.resolve(process.cwd(),`.${sampleImagePath}`),allowedRoot=path.resolve(process.cwd(),'src/assets/images')+path.sep;if(!safePath.startsWith(allowedRoot)){res.status(400).json({error:'Invalid sample image path.'});return;}const buf=await fs.readFile(safePath);base64Data=buf.toString('base64');mimeType=sampleImagePath.endsWith('.png')?'image/png':sampleImagePath.endsWith('.webp')?'image/webp':'image/jpeg';}
+      else{res.status(400).json({error:'Provide an uploaded image or sample document.'});return;}
+    }catch{res.status(400).json({error:'Could not read image source.'});return;}
+    const execution=executionRegistry.register();
+    const cancelOnDisconnect=()=>{if(!res.writableEnded&&!execution.signal.aborted)execution.cancel('Jerry Vision client disconnected');};
+    res.once('close',cancelOnDisconnect);
+    try{
+      if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry execution is stopped.'});return;}
+      const result=await analyzeImageWithModelFallback({prompt:`${effectivePrompt}\\nReturn valid JSON with "analysis" (concise paragraph) and "extractedActions" (array of concrete next steps).`,mimeType,base64Data,configuration:providerConfigurationFromEnvironment(process.env),signal:execution.signal});
+      if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry Vision request cancelled before response delivery.'});return;}
+      let parsed:{analysis?:string;extractedActions?:string[]};try{parsed=JSON.parse(result.text) as {analysis?:string;extractedActions?:string[]};}catch{res.status(502).json({error:'Vision provider returned an invalid structured response. The image analysis was not accepted.'});return;}
+      if(typeof parsed.analysis!=='string'||!parsed.analysis.trim()||(parsed.extractedActions!==undefined&&(!Array.isArray(parsed.extractedActions)||parsed.extractedActions.some(item=>typeof item!=='string')))){res.status(502).json({error:'Vision provider response failed validation. The image analysis was not accepted.'});return;}
+      res.json({analysis:parsed.analysis.trim(),extractedActions:parsed.extractedActions??[],provider:result.provider,modelUsed:result.model,evidenceStatus:'model_generated_not_independently_verified'});
+    }catch(error){if(execution.signal.aborted){if(!res.headersSent&&!res.destroyed)res.status(423).json({error:'Jerry Vision request cancelled.'});return;}const message=error instanceof Error?error.message:'Vision analysis failed.';const unavailable=/No vision provider|All configured vision providers failed/.test(message);if(!res.headersSent&&!res.destroyed)res.status(unavailable?503:502).json({error:`Jerry Vision: ${message.slice(0,240)} The image was not accepted as analyzed.`});}
+    finally{res.removeListener('close',cancelOnDisconnect);execution.release();}
   });
 
-  // Jerry Voice TTS. Browser speech is offered only when no server provider is configured.
   app.post('/api/jerry/tts', requireAuth, requireExecutionEnabled, voiceRateLimit, async (req: AuthRequest, res) => {
-    const { text, voiceName = 'Charon', voiceStyle = 'Calm, warm, confident adult male voice' } = req.body as {
-      text?: string; voiceName?: string; voiceStyle?: string;
-    };
-    if (typeof text !== 'string' || !text.trim() || text.length > 8_000) {
-      res.status(400).json({ error: 'Text is required and must not exceed 8000 characters.' }); return;
-    }
-    const configuration = providerConfigurationFromEnvironment(process.env);
-    if (!configuration.google?.apiKey && !configuration.openai?.apiKey) {
-      res.json({ fallback: 'browser_speech', voiceName, voiceStyle, note: 'No server speech provider is configured; use device speech synthesis.' }); return;
-    }
-    try {
-      const result = await synthesizeSpeechWithModelFallback({
-        text, voice: voiceName, style: voiceStyle, configuration,
-        googleModel: process.env.JERRY_GOOGLE_TTS_MODEL,
-        openaiModel: process.env.JERRY_OPENAI_TTS_MODEL,
-      });
-      res.json({ audioBase64: result.audioBase64, mimeType: result.mimeType, voiceName, voiceStyle, provider: result.provider, modelUsed: result.model });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Speech synthesis failed.';
-      res.status(503).json({ error: `Jerry speech synthesis unavailable: ${message.slice(0, 240)}` });
-    }
+    const {text,voiceName='Charon',voiceStyle='Calm, warm, confident adult male voice'}=req.body as {text?:string;voiceName?:string;voiceStyle?:string};
+    if(typeof text!=='string'||!text.trim()||text.length>8000){res.status(400).json({error:'Text is required and must not exceed 8000 characters.'});return;}
+    const configuration=providerConfigurationFromEnvironment(process.env);
+    if(!configuration.google?.apiKey&&!configuration.openai?.apiKey){res.json({fallback:'browser_speech',voiceName,voiceStyle,note:'No server speech provider is configured; use device speech synthesis.'});return;}
+    const execution=executionRegistry.register(),cancelOnDisconnect=()=>{if(!res.writableEnded&&!execution.signal.aborted)execution.cancel('Jerry TTS client disconnected');};
+    res.once('close',cancelOnDisconnect);
+    try{
+      if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry execution is stopped.'});return;}
+      const result=await synthesizeSpeechWithModelFallback({text,voice:voiceName,style:voiceStyle,configuration,googleModel:process.env.JERRY_GOOGLE_TTS_MODEL,openaiModel:process.env.JERRY_OPENAI_TTS_MODEL,signal:execution.signal});
+      if(!execution.signal.aborted&&!isEmergencyStopActive())res.json({audioBase64:result.audioBase64,mimeType:result.mimeType,voiceName,voiceStyle,provider:result.provider,modelUsed:result.model});else if(!res.headersSent)res.status(423).json({error:'Jerry speech request cancelled before response delivery.'});
+    }catch(error){if(execution.signal.aborted){if(!res.headersSent&&!res.destroyed)res.status(423).json({error:'Jerry speech request cancelled.'});return;}const message=error instanceof Error?error.message:'Speech synthesis failed.';if(!res.headersSent&&!res.destroyed)res.status(503).json({error:`Jerry speech synthesis unavailable: ${message.slice(0,240)}`});}
+    finally{res.removeListener('close',cancelOnDisconnect);execution.release();}
   });
 
-  // Jerry Voice transcription. Audio is processed only by configured providers.
   app.post('/api/jerry/transcribe', requireAuth, requireExecutionEnabled, voiceRateLimit, async (req: AuthRequest, res) => {
-    const { audioBase64, mimeType = 'audio/webm' } = req.body as { audioBase64?: string; mimeType?: string };
-    if (typeof audioBase64 !== 'string' || !audioBase64) {
-      res.status(400).json({ error: 'Audio payload is required.' }); return;
-    }
-    const configuration = providerConfigurationFromEnvironment(process.env);
-    if (!configuration.google?.apiKey && !configuration.openai?.apiKey) {
-      res.status(503).json({ error: 'No compatible server-side transcription provider is configured. Audio was not transcribed.' }); return;
-    }
-    try {
-      const result = await transcribeAudioWithModelFallback({
-        audioBase64, mimeType, configuration,
-        googleModel: process.env.JERRY_GOOGLE_TRANSCRIPTION_MODEL,
-        openaiModel: process.env.JERRY_OPENAI_TRANSCRIPTION_MODEL,
-      });
-      res.json({ transcript: result.transcript, provider: result.provider, modelUsed: result.model, evidenceStatus: 'machine_transcription_not_human_verified' });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Transcription failed.';
-      res.status(502).json({ error: `Jerry transcription failed: ${message.slice(0, 240)}` });
-    }
+    const {audioBase64,mimeType='audio/webm'}=req.body as {audioBase64?:string;mimeType?:string};
+    if(typeof audioBase64!=='string'||!audioBase64){res.status(400).json({error:'Audio payload is required.'});return;}
+    const configuration=providerConfigurationFromEnvironment(process.env);
+    if(!configuration.google?.apiKey&&!configuration.openai?.apiKey){res.status(503).json({error:'No compatible server-side transcription provider is configured. Audio was not transcribed.'});return;}
+    const execution=executionRegistry.register(),cancelOnDisconnect=()=>{if(!res.writableEnded&&!execution.signal.aborted)execution.cancel('Jerry transcription client disconnected');};
+    res.once('close',cancelOnDisconnect);
+    try{
+      if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry execution is stopped.'});return;}
+      const result=await transcribeAudioWithModelFallback({audioBase64,mimeType,configuration,googleModel:process.env.JERRY_GOOGLE_TRANSCRIPTION_MODEL,openaiModel:process.env.JERRY_OPENAI_TRANSCRIPTION_MODEL,signal:execution.signal});
+      if(!execution.signal.aborted&&!isEmergencyStopActive())res.json({transcript:result.transcript,provider:result.provider,modelUsed:result.model,evidenceStatus:'machine_transcription_not_human_verified'});else if(!res.headersSent)res.status(423).json({error:'Jerry transcription cancelled before response delivery.'});
+    }catch(error){if(execution.signal.aborted){if(!res.headersSent&&!res.destroyed)res.status(423).json({error:'Jerry transcription cancelled.'});return;}const message=error instanceof Error?error.message:'Transcription failed.';if(!res.headersSent&&!res.destroyed)res.status(502).json({error:`Jerry transcription failed: ${message.slice(0,240)}`});}
+    finally{res.removeListener('close',cancelOnDisconnect);execution.release();}
   });
 
   // Jerry Proactive Opportunity Radar. All findings must be grounded in retrieved sources.
