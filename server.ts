@@ -33,8 +33,8 @@ import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { reserveConfiguredProviderOperation } from './src/db/providerOperationStore.ts';
-import { reserveProviderTokens, settleProviderTokens, type ProviderUsageReservation } from './src/db/providerUsageStore.ts';
-import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, type ProviderCostReservation } from './src/db/providerCostStore.ts';
+import { reserveProviderTokens, settleProviderTokens, getProviderUsageAudit, type ProviderUsageReservation } from './src/db/providerUsageStore.ts';
+import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, getProviderCostAudit, type ProviderCostReservation } from './src/db/providerCostStore.ts';
 import { parseProviderPricingFromEnvironment } from './src/lib/providerAdapters.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
@@ -667,6 +667,26 @@ async function startServer() {
       });
     } catch {
       res.status(500).json({ error: 'Memory export failed. Please try again.' });
+    }
+  });
+
+  // Owner-only provider budget ledger. Ambiguous reservations remain visible and charged;
+  // this endpoint is read-only and deliberately provides no release/refund operation.
+  app.get('/api/security/provider-usage', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const rawDays = typeof req.query.days === 'string' ? Number(req.query.days) : 30;
+      if (!Number.isSafeInteger(rawDays) || rawDays < 1 || rawDays > 90) {
+        res.status(400).json({ error: 'Provider usage history must be between 1 and 90 days.' });
+        return;
+      }
+      const [tokens, costs] = await Promise.all([
+        getProviderUsageAudit(req.user!.uid, rawDays),
+        getProviderCostAudit(req.user!.uid, rawDays),
+      ]);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ schemaVersion: 1, generatedAt: new Date().toISOString(), days: rawDays, tokens, costs });
+    } catch {
+      res.status(503).json({ error: 'Provider usage ledger is unavailable. No budget adjustment was made.' });
     }
   });
 
