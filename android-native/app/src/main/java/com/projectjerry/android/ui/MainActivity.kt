@@ -264,6 +264,99 @@ class MainActivity : AppCompatActivity() {
                     )
                     true
                 }
+                "createOwnerMemoryRecoveryEnvelope" -> {
+                    val ownerUid = message.optString("ownerUid")
+                    val deviceId = message.optString("deviceId")
+                    val keyVersion = message.optInt("keyVersion", -1)
+                    AlertDialog.Builder(this)
+                        .setTitle("Create an offline Jerry recovery key?")
+                        .setMessage(
+                            "Jerry will create a random 256-bit recovery key for your encrypted memory. " +
+                                "It will be shown once so you can store it offline. Anyone with this key and your account access " +
+                                "may restore your memory key. If you lose it and every trusted device, encrypted memory cannot be recovered. " +
+                                "Jerry and the cloud server will not receive the recovery key. Do not save it in screenshots or chat."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Owner memory recovery setup was cancelled.").toString()
+                            )
+                        }
+                        .setPositiveButton("Create recovery key") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                val result = deviceMemoryExchangeKeyStore.createOwnerRecoveryEnvelope(
+                                    ownerUid, deviceId, keyVersion
+                                )
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId)
+                                        .put("recoveryKey", result.getString("recoveryKey"))
+                                        .put("recoveryEnvelope", result.getJSONObject("envelope")).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "Owner recovery envelope creation failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Owner memory recovery setup was cancelled.").toString()
+                            )
+                        }
+                        .show()
+                    true
+                }
+                "restoreOwnerMemoryRecoveryEnvelope" -> {
+                    val envelope = message.optJSONObject("recoveryEnvelope")
+                        ?: throw IllegalArgumentException("Owner recovery envelope is required.")
+                    val recoveryKey = message.optString("recoveryKey")
+                    val ownerUid = message.optString("ownerUid")
+                    val deviceId = message.optString("deviceId")
+                    val keyVersion = message.optInt("keyVersion", -1)
+                    AlertDialog.Builder(this)
+                        .setTitle("Restore Jerry's encrypted memory key?")
+                        .setMessage(
+                            "This will use the recovery key you entered to restore encrypted memory for this owner account " +
+                                "onto this Android device. The recovery key is processed locally and is not sent to Jerry's server. " +
+                                "Continue only if you initiated this recovery."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Owner memory-key recovery was cancelled.").toString()
+                            )
+                        }
+                        .setPositiveButton("Restore memory key") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                val restored = deviceMemoryExchangeKeyStore.restoreMemoryKeyFromOwnerRecoveryEnvelope(
+                                    envelope.toString(), recoveryKey, ownerUid, deviceId, keyVersion
+                                )
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId)
+                                        .put("installed", restored).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "Owner memory-key recovery failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Owner memory-key recovery was cancelled.").toString()
+                            )
+                        }
+                        .show()
+                    true
+                }
                 "encryptMemoryRecordPayload" -> {
                     val result = deviceMemoryExchangeKeyStore.encryptMemoryRecordPayload(
                         message.optString("ownerUid"),
