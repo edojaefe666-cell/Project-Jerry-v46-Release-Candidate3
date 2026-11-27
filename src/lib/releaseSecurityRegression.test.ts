@@ -856,3 +856,16 @@ test('wallet outbox claims are serialized against the durable owner emergency st
   assert.match(claim, /client\.query\(/);
   assert.match(claim, /UPDATE wallet_journal_outbox/);
 });
+
+
+test('Bitcoin settlement verification and persistence share one owner-stop lease', () => {
+  const start = server.indexOf("app.post('/api/wallet/commands/record-income'");
+  const end = server.indexOf("app.post('/api/wallet/commands/submit-transfer'", start);
+  const route = server.slice(start, end);
+  const lease = route.indexOf('await withSharedExecutionLease(async () =>');
+  const firstExternalRead = route.indexOf('fetch(');
+  const persistence = route.indexOf('runIdempotentWorkspaceCommand(');
+  assert.ok(lease >= 0 && firstExternalRead > lease, 'shared lease must be acquired before external Bitcoin verification');
+  assert.ok(persistence > firstExternalRead, 'verified settlement persistence must remain inside the same lease');
+  assert.equal((route.match(/withSharedExecutionLease\\(/g) ?? []).length, 1, 'settlement must not nest execution leases');
+});
