@@ -1051,6 +1051,33 @@ test('expensive provider routes use shared PostgreSQL owner quotas and fail clos
 });
 
 
+test('direct Coinbase and Blockstream requests reserve shared owner operations before outbound calls', () => {
+  assert.match(server, /async function reserveExternalServiceOperations\(ownerUid: string, operationCount: number\)/);
+  assert.match(server, /for \(let index = 0; index < operationCount; index \+= 1\)/);
+  const routes = [
+    { marker: "app.post('/api/wallet/settlement", count: 3 },
+    { marker: "app.post('/api/wallet/sync-onchain", count: 2 },
+    { marker: "app.post('/api/wallet/verify-tx", count: 2 },
+    { marker: "app.post('/api/wallet/commands/reconcile-tx", count: 2 },
+  ];
+  for (const route of routes) {
+    const start = server.indexOf(route.marker);
+    assert.ok(start >= 0, `missing external wallet route: ${route.marker}`);
+    const section = server.slice(start, start + 9000);
+    const reservation = section.indexOf('await reserveExternalServiceOperations(');
+    const outbound = section.search(/fetch\(['\x60]https:\/\//);
+    assert.ok(reservation >= 0 && outbound > reservation,
+      `${route.marker} must reserve shared operations before outbound requests`);
+    assert.match(section.slice(reservation, reservation + 100),
+      new RegExp(`reserveExternalServiceOperations\\((?:uid|req\\.user!\\.uid), ${route.count}\\)`));
+  }
+  assert.match(server, /async function fetchLiveSpotPrices\(ownerUid: string\)/);
+  const priceHelper = server.slice(server.indexOf('async function fetchLiveSpotPrices'), server.indexOf('app.post('/api/wallet/sync-onchain'));
+  assert.ok(priceHelper.indexOf('reserveExternalServiceOperations(ownerUid, 1)') <
+    priceHelper.indexOf("fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot'"),
+    'the standalone Coinbase helper must reserve before its request');
+});
+
 test('multimodal and direct SDK provider attempts consume a shared daily owner operation budget', () => {
   assert.match(server, /import \{ reserveConfiguredProviderOperation \} from '\.\/src\/db\/providerOperationStore\.ts'/);
   for (const route of [
