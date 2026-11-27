@@ -180,6 +180,30 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
         // Journal posting counts are measured from the ledger, not this worker metric.
         processed++;
       } catch (error) {
+        const interrupted = signal?.aborted === true;
+        const message = interrupted
+          ? 'Paused by Jerry emergency stop'
+          : error instanceof Error ? error.message : String(error);
+
+        if (interrupted) {
+          // Stop is a batch boundary: return this row and every not-yet-started
+          // claim immediately. Do not strand later rows in processing until
+          // the five-minute stale-claim timeout.
+          const remainingIds = claimedRows.slice(index).map((item) => item.id);
+          if (remainingIds.length > 0) {
+            await client.query(
+              `UPDATE wallet_journal_outbox
+                  SET status = 'pending',
+                      last_error = $2,
+                      available_at = now(),
+                      updated_at = now()
+                WHERE id = ANY($1::bigint[]) AND status = 'processing'`,
+              [remainingIds, message],
+            );
+          }
+          break;
+        }
+
         await client.query(
           `UPDATE wallet_journal_outbox
               SET status = 'pending',
@@ -187,10 +211,7 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
                   available_at = now() + interval '15 seconds',
                   updated_at = now()
             WHERE id = $1`,
-          [
-            row.id,
-            error instanceof Error ? error.message : String(error),
-          ],
+          [row.id, message],
         );
 
         failed++;
