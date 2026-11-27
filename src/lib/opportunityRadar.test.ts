@@ -38,6 +38,25 @@ test('returns explicit unavailable status when live research credentials are mis
   );
 });
 
+test('does not start Tavily research while pre-revenue spending is disabled', async () => {
+  const previous = process.env.JERRY_PAID_SERVICES_ENABLED;
+  let called = false;
+  try {
+    process.env.JERRY_PAID_SERVICES_ENABLED = '0';
+    await assert.rejects(
+      runOpportunityRadar({
+        interests: ['AI services'], availableCapitalUsd: 1000, researchApiKey: 'test-key', configuration,
+        search: async () => { called = true; return { query: 'test', sources: [source] }; },
+      }),
+      (error: unknown) => error instanceof OpportunityRadarError &&
+        error.status === 503 && error.code === 'PAID_SERVICES_DISABLED',
+    );
+    assert.equal(called, false);
+  } finally {
+    process.env.JERRY_PAID_SERVICES_ENABLED = previous ?? '1';
+  }
+});
+
 test('returns unavailable when research has no usable sources and never calls the model', async () => {
   await assert.rejects(
     runOpportunityRadar({
