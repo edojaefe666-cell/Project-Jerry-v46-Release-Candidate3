@@ -1790,6 +1790,7 @@ async function startServer() {
         interests,
         availableCapitalUsd,
         researchApiKey: process.env.TAVILY_API_KEY,
+        ownerUid: req.user!.uid,
         configuration: providerConfigurationFromEnvironment(process.env),
         signal: execution.signal,
       });
