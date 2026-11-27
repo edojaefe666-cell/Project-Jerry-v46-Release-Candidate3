@@ -1,5 +1,6 @@
 import { resolveModelRoute, type ModelProvider, type ModelTask, type ProviderConfiguration } from './modelRouter';
 import { reserveProviderTokens, settleProviderTokens, type ProviderUsageReservation } from '../db/providerUsageStore.ts';
+import { reserveConfiguredProviderOperation } from '../db/providerOperationStore.ts';
 
 export interface ModelGenerationResult {
   text: string;
@@ -17,6 +18,7 @@ export interface ModelGenerationOptions {
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
   ownerUid?: string;
+  reserveOperation?: (ownerUid: string) => Promise<void>;
 }
 
 function safeLocalEndpoint(baseUrl: string): URL {
@@ -168,6 +170,11 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
         });
       } else if (process.env.NODE_ENV === 'production') {
         throw new Error('Authenticated owner identity is required for provider usage budgeting.');
+      }
+      // Count every actual provider attempt, including each fallback, against
+      // the same owner-scoped daily operation ceiling before network execution.
+      if (options.ownerUid) {
+        await (options.reserveOperation ?? reserveConfiguredProviderOperation)(options.ownerUid);
       }
       const generated = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl, options.signal);
       if (reservation && generated.usageTokens !== undefined) {
