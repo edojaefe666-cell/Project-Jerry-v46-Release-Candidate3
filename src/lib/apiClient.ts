@@ -14,6 +14,9 @@ const API_BASE = (() => {
 const API_BASE_IS_PLACEHOLDER = API_BASE !== '' && new URL(API_BASE).hostname.endsWith('.invalid');
 
 function resolveApiInput(input: RequestInfo | URL): RequestInfo | URL {
+  if (!API_BASE && typeof window !== 'undefined' && window.location.origin === 'https://localhost') {
+    throw new Error('Jerry backend is not connected. Configure a verified HTTPS JERRY_BACKEND_ORIGIN and rebuild the Android app.');
+  }
   if (!API_BASE) return input;
   const raw = typeof input === 'string'
     ? input
