@@ -175,6 +175,11 @@ test('shared execution leases serialize owner stop with active ledger side effec
   assert.match(control, /withSharedExecutionLease/);
   assert.match(outbox, /withSharedExecutionLease\(async/);
   assert.match(outbox, /ensureWalletTransactionJournaled/);
+  assert.match(outbox, /const interrupted = signal\?\.aborted === true/);
+  assert.match(outbox, /const remainingIds = claimedRows\.slice\(index\)\.map/);
+  assert.match(outbox, /available_at = now\(\),\s+updated_at = now\(\)/);
+  assert.match(outbox, /if \(interrupted\)[\s\S]*?break;/,
+    'an emergency stop must immediately release the current and remaining claims instead of waiting for stale-claim recovery');
 });
 
 test('AI-enhanced owner learning is persisted only inside the shared execution lease', () => {
