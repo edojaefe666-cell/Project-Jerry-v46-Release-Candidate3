@@ -1180,3 +1180,19 @@ test('direct Gemini SDK execution reserves configured USD cost inside the shared
   assert.equal((server.match(/ai\.models\.generateContent\(/g) ?? []).length, 3,
     'all direct Gemini SDK generation call sites must remain within the budgeted helper');
 });
+
+
+test('provider usage ledger endpoint is authenticated, owner-scoped, read-only and available during emergency stop', () => {
+  const start = server.indexOf("app.get('/api/provider-usage'");
+  const end = server.indexOf("app.get('/api/memory/export'", start);
+  assert.ok(start >= 0 && end > start, 'provider usage ledger endpoint must exist');
+  const route = server.slice(start, end);
+  assert.match(route, /requireAuth/);
+  assert.doesNotMatch(route.split('\n')[0], /requireExecutionEnabled/);
+  assert.match(route, /getProviderUsageLedgerSnapshot\(uid, rawLimit\)/);
+  assert.match(route, /getProviderCostLedgerSnapshot\(uid, rawLimit\)/);
+  assert.match(route, /Cache-Control', 'no-store'/);
+  assert.match(route, /reserved: 'Unsettled reservation/);
+  assert.match(route, /settled: 'Provider usage or cost was reconciled/);
+  assert.match(route, /rawLimit > 100/);
+});
