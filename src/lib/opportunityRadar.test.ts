@@ -90,3 +90,22 @@ test('rejects model findings that cite a URL not returned by research', async ()
       error.status === 502 && error.code === 'INVALID_RESEARCH_MODEL_OUTPUT',
   );
 });
+
+test('propagates cancellation into research retrieval and model generation', async () => {
+  const controller = new AbortController();
+  let searchSignal: AbortSignal | undefined;
+  let generateSignal: AbortSignal | undefined;
+  const resultPromise = runOpportunityRadar({
+    interests: ['AI services'], availableCapitalUsd: 1000, researchApiKey: 'test-key',
+    configuration, signal: controller.signal,
+    search: async options => { searchSignal = options.signal; return { query: 'test', sources: [source] }; },
+    generate: async options => {
+      generateSignal = options.signal;
+      controller.abort(new Error('owner stop'));
+      throw options.signal?.reason;
+    },
+  });
+  await assert.rejects(resultPromise, /owner stop/);
+  assert.equal(searchSignal, controller.signal);
+  assert.equal(generateSignal, controller.signal);
+});
