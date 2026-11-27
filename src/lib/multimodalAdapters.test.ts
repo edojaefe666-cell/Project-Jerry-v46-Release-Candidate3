@@ -111,6 +111,66 @@ test('speech cancellation aborts active provider and prevents fallback', async (
  const pending=synthesizeSpeechWithModelFallback({text:'hello',signal:controller.signal,configuration:{openai:{apiKey:'o-key'},google:{apiKey:'g-key'}},fetchImpl});
  await new Promise(resolve=>setImmediate(resolve));controller.abort(new Error('owner stop'));await assert.rejects(pending,/owner stop/);assert.equal(calls,1);
 });
+test('vision refuses a provider body when emergency stop occurs during JSON parsing', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    const res = response({ candidates: [{ content: { parts: [{ text: 'must not be accepted' }] } }] });
+    res.json = async () => {
+      controller.abort(new Error('owner stop during vision body read'));
+      return { candidates: [{ content: { parts: [{ text: 'must not be accepted' }] } }] };
+    };
+    return res;
+  };
+  await assert.rejects(() => analyzeImageWithModelFallback({
+    ...image, signal: controller.signal,
+    configuration: { google: { apiKey: 'g-key' }, openai: { apiKey: 'o-key' } },
+    fetchImpl: fetchImpl as typeof fetch,
+  }), /owner stop during vision body read/);
+  assert.equal(calls, 1);
+});
+
+test('speech refuses audio bytes when emergency stop occurs during response reading', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    const res = new Response(new Uint8Array([1, 2, 3]));
+    res.arrayBuffer = async () => {
+      controller.abort(new Error('owner stop during speech body read'));
+      return new Uint8Array([1, 2, 3]).buffer;
+    };
+    return res;
+  };
+  await assert.rejects(() => synthesizeSpeechWithModelFallback({
+    text: 'hello', signal: controller.signal,
+    configuration: { openai: { apiKey: 'o-key' }, google: { apiKey: 'g-key' } },
+    fetchImpl: fetchImpl as typeof fetch,
+  }), /owner stop during speech body read/);
+  assert.equal(calls, 1);
+});
+
+test('transcription refuses transcript when emergency stop occurs during JSON parsing', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    const res = response({ text: 'must not be accepted' });
+    res.json = async () => {
+      controller.abort(new Error('owner stop during transcript body read'));
+      return { text: 'must not be accepted' };
+    };
+    return res;
+  };
+  await assert.rejects(() => transcribeAudioWithModelFallback({
+    audioBase64: 'AQIDBA==', mimeType: 'audio/webm', signal: controller.signal,
+    configuration: { openai: { apiKey: 'o-key' }, google: { apiKey: 'g-key' } },
+    fetchImpl: fetchImpl as typeof fetch,
+  }), /owner stop during transcript body read/);
+  assert.equal(calls, 1);
+});
+
 test('transcription cancellation aborts active provider and prevents fallback', async () => {
  const controller=new AbortController();let calls=0;const fetchImpl:typeof fetch=async(_i,init)=>{calls++;return await new Promise<Response>((_r,reject)=>init?.signal?.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));};
  const pending=transcribeAudioWithModelFallback({audioBase64:'AQIDBA==',mimeType:'audio/webm',signal:controller.signal,configuration:{google:{apiKey:'g-key'},openai:{apiKey:'o-key'}},fetchImpl});
