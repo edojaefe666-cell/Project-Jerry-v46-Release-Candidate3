@@ -143,7 +143,7 @@ export default function App() {
   }, [idToken, backendReady]);
 
   useEffect(() => {
-    if (!idToken) return;
+    if (!idToken || backendReady !== true) return;
     let active = true;
     apiFetch('/api/cloudsql/workspace', {
       headers: { Authorization: `Bearer ${idToken}` },
@@ -165,10 +165,10 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [idToken]);
+  }, [idToken, backendReady]);
 
   useEffect(() => {
-    if (!idToken) return;
+    if (!idToken || backendReady !== true) return;
     let active = true;
     apiFetch('/api/memory')
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error('Persistent memory load failed'))))
@@ -185,7 +185,7 @@ export default function App() {
         // Keep the existing workspace snapshot if the dedicated memory service is unavailable.
       });
     return () => { active = false; };
-  }, [idToken]);
+  }, [idToken, backendReady]);
 
   const commitState = useCallback(
     (updater: (prev: JerryState) => JerryState) => {
@@ -1044,7 +1044,7 @@ export default function App() {
   if (!loaded) {
     return (
       <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
-        <p className="text-sm text-slate-300">Loading your encrypted owner workspace...</p>
+        <p className="text-sm text-slate-300">Loading your owner workspace...</p>
       </main>
     );
   }
