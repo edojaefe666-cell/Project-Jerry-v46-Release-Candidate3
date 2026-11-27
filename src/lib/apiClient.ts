@@ -1,5 +1,5 @@
 import { auth } from './firebase';
-import { mergeRequestHeaders } from './apiRequestHeaders';
+import { mergeRequestHeaders, resolveRequestForFetch } from './apiRequestHeaders';
 
 const API_BASE = (() => {
   const configured = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
@@ -51,7 +51,9 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
   if (init.body && !headers.has('Content-Type') && typeof init.body === 'string') {
     headers.set('Content-Type', 'application/json');
   }
-  return fetch(resolveApiInput(input), { ...init, headers });
+  const resolvedInput = resolveApiInput(input);
+  const fetchInput = resolveRequestForFetch(input, resolvedInput);
+  return fetch(fetchInput, { ...init, headers });
 }
 
 export async function apiJson<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {
