@@ -62,6 +62,9 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
   const { drainWalletJournalOutbox } = await import('../db/walletJournalOutbox.ts');
   const { randomUUID } = await import('node:crypto');
   const pool = createPool();
+  // The shared control migration seeds the execution latch stopped. This
+  // disposable integration fixture explicitly enables it for worker tests.
+  await pool.query("UPDATE jerry_execution_control SET stopped=false, epoch=epoch+1, reason='outbox integration fixture enabled', updated_by='test-fixture', updated_at=now() WHERE id=1");
   const suffix = randomUUID();
   const uid = `outbox-test-${suffix}`;
   const user = await getOrCreateUser(uid, `outbox-${suffix}@example.invalid`);
@@ -155,4 +158,5 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
   assert.equal(pausedRow.rowCount, 1);
   assert.equal(pausedRow.rows[0].status, 'pending');
   assert.match(pausedRow.rows[0].last_error, /emergency stop/i);
+  await pool.query("UPDATE jerry_execution_control SET stopped=true, epoch=epoch+1, reason='outbox integration fixture cleanup', updated_by='test-fixture', updated_at=now() WHERE id=1");
 });
