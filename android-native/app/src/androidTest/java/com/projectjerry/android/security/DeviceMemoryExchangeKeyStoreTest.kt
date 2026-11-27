@@ -89,8 +89,14 @@ class DeviceMemoryExchangeKeyStoreTest {
             val publicB = second.createOrGetPublicKey()
             assertNotEquals(publicA, publicB)
 
-            context.getSharedPreferences(prefsA, Context.MODE_PRIVATE)
-                .edit().putString("private_ciphertext", "AAAAAAAAAAAAAAAAAAAAAA").commit()
+            val preferencesA = context.getSharedPreferences(prefsA, Context.MODE_PRIVATE)
+            preferencesA.edit().putString("public_x", "A".repeat(43)).commit()
+            assertThrows(Exception::class.java) {
+                first.createOrGetPublicKey()
+            }
+            preferencesA.edit().putString("public_x", publicA.x).commit()
+
+            preferencesA.edit().putString("private_ciphertext", "AAAAAAAAAAAAAAAAAAAAAA").commit()
             assertThrows(Exception::class.java) {
                 first.createOrGetPublicKey()
             }
