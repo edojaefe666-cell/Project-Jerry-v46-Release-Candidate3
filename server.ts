@@ -1787,6 +1787,14 @@ async function startServer() {
     }
 
     try {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.destroyed) res.status(423).json({
+          persisted: false,
+          status: 'cancelled',
+          error: 'Jerry emergency stop interrupted learning. No memory entry was persisted.',
+        });
+        return;
+      }
       const persisted = await withSharedExecutionLease(() => saveMemoryEntryForUser(
         req.user!.uid,
         req.user!.email ?? 'owner@jerry.workspace',
@@ -1802,6 +1810,15 @@ async function startServer() {
           : 'The original owner-provided knowledge was saved to persistent memory without AI enhancement.',
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (/emergency stop is engaged/i.test(message) || execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.destroyed) res.status(423).json({
+          persisted: false,
+          status: 'cancelled',
+          error: 'Jerry emergency stop interrupted learning. No memory entry was persisted.',
+        });
+        return;
+      }
       if (!res.headersSent && !res.destroyed) res.status(500).json({
         persisted: false,
         error: error instanceof Error ? error.message : 'Jerry could not persist this learning entry.',
