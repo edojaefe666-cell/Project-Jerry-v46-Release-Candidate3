@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { db } from './index.ts';
-import { deviceHttpRequestChallenges, deviceRegistrations } from './schema.ts';
+import { deviceHttpRequestChallenges, deviceRegistrations, users } from './schema.ts';
 import { getOrCreateUser } from './users.ts';
 import { isAllowedEncryptedMemoryTarget, type DeviceHttpRequestChallenge } from '../lib/deviceHttpRequestProof.ts';
 
@@ -98,9 +98,17 @@ export async function withConsumedDeviceHttpRequestChallenge<T>(
   challengeId: string,
   expectedSigningPublicKey: StoredDeviceHttpRequestChallenge['signingPublicKey'],
   operation: (tx: DatabaseTransaction) => Promise<T>,
+  serializeOwnerFirst = false,
 ): Promise<T | null> {
   const user = await getOrCreateUser(uid, email);
   return db.transaction(async (tx) => {
+    // Revocation opts into owner-first locking so concurrent device-revocation
+    // commands cannot acquire device/challenge locks in opposite order.
+    if (serializeOwnerFirst) {
+      const [ownerLock] = await tx.select({ id: users.id }).from(users)
+        .where(eq(users.id, user.id)).limit(1).for('update');
+      if (!ownerLock) return null;
+    }
     const [row] = await tx.select({
       challenge: deviceHttpRequestChallenges,
       device: deviceRegistrations,
