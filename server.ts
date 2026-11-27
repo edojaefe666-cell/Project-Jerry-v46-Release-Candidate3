@@ -1220,10 +1220,18 @@ async function startServer() {
       if (process.env.NODE_ENV === 'production' && process.env.JERRY_ALLOW_FINANCIAL_BACKFILL !== '1') {
         res.status(403).json({ error: 'Historical financial backfill is disabled in production.' }); return;
       }
-      const result = await backfillHistoricalWalletJournal(req.user!.uid);
-      const report = await reconcileFinancialTruth(req.user!.uid);
-      res.json({ result, report });
+      const result = await withSharedExecutionLease(async () => {
+        const backfill = await backfillHistoricalWalletJournal(req.user!.uid);
+        const report = await reconcileFinancialTruth(req.user!.uid);
+        return { backfill, report };
+      });
+      res.json({ result: result.backfill, report: result.report });
     } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (/emergency stop is engaged/i.test(message)) {
+        res.status(423).json({ error: 'Jerry emergency stop is engaged. Historical financial backfill was not started or persisted.' });
+        return;
+      }
       console.error('Financial truth backfill failed:', error);
       res.status(500).json({ error: 'Financial truth backfill failed.' });
     }
