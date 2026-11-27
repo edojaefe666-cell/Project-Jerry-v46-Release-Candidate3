@@ -168,9 +168,18 @@ test('emergency stop keeps internal wallet journal recovery separate from extern
 });
 
 
+test('shared execution leases serialize owner stop with active ledger side effects', () => {
+  const control = require('node:fs').readFileSync(new URL('../db/executionControl.ts', import.meta.url), 'utf8');
+  const outbox = require('node:fs').readFileSync(new URL('../db/walletJournalOutbox.ts', import.meta.url), 'utf8');
+  assert.match(control, /FOR SHARE/);
+  assert.match(control, /withSharedExecutionLease/);
+  assert.match(outbox, /withSharedExecutionLease\(async/);
+  assert.match(outbox, /ensureWalletTransactionJournaled/);
+});
+
 test('owner emergency stop uses the shared execution registry for in-flight verification', () => {
   assert.match(server, /new ExecutionRegistry\(isEmergencyStopActive\(\)\)/);
-  assert.match(server, /executionRegistry\.setStopped\(body\.action === 'stop'/);
+  assert.match(server, /executionRegistry\.setStopped\([\s\S]*body\.action === 'stop'/);
   assert.match(server, /runIsolatedSelfUpgradeTests\(input, \{ signal: execution\.signal \}\)/);
   assert.match(server, /if \(execution\.signal\.aborted\)/);
   assert.match(server, /execution\.release\(\)/);
