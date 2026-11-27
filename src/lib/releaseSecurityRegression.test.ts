@@ -15,6 +15,9 @@ const multimodalAdapters = fs.readFileSync(path.join(root, 'src/lib/multimodalAd
 const opportunityRadar = fs.readFileSync(path.join(root, 'src/lib/opportunityRadar.ts'), 'utf8');
 const providerUsageStore = fs.readFileSync(path.join(root, 'src/db/providerUsageStore.ts'), 'utf8');
 const providerCostStore = fs.readFileSync(path.join(root, 'src/db/providerCostStore.ts'), 'utf8');
+const providerAdapters = fs.readFileSync(path.join(root, 'src/lib/providerAdapters.ts'), 'utf8');
+const providerSpendPolicy = fs.readFileSync(path.join(root, 'src/lib/providerSpendPolicy.ts'), 'utf8');
+const environmentExample = fs.readFileSync(path.join(root, '.env.example'), 'utf8');
 const apiClient = fs.readFileSync(path.join(root, 'src/lib/apiClient.ts'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
 const androidManifest = fs.readFileSync(path.join(root, 'android-native/app/src/main/AndroidManifest.xml'), 'utf8');
@@ -114,6 +117,17 @@ test('Android requests only currently justified runtime permissions', () => {
   assert.match(androidManifest, /android\.permission\.RECORD_AUDIO/);
   assert.match(androidPermissionManager, /Manifest\.permission\.RECORD_AUDIO/);
   assert.match(androidPermissionManager, /Build\.VERSION\.SDK_INT <= 30/);
+});
+
+test('all hosted AI and live research paths default to no paid spending before verified revenue', () => {
+  assert.match(providerSpendPolicy, /JERRY_PAID_SERVICES_ENABLED !== '1'/);
+  assert.match(providerSpendPolicy, /verified revenue/);
+  assert.match(providerAdapters, /assertHostedProviderSpendEnabled\(\`\$\{route\.provider\}\/\$\{route\.model\}\`\)/);
+  assert.ok((multimodalAdapters.match(/assertHostedProviderSpendEnabled/g) ?? []).length >= 3,
+    'vision, speech and transcription routes must all enforce the paid-services gate');
+  assert.match(opportunityRadar, /assertHostedProviderSpendEnabled\('Tavily live research'\)/);
+  assert.match(server, /assertHostedProviderSpendEnabled\('Google Gemini direct SDK'\)/);
+  assert.match(environmentExample, /JERRY_PAID_SERVICES_ENABLED=0/);
 });
 
 test('Jerry workspace is gated behind a valid authenticated owner session', () => {
