@@ -814,3 +814,23 @@ test('chat, goal planning, opportunity assessment and self-programming refresh s
       `${item.name} must refresh the shared emergency-stop latch after provider completion`);
   }
 });
+
+test('provider result delivery holds the durable shared execution lease through response handoff', () => {
+  assert.match(server, /const deliverWithSharedExecutionLease = async/);
+  const helperStart = server.indexOf('const deliverWithSharedExecutionLease = async');
+  const helperEnd = server.indexOf('let executionControlSyncInFlight', helperStart);
+  const helper = server.slice(helperStart, helperEnd);
+  assert.match(helper, /withSharedExecutionLease\(async \(\) =>/);
+  assert.match(helper, /execution\.signal\.aborted \|\| isEmergencyStopActive\(\)/);
+  assert.match(helper, /deliver\(\)/);
+  for (const [route, next] of [
+    ["app.post('/api/jerry/chat'", "app.post('/api/jerry/plan-goal'"],
+    ["app.post('/api/jerry/plan-goal'", "app.post('/api/jerry/assess-opportunity'"],
+    ["app.post('/api/jerry/assess-opportunity'", "app.post('/api/jerry/vision'"],
+  ]) {
+    const start = server.indexOf(route);
+    const end = server.indexOf(next, start + route.length);
+    assert.ok(server.slice(start, end).includes('deliverWithSharedExecutionLease('),
+      `${route} must hand provider output to the response under the shared lease`);
+  }
+});
