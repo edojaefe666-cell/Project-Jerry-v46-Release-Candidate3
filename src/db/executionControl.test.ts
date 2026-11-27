@@ -118,6 +118,45 @@ test('shared control write rolls back and releases the client on audit failure',
   assert.equal(calls.at(-1), 'RELEASE');
 });
 
+
+test('withSharedExecutionLease releases the database lease when protected work rejects', async () => {
+  const calls: string[] = [];
+  const client = {
+    query: async (query: string) => {
+      calls.push(query);
+      if (query.includes('SELECT stopped')) {
+        return { rows: [{ stopped: false, epoch: '12', reason: 'ready', updated_by: 'owner', updated_at: new Date().toISOString() }] };
+      }
+      return { rows: [] };
+    },
+    release: () => { calls.push('RELEASE'); },
+  };
+  const { withSharedExecutionLease } = await import('./executionControl.ts');
+  await assert.rejects(
+    withSharedExecutionLease(async (lease) => {
+      assert.equal(lease.epoch, 12);
+      throw new Error('protected operation failed');
+    }, async () => client as unknown as PoolClient),
+    /protected operation failed/,
+  );
+  assert.equal(calls.filter((query) => query === 'COMMIT').length, 1);
+  assert.equal(calls.filter((query) => query === 'RELEASE').length, 1);
+});
+
+test('withSharedExecutionLease does not run work when database admission fails', async () => {
+  let workStarted = false;
+  const { withSharedExecutionLease } = await import('./executionControl.ts');
+  await assert.rejects(
+    withSharedExecutionLease(async () => {
+      workStarted = true;
+      return 'must not execute';
+    }, async () => { throw new Error('control database unavailable'); }),
+    /control database unavailable/,
+  );
+  assert.equal(workStarted, false);
+});
+
+
 test('PostgreSQL stop waits for an admitted execution lease to release', {
   skip: process.env.JERRY_JOURNAL_TEST_DATABASE !== '1'
     ? 'Set JERRY_JOURNAL_TEST_DATABASE=1 for a disposable PostgreSQL database.'
