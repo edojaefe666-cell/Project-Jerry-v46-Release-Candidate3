@@ -8,6 +8,7 @@ const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
 const securityUi = fs.readFileSync(path.join(root, 'src/components/SecurityApprovals.tsx'), 'utf8');
 const jerryEngine = fs.readFileSync(path.join(root, 'src/lib/jerryEngine.ts'), 'utf8');
 const walletOutbox = fs.readFileSync(path.join(root, 'src/db/walletJournalOutbox.ts'), 'utf8');
+const sharedApprovalStore = fs.readFileSync(path.join(root, 'src/db/approvalStore.ts'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -1001,4 +1002,17 @@ test('owner approval APIs and external-operation reservations use shared Postgre
   const routes = server.slice(start, end);
   assert.doesNotMatch(routes, /securityStore\.(listApprovals|createApproval|decideApproval)/);
   assert.match(routes, /async \(req: AuthRequest, res\)/);
+});
+
+test('shared approval authority commits state transitions and hash-linked audit events atomically', () => {
+  assert.match(sharedApprovalStore, /CREATE TABLE IF NOT EXISTS jerry_security_approvals/);
+  assert.match(sharedApprovalStore, /CREATE TABLE IF NOT EXISTS jerry_security_approval_audit/);
+  assert.match(sharedApprovalStore, /await client\.query\('BEGIN'\)/);
+  assert.match(sharedApprovalStore, /await client\.query\('COMMIT'\)/);
+  assert.match(sharedApprovalStore, /await client\.query\('ROLLBACK'\)/);
+  assert.match(sharedApprovalStore, /pg_advisory_xact_lock/);
+  assert.match(sharedApprovalStore, /previous_hash/);
+  assert.match(sharedApprovalStore, /entry_hash/);
+  assert.match(sharedApprovalStore, /reservation_id IS NULL OR reservation_id=\$1/);
+  assert.match(sharedApprovalStore, /consumed_at IS NULL/);
 });
