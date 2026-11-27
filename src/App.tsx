@@ -924,6 +924,61 @@ export default function App() {
     state.tasks.filter((t) => t.status === 'awaiting_approval').length +
     state.transactions.filter((t) => t.status === 'pending_approval').length;
 
+  if (authLoading) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <div className="w-full max-w-sm text-center space-y-4">
+          <Brain className="w-12 h-12 mx-auto text-blue-400" />
+          <h1 className="text-2xl font-bold">JERRY</h1>
+          <p className="text-sm text-slate-300">Checking your secure owner session...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!user || !idToken) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <section className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-7 shadow-2xl">
+          <div className="flex justify-center mb-5">
+            <Brain className="w-14 h-14 text-blue-400" />
+          </div>
+          <h1 className="text-center text-3xl font-bold tracking-wide">JERRY</h1>
+          <p className="mt-3 text-center text-sm text-slate-300">
+            Your private business, productivity and technology partner.
+          </p>
+          <div className="mt-6 rounded-lg border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
+            Sign in with the owner's Google account to unlock Jerry. Workspace data and protected actions are unavailable until authentication succeeds.
+          </div>
+          {authError && (
+            <p role="alert" className="mt-4 rounded-lg border border-rose-800 bg-rose-950 p-3 text-sm text-rose-200">
+              {authError}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => void signInWithGoogle()}
+            className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-500"
+          >
+            Sign in securely with Google
+          </button>
+          {user && (
+            <button
+              type="button"
+              onClick={() => void signOutUser()}
+              className="mt-3 w-full rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+            >
+              Reset sign-in session
+            </button>
+          )}
+          <p className="mt-5 text-center text-xs text-slate-500">
+            Owner-only access · No paid services are activated by signing in
+          </p>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex">
       {/* Desktop Sidebar (256px) */}
