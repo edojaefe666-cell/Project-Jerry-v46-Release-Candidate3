@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost } from './providerCostStore.ts';
+import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, getProviderCostLedgerSnapshot } from './providerCostStore.ts';
 
 test('estimates provider cost using integer micro-USD rates and rounds each token class upward', () => {
   assert.equal(estimateProviderCostMicroUsd(1_000_000, 2_000_000, {
@@ -68,4 +68,28 @@ test('missing or over-reservation actual cost never releases reserved funds', as
     reservedMicroUsd: 10, dailyLimitMicroUsd: 100,
   }, 11, { query: async () => { called = true; return { rows: [], rowCount: 1 }; } } as never);
   assert.equal(called, false);
+});
+
+
+test('provider cost ledger snapshot is owner-scoped and exposes unsettled cost reservations', async () => {
+  const statements: string[] = [];
+  const snapshot = await getProviderCostLedgerSnapshot('owner-1', 20, {
+    query: async (sql: string, params?: unknown[]) => {
+      statements.push(sql);
+      if (sql.includes('CREATE TABLE')) return { rows: [], rowCount: 0 };
+      assert.deepEqual(params, ['owner-1', 20]);
+      if (sql.includes('jerry_provider_daily_cost WHERE')) return { rows: [{
+        day: '2026-11-27', dailyLimitMicroUsd: '1000000', reservedMicroUsd: '250000', actualMicroUsd: '125000',
+      }], rowCount: 1 };
+      return { rows: [{
+        reservationId: 'pending-cost-1', day: '2026-11-27', reservedMicroUsd: '250000',
+        status: 'reserved', createdAt: '2026-11-27T10:00:00Z', settledAt: null,
+      }], rowCount: 1 };
+    },
+  } as never);
+  assert.equal(snapshot.daily[0].reservedMicroUsd, '250000');
+  assert.equal(snapshot.reservations[0].status, 'reserved');
+  assert.equal(snapshot.reservations[0].settledAt, null);
+  assert.equal(statements.length, 3);
+  assert.ok(statements.every((sql) => !sql.includes('UPDATE ')));
 });
