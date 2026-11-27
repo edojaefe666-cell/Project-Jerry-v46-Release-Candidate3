@@ -601,3 +601,16 @@ test('standalone upgrade verification holds the shared stop lease during the ext
   assert.match(route, /res\.status\(423\)/);
   assert.match(route, /Upgrade verification was not started/);
 });
+
+test('on-chain wallet sync holds the shared stop lease across external reads and workspace persistence', () => {
+  const start = server.indexOf("app.post('/api/wallet/sync-onchain'");
+  const end = server.indexOf("app.post('/api/wallet/verify-tx'", start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  const lease = route.indexOf('withSharedExecutionLease(async () =>');
+  const externalRead = route.indexOf("fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot'", lease);
+  const persistence = route.indexOf('updateWorkspaceForUserAtomic', lease);
+  assert.ok(lease >= 0 && externalRead > lease && persistence > externalRead,
+    'shared lease must cover both external wallet reads and the subsequent workspace write');
+  assert.match(route, /res\.status\(423\)/);
+});
