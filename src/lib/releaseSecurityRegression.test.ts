@@ -742,3 +742,57 @@ test('Gemini learning and discovery routes refresh the durable shared stop befor
       `${name} must recheck shared stop before returning a provider-error fallback`);
   }
 });
+
+test('vision, voice, transcription and opportunity research refresh the durable stop before delivering provider results', () => {
+  const cases = [
+    {
+      name: 'vision',
+      start: "app.post('/api/jerry/vision'",
+      end: "app.post('/api/jerry/tts'",
+      guard: 'await sharedStopBlocksAcceptance()',
+    },
+    {
+      name: 'text to speech',
+      start: "app.post('/api/jerry/tts'",
+      end: "app.post('/api/jerry/transcribe'",
+      guard: 'await sharedStopBlocksAcceptance()',
+    },
+    {
+      name: 'transcription',
+      start: "app.post('/api/jerry/transcribe'",
+      end: "app.post('/api/jerry/scan-opportunities'",
+      guard: 'await sharedStopBlocksAcceptance()',
+    },
+    {
+      name: 'opportunity radar',
+      start: "app.post('/api/jerry/scan-opportunities'",
+      end: "app.post('/api/jerry/teach'",
+      guard: 'await sharedStopBlocksAcceptance()',
+    },
+  ];
+  for (const item of cases) {
+    const start = server.indexOf(item.start);
+    const end = server.indexOf(item.end, start + item.start.length);
+    const route = server.slice(start, end);
+    const providerAwait = Math.max(
+      route.indexOf('await analyzeImageWithModelFallback('),
+      route.indexOf('await synthesizeSpeechWithModelFallback('),
+      route.indexOf('await transcribeAudioWithModelFallback('),
+      route.indexOf('await runOpportunityRadar('),
+    );
+    const guard = route.indexOf(item.guard, providerAwait);
+    assert.ok(start >= 0 && providerAwait >= 0 && guard > providerAwait,
+      `${item.name} must re-read shared stop after provider work and before delivering results`);
+  }
+});
+
+test('Jerry teaching refreshes durable stop after optional AI enhancement and before memory persistence', () => {
+  const start = server.indexOf("app.post('/api/jerry/teach'");
+  const end = server.indexOf('// Jerry Polyglot Self-Programming Engine', start);
+  const route = server.slice(start, end);
+  const provider = route.indexOf('await generateWithModelFallback(');
+  const stop = route.indexOf('await sharedStopBlocksAcceptance()', provider);
+  const persist = route.indexOf('withSharedExecutionLease(() => saveMemoryEntryForUser', stop);
+  assert.ok(provider >= 0 && stop > provider && persist > stop,
+    'teaching must refresh shared stop after enhancement and before memory persistence');
+});
