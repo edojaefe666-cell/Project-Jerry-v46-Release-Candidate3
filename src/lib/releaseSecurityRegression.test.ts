@@ -15,6 +15,7 @@ const multimodalAdapters = fs.readFileSync(path.join(root, 'src/lib/multimodalAd
 const opportunityRadar = fs.readFileSync(path.join(root, 'src/lib/opportunityRadar.ts'), 'utf8');
 const providerUsageStore = fs.readFileSync(path.join(root, 'src/db/providerUsageStore.ts'), 'utf8');
 const providerCostStore = fs.readFileSync(path.join(root, 'src/db/providerCostStore.ts'), 'utf8');
+const apiClient = fs.readFileSync(path.join(root, 'src/lib/apiClient.ts'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -67,6 +68,13 @@ test('container liveness and readiness probes are public, bounded, and non-discl
   assert.match(readiness[0], /readSharedExecutionControl/);
   assert.match(readiness[0], /status\(503\)\.json\(\{ status: 'not_ready' \}\)/);
   assert.doesNotMatch(readiness[0], /error\.message|SQL_HOST|JERRY_OWNER_UID.*json/);
+});
+
+test('Android API client refuses the placeholder backend instead of silently targeting an invalid host', () => {
+  assert.match(apiClient, /hostname\.endsWith\('\.invalid'\)/);
+  assert.match(apiClient, /Jerry backend is not connected/);
+  assert.match(apiClient, /verified HTTPS JERRY_BACKEND_ORIGIN/);
+  assert.match(apiClient, /if \(!API_BASE\) return input/);
 });
 
 test('production startup fails closed when the built SPA entrypoint is missing', () => {
