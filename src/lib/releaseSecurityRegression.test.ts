@@ -119,6 +119,23 @@ test('Android requests only currently justified runtime permissions', () => {
   assert.match(androidPermissionManager, /Build\.VERSION\.SDK_INT <= 30/);
 });
 
+test('multimodal shared execution leases remain held through provider response body consumption', () => {
+  const postJsonStart = multimodalAdapters.indexOf('async function postJson');
+  const postJsonEnd = multimodalAdapters.indexOf('\nfunction readText', postJsonStart);
+  const postJson = multimodalAdapters.slice(postJsonStart, postJsonEnd);
+  assert.match(postJson, /return await fetchUnderOwnerLease\(ownerUid, async \(\) =>/);
+  assert.ok(postJson.indexOf('await response.json()') > postJson.indexOf('fetchUnderOwnerLease'));
+  assert.ok(postJson.indexOf('return value as Record') > postJson.indexOf('await response.json()'));
+
+  const speechStart = multimodalAdapters.indexOf("const response = await fetchImpl('https://api.openai.com/v1/audio/speech'");
+  assert.equal(speechStart, -1, 'OpenAI speech response parsing must not happen outside its shared lease');
+  assert.match(multimodalAdapters, /return await fetchUnderOwnerLease\(options\.ownerUid, async \(\) => \{[\s\S]*?await response\.arrayBuffer\(\)/);
+
+  const transcriptionStart = multimodalAdapters.indexOf("const response = await fetchImpl('https://api.openai.com/v1/audio/transcriptions'");
+  assert.equal(transcriptionStart, -1, 'OpenAI transcription response parsing must not happen outside its shared lease');
+  assert.match(multimodalAdapters, /return await fetchUnderOwnerLease\(options\.ownerUid, async \(\) => \{[\s\S]*?await response\.json\(\)/);
+});
+
 test('all hosted AI and live research paths default to no paid spending before verified revenue', () => {
   assert.match(providerSpendPolicy, /JERRY_PAID_SERVICES_ENABLED !== '1'/);
   assert.match(providerSpendPolicy, /verified revenue/);
