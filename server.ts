@@ -33,6 +33,7 @@ import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { reserveConfiguredProviderOperation } from './src/db/providerOperationStore.ts';
+import { reserveProviderTokens, settleProviderTokens, type ProviderUsageReservation } from './src/db/providerUsageStore.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
 import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
@@ -115,6 +116,31 @@ function formatCleanError(error: unknown, fallback: string): string {
     return 'Gemini API key invalid or missing permission. Check Settings > Secrets.';
   }
   return raw.slice(0, 200);
+}
+
+
+async function reserveDirectGeminiTokens(ownerUid: string, prompt: string): Promise<ProviderUsageReservation> {
+  const dailyLimitTokens = Number(process.env.JERRY_DAILY_PROVIDER_TOKEN_LIMIT);
+  if (!Number.isSafeInteger(dailyLimitTokens) || dailyLimitTokens < 1) {
+    throw new Error('JERRY_DAILY_PROVIDER_TOKEN_LIMIT must be configured as a positive integer before Jerry can call external model providers.');
+  }
+  // Reserve a conservative UTF-8 input upper bound, framing overhead and the
+  // enforced output ceiling before the direct SDK request is sent.
+  const reserveTokens = Buffer.byteLength(prompt, 'utf8') + 512 + 2048;
+  return reserveProviderTokens({ ownerUid, reserveTokens, dailyLimitTokens });
+}
+
+async function settleDirectGeminiTokens(
+  reservation: ProviderUsageReservation,
+  response: { usageMetadata?: { totalTokenCount?: number } },
+): Promise<void> {
+  const actualTokens = Number(response.usageMetadata?.totalTokenCount);
+  if (!Number.isSafeInteger(actualTokens) || actualTokens < 0 || actualTokens > reservation.reservedTokens) return;
+  try {
+    await settleProviderTokens(reservation, actualTokens);
+  } catch {
+    // Preserve the full reservation when reconciliation is unavailable.
+  }
 }
 
 async function startServer() {
@@ -2308,16 +2334,18 @@ async function startServer() {
         });
         return;
       }
+      const prompt = 'You are Jerry. Research practical, legitimate business opportunities. Do not claim or guarantee revenue, profit, customers, conversion, or savings. Do not invent historical owner performance or a target that must be beaten. For each opportunity, provide a conservative, explicitly hypothetical daily-profit scenario only if you can state the assumptions that produce it; otherwise set estimatedDailyProfitUsd to 0. All numeric financial values are scenarios, not actual income, verified forecasts, or promises. Do not imply any opportunity has been validated or executed. ' +
+          (focusHint ? `Owner focus hint: "${focusHint}". ` : '') +
+          `Avoid repeating these titles: ${existingTitles.slice(0, 12).join('; ') || 'none'}. ` +
+          'Return ONLY a valid JSON array of up to 3 methods with keys: title, methodCategory (one of "Automation Template", "Productized Service", "AI Micro-Tool", "Retainer Upsell", "Data & API Feed"), whyEasierAndFaster, executionShortcut, estimatedHoursSavedPerWeek (number), estimatedDailyProfitUsd (number), startupCapitalUsd (number). Explain pricing, volume, cost and capacity assumptions for any nonzero financial scenario. Prefer estimatedDailyProfitUsd 0 when assumptions cannot be substantiated.';
+      const tokenReservation = await reserveDirectGeminiTokens(req.user!.uid, prompt);
       await reserveConfiguredProviderOperation(req.user!.uid);
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
-        contents:
-          'You are Jerry. Research practical, legitimate business opportunities. Do not claim or guarantee revenue, profit, customers, conversion, or savings. Do not invent historical owner performance or a target that must be beaten. For each opportunity, provide a conservative, explicitly hypothetical daily-profit scenario only if you can state the assumptions that produce it; otherwise set estimatedDailyProfitUsd to 0. All numeric financial values are scenarios, not actual income, verified forecasts, or promises. Do not imply any opportunity has been validated or executed. ' +
-          (focusHint ? `Owner focus hint: "${focusHint}". ` : '') +
-          `Avoid repeating these titles: ${existingTitles.slice(0, 12).join('; ') || 'none'}. ` +
-          'Return ONLY a valid JSON array of up to 3 methods with keys: title, methodCategory (one of "Automation Template", "Productized Service", "AI Micro-Tool", "Retainer Upsell", "Data & API Feed"), whyEasierAndFaster, executionShortcut, estimatedHoursSavedPerWeek (number), estimatedDailyProfitUsd (number), startupCapitalUsd (number). Explain pricing, volume, cost and capacity assumptions for any nonzero financial scenario. Prefer estimatedDailyProfitUsd 0 when assumptions cannot be substantiated.',
+        contents: prompt,
         config: { tools: [{ googleSearch: {} }], maxOutputTokens: 2048, abortSignal: execution.signal },
       });
+      await settleDirectGeminiTokens(tokenReservation, response);
 
       if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({
@@ -2507,14 +2535,15 @@ async function startServer() {
         res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
         return;
       }
+      const prompt = `You are Jerry, constantly learning to understand human psychology, buyer motivation, communication trust, and your partner ${ownerName} better each day than the previous day. ` +
+          `${cleanHint ? `Specific observation or context to reflect on: "${cleanHint}". ` : ''}` +
+          `Avoid repeating existing insights: ${existingTitles.slice(0, 10).join('; ') || 'none'}. ` +
+          `Return valid JSON matching the schema with a domain ("Buyer Psychology" | "Owner Style" | "Communication & Trust" | "Decision Friction" | "Offer Framing"), concise title, deep human observation, practicalApplication, and clarityScoreGain (2-5).`;
+      const tokenReservation = await reserveDirectGeminiTokens(req.user!.uid, prompt);
       await reserveConfiguredProviderOperation(req.user!.uid);
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
-        contents:
-          `You are Jerry, constantly learning to understand human psychology, buyer motivation, communication trust, and your partner ${ownerName} better each day than the previous day. ` +
-          `${cleanHint ? `Specific observation or context to reflect on: "${cleanHint}". ` : ''}` +
-          `Avoid repeating existing insights: ${existingTitles.slice(0, 10).join('; ') || 'none'}. ` +
-          `Return valid JSON matching the schema with a domain ("Buyer Psychology" | "Owner Style" | "Communication & Trust" | "Decision Friction" | "Offer Framing"), concise title, deep human observation, practicalApplication, and clarityScoreGain (2-5).`,
+        contents: prompt,
         config: {
           responseMimeType: 'application/json',
           maxOutputTokens: 2048,
@@ -2531,6 +2560,7 @@ async function startServer() {
           abortSignal: execution.signal,
         },
       });
+      await settleDirectGeminiTokens(tokenReservation, response);
 
       if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
@@ -2662,14 +2692,15 @@ async function startServer() {
         res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
         return;
       }
+      const prompt = `You are Jerry, learning and growing each day better than the previous day on how to dominate Internet distribution, search authority, viral product loops, and developer ecosystems legitimately. ` +
+          `${cleanHint ? `Focus topic: "${cleanHint}". ` : ''}` +
+          `Avoid repeating existing playbooks: ${existingTitles.slice(0, 10).join('; ') || 'none'}. ` +
+          `Return ONLY JSON matching the schema with pillar ("SEO & Organic Reach" | "Autonomous Distribution" | "Viral Product Loops" | "Developer & API Ecosystem" | "Conversion & Monetization"), concise title, actionable tactic, expectedImpact, and authorityGainPts (3-5).`;
+      const tokenReservation = await reserveDirectGeminiTokens(req.user!.uid, prompt);
       await reserveConfiguredProviderOperation(req.user!.uid);
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
-        contents:
-          `You are Jerry, learning and growing each day better than the previous day on how to dominate Internet distribution, search authority, viral product loops, and developer ecosystems legitimately. ` +
-          `${cleanHint ? `Focus topic: "${cleanHint}". ` : ''}` +
-          `Avoid repeating existing playbooks: ${existingTitles.slice(0, 10).join('; ') || 'none'}. ` +
-          `Return ONLY JSON matching the schema with pillar ("SEO & Organic Reach" | "Autonomous Distribution" | "Viral Product Loops" | "Developer & API Ecosystem" | "Conversion & Monetization"), concise title, actionable tactic, expectedImpact, and authorityGainPts (3-5).`,
+        contents: prompt,
         config: {
           responseMimeType: 'application/json',
           maxOutputTokens: 2048,
@@ -2686,6 +2717,7 @@ async function startServer() {
           abortSignal: execution.signal,
         },
       });
+      await settleDirectGeminiTokens(tokenReservation, response);
 
       if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
