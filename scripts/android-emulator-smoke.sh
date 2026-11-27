@@ -43,8 +43,8 @@ fi
 wait_for_package_manager() {
   local attempt package_list
   for attempt in $(seq 1 60); do
-    package_list="$(adb shell cmd package list packages 2>/dev/null | tr -d '\\r' || true)"
-    if printf '%s\\n' "$package_list" | grep -q '^package:' &&
+    package_list="$(adb shell cmd package list packages 2>/dev/null | tr -d '\r' || true)"
+    if printf '%s\n' "$package_list" | grep -q '^package:' &&
        adb shell pm path android >/dev/null 2>&1; then
       echo "Package Manager is ready (attempt $attempt)."
       return 0
