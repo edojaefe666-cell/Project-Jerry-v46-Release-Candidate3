@@ -61,3 +61,6 @@ CREATE TABLE IF NOT EXISTS jerry_security_audit (
 );
 CREATE INDEX IF NOT EXISTS jerry_security_audit_owner_seq
   ON jerry_security_audit(owner_uid,seq);
+
+CREATE TABLE IF NOT EXISTS jerry_security_legacy_audit_archive (id bigserial PRIMARY KEY, owner_uid text NOT NULL, source_entry jsonb NOT NULL, archived_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS jerry_security_legacy_audit_owner_id ON jerry_security_legacy_audit_archive(owner_uid,id);
