@@ -1091,6 +1091,12 @@ test('multimodal and direct SDK provider attempts consume a shared daily owner o
   }
   assert.equal((server.match(/await reserveConfiguredProviderOperation\(req\.user!\.uid\)/g) ?? []).length, 3,
     'all direct Gemini SDK routes must reserve before execution');
+  assert.equal((server.match(/await reserveDirectGeminiTokens\(req\.user!\.uid, prompt\)/g) ?? []).length, 3,
+    'all direct Gemini SDK routes must reserve the shared daily token budget before execution');
+  assert.equal((server.match(/await settleDirectGeminiTokens\(tokenReservation, response\)/g) ?? []).length, 3,
+    'all direct Gemini SDK routes must reconcile provider-reported token usage');
+  assert.match(server, /JERRY_DAILY_PROVIDER_TOKEN_LIMIT must be configured/);
+  assert.match(server, /Buffer\.byteLength\(prompt, 'utf8'\) \+ 512 \+ 2048/);
   assert.equal((server.match(/maxOutputTokens: 2048/g) ?? []).length, 3,
     'all direct Gemini SDK responses must have a hard output token cap');
   assert.equal((multimodalAdapters.match(/await reserveConfiguredProviderOperation\(options\.ownerUid\)/g) ?? []).length, 6,
