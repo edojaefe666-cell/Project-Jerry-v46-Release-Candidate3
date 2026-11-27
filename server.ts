@@ -1168,7 +1168,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/wallet/verify-tx', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/wallet/verify-tx', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     const { txHash = '', network = 'Bitcoin Mainnet' } = req.body as { txHash?: string; network?: string };
     const cleanHash = txHash.trim().toLowerCase();
     if (network !== 'Bitcoin Mainnet') {
@@ -1181,6 +1181,7 @@ async function startServer() {
     }
 
     try {
+      await withSharedExecutionLease(async () => {
       const [txResp, tipResp] = await Promise.all([
         fetch(`https://blockstream.info/api/tx/${cleanHash}/status`, { signal: AbortSignal.timeout(5000) }),
         fetch('https://blockstream.info/api/blocks/tip/height', { signal: AbortSignal.timeout(5000) }),
@@ -1201,7 +1202,13 @@ async function startServer() {
         network,
         error: verified ? undefined : `Bitcoin transaction is not final: ${confirmationDepth} confirmation(s); 6 are required.`,
       });
-    } catch {
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (/emergency stop is engaged/i.test(message)) {
+        res.status(423).json({ verified: false, error: 'Jerry emergency stop is engaged. External transaction verification was not started.' });
+        return;
+      }
       res.json({ verified: false, error: 'Unable to reach Bitcoin verification service right now.' });
     }
   });
