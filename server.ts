@@ -511,7 +511,7 @@ async function startServer() {
     }
     try {
       const result = await withSharedExecutionLease(() =>
-        withConsumedDeviceHttpRequestChallenge(ownerUid, ownerEmail, challengeId, async (tx) => {
+        withConsumedDeviceHttpRequestChallenge(ownerUid, ownerEmail, challengeId, challenge.signingPublicKey, async (tx) => {
           const [owner] = await tx.select({ id: users.id }).from(users).where(eq(users.uid, ownerUid)).limit(1);
           if (!owner) throw new Error('Owner account is unavailable.');
           return operation(tx, owner.id);
