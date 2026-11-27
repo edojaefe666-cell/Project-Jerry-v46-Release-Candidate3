@@ -628,3 +628,16 @@ test('Bitcoin reconciliation holds the shared stop lease across blockchain reads
     'outer shared lease must cover chain reads, transaction persistence and journal posting');
   assert.match(route, /res\.status\(423\)/);
 });
+
+test('historical financial backfill holds the shared stop lease across journal repair and reconciliation', () => {
+  const start = server.indexOf("app.post('/api/wallet/financial-truth/backfill'");
+  const end = server.indexOf("app.post('/api/wallet/commands/reconcile-tx'", start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  const lease = route.indexOf('withSharedExecutionLease(async () =>');
+  const backfill = route.indexOf('backfillHistoricalWalletJournal', lease);
+  const report = route.indexOf('reconcileFinancialTruth', backfill);
+  assert.ok(lease >= 0 && backfill > lease && report > backfill,
+    'shared lease must cover historical journal repair and its resulting financial-truth report');
+  assert.match(route, /res\.status\(423\)/);
+});
