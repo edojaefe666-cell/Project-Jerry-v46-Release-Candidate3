@@ -975,14 +975,21 @@ test('every wallet mutation or external verification route is owner-stop guarded
   }
 });
 
-test('production startup rejects unsupported multi-instance SQLite approval authority', () => {
-  assert.match(server, /JERRY_SECURITY_STORE_TOPOLOGY !== 'single_instance'/);
-  assert.match(server, /Production startup blocked: Jerry security metadata and backup restore still use instance-local SQLite/);
-  assert.match(server, /multi-instance production remains unsupported/);
-  assert.ok(
-    server.indexOf("JERRY_SECURITY_STORE_TOPOLOGY !== 'single_instance'") < server.indexOf('const securityStore = new SecurityStore()'),
-    'topology must be checked before opening the local approval store',
-  );
+test('production no longer depends on instance-local SQLite for owner security authority', () => {
+  assert.doesNotMatch(server, /JERRY_SECURITY_STORE_TOPOLOGY/);
+  for (const marker of [
+    'await listSharedApprovals',
+    'await createSharedApproval',
+    'await decideSharedApproval',
+    'await listSharedContacts',
+    'await createSharedContact',
+    'await setSharedContactStatus',
+    'await listSharedSecurityAudit',
+    'await verifySharedSecurityAudit',
+    'await exportSharedSecuritySnapshot',
+    'await restoreSharedSecuritySnapshot',
+  ]) assert.ok(server.includes(marker), `missing shared security operation: ${marker}`);
+  assert.match(server, /getEmergencyStop\(\)\.stopped/);
 });
 
 test('owner approval APIs and external-operation reservations use shared PostgreSQL authority', () => {
