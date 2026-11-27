@@ -520,3 +520,15 @@ test('approved destructive workspace reset cannot race the shared emergency stop
   assert.ok(lease >= 0 && reset > lease && finalize > reset,
     'workspace reset and approval finalization must stay inside the shared lease');
 });
+
+test('security backup restore holds the shared emergency-stop lease through the restore mutation', () => {
+  const start = server.indexOf("app.post('/api/security/restore'");
+  const end = server.indexOf("app.get('/api/health'", start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  assert.match(route, /await withSharedExecutionLease\(async \(\) =>/);
+  assert.ok(route.indexOf('withSharedExecutionLease') < route.indexOf('decryptSecurityBackup'));
+  assert.ok(route.indexOf('decryptSecurityBackup') < route.indexOf('restoreSnapshotWithApproval'));
+  assert.match(route, /res\.status\(423\)/);
+  assert.match(route, /Security restore was not started/);
+});
