@@ -77,6 +77,13 @@ export function createNeonStoragePresignedUrl(
   if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
     throw new Error('Neon storage endpoint must be a clean HTTPS URL.');
   }
+  const endpointMatch = endpoint.hostname.match(
+    /^br-[a-z0-9-]+\\.storage\\.c-\\d+\\.([a-z0-9-]+)\\.aws\\.neon\\.tech$/,
+  );
+  if (!endpointMatch || endpointMatch[1] !== region || endpoint.port ||
+      (endpoint.pathname !== '/' && endpoint.pathname !== '')) {
+    throw new Error('Neon storage endpoint must match the configured branch region.');
+  }
 
   const now = request.now ?? new Date();
   if (!Number.isFinite(now.getTime())) throw new Error('Storage signing time is invalid.');
