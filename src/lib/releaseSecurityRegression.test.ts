@@ -126,6 +126,7 @@ test('Jerry workspace is gated behind a valid authenticated owner session', () =
 
 test('Android API client refuses the placeholder backend instead of silently targeting an invalid host', () => {
   assert.match(apiClient, /hostname\.endsWith\('\.invalid'\)/);
+  assert.match(apiClient, /window\.location\.origin === 'https:\/\/localhost'/);
   assert.match(apiClient, /Jerry backend is not connected/);
   assert.match(apiClient, /verified HTTPS JERRY_BACKEND_ORIGIN/);
   assert.match(apiClient, /if \(!API_BASE\) return input/);
