@@ -187,7 +187,7 @@ test('reserves and reconciles exact configured model USD cost from provider inpu
       reserveCost: async (input) => {
         events.push(`reserve:${input.reserveMicroUsd}`);
         return {
-          ownerUid: input.ownerUid, day: '2026-11-27',
+          reservationId: 'test-cost-reservation', ownerUid: input.ownerUid, day: '2026-11-27',
           reservedMicroUsd: input.reserveMicroUsd, dailyLimitMicroUsd: input.dailyLimitMicroUsd,
         };
       },
