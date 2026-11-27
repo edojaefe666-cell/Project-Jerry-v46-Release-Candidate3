@@ -70,6 +70,40 @@ function hashScope(scope?: Record<string, unknown>): string | undefined {
   return scope ? sha256(JSON.stringify(canonicalize(scope))) : undefined;
 }
 
+function validateApprovalCommitment(
+  action: HighImpactAction,
+  amountUsd: number | undefined,
+  scope: Record<string, unknown> | undefined,
+): void {
+  const financialActions: HighImpactAction[] = [
+    'outgoing_payment', 'bitcoin_transfer', 'purchase', 'subscription', 'contract', 'financial_commitment',
+  ];
+  if (!financialActions.includes(action)) return;
+  if (!scope || Array.isArray(scope) || typeof scope !== 'object' || Object.keys(scope).length === 0) {
+    throw new Error('Financial approval requires an explicit, immutable action scope.');
+  }
+  if (action === 'bitcoin_transfer') {
+    const amount = Number(scope.amount);
+    const fee = Number(scope.fee);
+    const destination = String(scope.destination ?? '');
+    if (scope.asset !== 'BTC' || scope.network !== 'Bitcoin Mainnet' ||
+        !/^(bc1|[13])[a-km-zA-HJ-NP-Z1-9]{25,90}$/.test(destination) ||
+        !Number.isFinite(amount) || amount <= 0 || amount > 21_000_000 ||
+        !Number.isFinite(fee) || fee < 0 || fee > amount ||
+        Math.abs(amount * 1e8 - Math.round(amount * 1e8)) > 1e-6 ||
+        Math.abs(fee * 1e8 - Math.round(fee * 1e8)) > 1e-6) {
+      throw new Error('Bitcoin transfer approval must bind BTC amount, fee, Bitcoin Mainnet and a valid destination address.');
+    }
+    return;
+  }
+  const recipient = String(scope.recipient ?? scope.destination ?? '').trim();
+  const purpose = String(scope.purpose ?? '').trim();
+  if (amountUsd === undefined || !Number.isFinite(amountUsd) || amountUsd <= 0 ||
+      !recipient || recipient.length > 254 || !purpose || purpose.length < 5 || purpose.length > 1000) {
+    throw new Error('Financial approval requires a positive USD limit, exact recipient or destination, and a clear purpose.');
+  }
+}
+
 const APPROVAL_TTL_MS = 15 * 60 * 1000;
 function isApprovalExpired(createdAt: string): boolean {
   const created = Date.parse(createdAt);
@@ -120,6 +154,16 @@ export class SecurityStore {
         updated_at TEXT NOT NULL,
         owner_uid TEXT
       );
+      CREATE TABLE IF NOT EXISTS emergency_control (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        stopped INTEGER NOT NULL CHECK(stopped IN (0,1)),
+        reason TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        owner_uid TEXT NOT NULL,
+        shared_epoch INTEGER NOT NULL DEFAULT 0 CHECK(shared_epoch >= 0)
+      );
+      INSERT OR IGNORE INTO emergency_control(id, stopped, reason, updated_at, owner_uid, shared_epoch)
+        VALUES(1, 1, 'Emergency stop engaged by secure first-boot default', strftime('%Y-%m-%dT%H:%M:%fZ','now'), 'system', 0);
       CREATE TABLE IF NOT EXISTS idempotency (
         idempotency_key TEXT PRIMARY KEY,
         actor_uid TEXT NOT NULL,
@@ -138,11 +182,91 @@ export class SecurityStore {
     try { this.db.exec('ALTER TABLE approvals ADD COLUMN reservation_id TEXT'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE approvals ADD COLUMN reserved_at TEXT'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE approvals ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
+    try { this.db.exec('ALTER TABLE emergency_control ADD COLUMN shared_epoch INTEGER NOT NULL DEFAULT 0 CHECK(shared_epoch >= 0)'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE approved_contacts ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE audit_log ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
+    // A legacy unclaimed system seed must never silently enable execution.
+    // Explicit owner-controlled resume changes owner_uid and is preserved.
+    this.db.prepare(
+      "UPDATE emergency_control SET stopped=1, reason='Emergency stop engaged by secure first-boot default', updated_at=? WHERE id=1 AND owner_uid='system' AND reason='Emergency stop not engaged'"
+    ).run(now());
+  }
+
+  getEmergencyStop(): { stopped: boolean; reason: string; updatedAt: string; ownerUid: string; sharedEpoch: number } {
+    const row = this.db.prepare(
+      'SELECT stopped, reason, updated_at AS updatedAt, owner_uid AS ownerUid, shared_epoch AS sharedEpoch FROM emergency_control WHERE id=1'
+    ).get() as { stopped: number; reason: string; updatedAt: string; ownerUid: string; sharedEpoch: number } | undefined;
+    if (!row) throw new Error('Emergency-stop control record is missing.');
+    return { stopped: row.stopped === 1, reason: row.reason, updatedAt: row.updatedAt, ownerUid: row.ownerUid, sharedEpoch: Number(row.sharedEpoch) };
+  }
+
+  setEmergencyStop(stopped: boolean, ownerUid: string, reason: string, sharedEpoch?: number): ReturnType<SecurityStore['getEmergencyStop']> {
+    const cleanReason = reason.trim().slice(0, 1000);
+    if (!ownerUid.trim() || cleanReason.length < 5) throw new Error('Owner UID and a meaningful emergency-control reason are required.');
+    if (sharedEpoch !== undefined && (!Number.isSafeInteger(sharedEpoch) || sharedEpoch < 1)) throw new Error('Shared emergency-control epoch is invalid.');
+    const updatedAt = now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(
+        'UPDATE emergency_control SET stopped=?, reason=?, updated_at=?, owner_uid=?, shared_epoch=CASE WHEN ? IS NULL THEN shared_epoch ELSE ? END WHERE id=1 AND (? IS NULL OR shared_epoch <= ?)'
+      ).run(stopped ? 1 : 0, cleanReason, updatedAt, ownerUid, sharedEpoch ?? null, sharedEpoch ?? null, sharedEpoch ?? null, sharedEpoch ?? null);
+      if (Number(result.changes ?? 0) !== 1) {
+        throw new Error(sharedEpoch === undefined
+          ? 'Emergency-stop control row is missing; local state was not changed.'
+          : 'Stale emergency-stop update rejected because a newer shared epoch is already stored.');
+      }
+      this.audit(ownerUid, stopped ? 'emergency_stop.engaged' : 'emergency_stop.released', { reason: cleanReason, updatedAt, sharedEpoch });
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original failure */ }
+      throw error;
+    }
+    return this.getEmergencyStop();
+  }
+
+  /**
+   * Apply a shared snapshot only when its epoch is newer than the local mirror.
+   * BEGIN IMMEDIATE serializes concurrent pollers; a delayed older snapshot can
+   * never overwrite a stop/resume transition already applied at a higher epoch.
+   */
+  synchronizeEmergencyStop(
+    stopped: boolean,
+    ownerUid: string,
+    reason: string,
+    sharedEpoch: number,
+  ): ReturnType<SecurityStore['getEmergencyStop']> {
+    const cleanReason = reason.trim().slice(0, 1000);
+    if (!ownerUid.trim() || cleanReason.length < 5 || !Number.isSafeInteger(sharedEpoch) || sharedEpoch < 1) {
+      throw new Error('A valid owner, reason and shared emergency-control epoch are required.');
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const current = this.getEmergencyStop();
+      if (sharedEpoch < current.sharedEpoch) {
+        this.db.exec('COMMIT');
+        return current;
+      }
+      if (sharedEpoch === current.sharedEpoch) {
+        if (current.stopped !== stopped) throw new Error('Conflicting emergency-stop state for the same shared epoch.');
+        this.db.exec('COMMIT');
+        return current;
+      }
+      const updatedAt = now();
+      const result = this.db.prepare(
+        'UPDATE emergency_control SET stopped=?, reason=?, updated_at=?, owner_uid=?, shared_epoch=? WHERE id=1 AND shared_epoch < ?'
+      ).run(stopped ? 1 : 0, cleanReason, updatedAt, ownerUid, sharedEpoch, sharedEpoch);
+      if (Number(result.changes ?? 0) !== 1) throw new Error('Emergency-stop mirror changed unexpectedly during synchronization.');
+      this.audit(ownerUid, stopped ? 'emergency_stop.shared_engaged' : 'emergency_stop.shared_released', { reason: cleanReason, updatedAt, sharedEpoch });
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+    return this.getEmergencyStop();
   }
 
   createApproval(input: { action: HighImpactAction; summary: string; amountUsd?: number; scope?: Record<string, unknown>; ownerUid: string }): ApprovalRequest {
+    validateApprovalCommitment(input.action, input.amountUsd, input.scope);
     const approval: ApprovalRequest = {
       id: randomBytes(16).toString('hex'),
       action: input.action,
@@ -161,12 +285,15 @@ export class SecurityStore {
   }
 
   decideApproval(id: string, decision: 'approved' | 'rejected', actorUid: string): ApprovalRequest | null {
-    const existing = this.getApproval(id, actorUid);
-    if (!existing || existing.status !== 'pending' || isApprovalExpired(existing.createdAt)) return null;
     const decidedAt = now();
-    this.db.prepare("UPDATE approvals SET status=?, decided_at=?, decided_by=? WHERE id=? AND owner_uid=? AND status='pending'")
-      .run(decision, decidedAt, actorUid, id, actorUid);
-    this.audit(actorUid, 'approval.decided', { id, decision, actorUid });
+    const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
+    // Make the decision a single conditional write. A read-then-write check
+    // can race when two owner sessions submit different decisions concurrently.
+    const result = this.db.prepare(
+      "UPDATE approvals SET status=?, decided_at=?, decided_by=? WHERE id=? AND owner_uid=? AND status='pending' AND created_at>=?"
+    ).run(decision, decidedAt, actorUid, id, actorUid, cutoff);
+    if (Number(result.changes ?? 0) !== 1) return null;
+    this.audit(actorUid, 'approval.decided', { id, decision, actorUid, decidedAt });
     return this.getApproval(id, actorUid);
   }
 
@@ -181,54 +308,97 @@ export class SecurityStore {
     const reservedAt = now();
     const expectedHash = hashScope(expectedScope);
     const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
-    const leaseCutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
-    const result = this.db.prepare(
-      "UPDATE approvals SET reservation_id=?, reserved_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND created_at>=? AND (? IS NULL OR scope_hash=?) AND (reservation_id IS NULL OR reserved_at IS NULL OR reserved_at<? OR reservation_id=?)"
-    ).run(reservationId, reservedAt, id, actorUid, action, cutoff, expectedHash ?? null, expectedHash ?? null, leaseCutoff, reservationId);
-    if (Number(result.changes ?? 0) !== 1) return null;
-    const reserved = this.getApproval(id, actorUid);
-    if (reserved) this.audit(actorUid, 'approval.reserved', { id, action, reservationId, reservedAt });
-    return reserved;
+
+    // Reservation and its audit evidence are one SQLite commit. A crash or
+    // audit-write failure must never leave an unaudited live reservation.
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(
+        "UPDATE approvals SET reservation_id=?, reserved_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND (created_at>=? OR reservation_id=?) AND (? IS NULL OR scope_hash=?) AND (reservation_id IS NULL OR reservation_id=?) AND EXISTS (SELECT 1 FROM emergency_control WHERE id=1 AND stopped=0)"
+      ).run(reservationId, reservedAt, id, actorUid, action, cutoff, reservationId, expectedHash ?? null, expectedHash ?? null, reservationId);
+      if (Number(result.changes ?? 0) !== 1) {
+        this.db.exec('COMMIT');
+        return null;
+      }
+      const reserved = this.getApproval(id, actorUid);
+      if (!reserved) throw new Error('Reserved approval could not be reloaded.');
+      this.audit(actorUid, 'approval.reserved', { id, action, reservationId, reservedAt });
+      this.db.exec('COMMIT');
+      return reserved;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
   }
 
   finalizeApprovalReservation(id: string, actorUid: string, reservationId: string): ApprovalRequest | null {
     const consumedAt = now();
-    const result = this.db.prepare(
-      "UPDATE approvals SET consumed_at=?, reservation_id=NULL, reserved_at=NULL WHERE id=? AND owner_uid=? AND status='approved' AND consumed_at IS NULL AND reservation_id=?"
-    ).run(consumedAt, id, actorUid, reservationId);
-    if (Number(result.changes ?? 0) !== 1) {
-      const existing = this.getApproval(id, actorUid);
-      return existing?.consumedAt ? existing : null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(
+        "UPDATE approvals SET consumed_at=?, reservation_id=NULL, reserved_at=NULL WHERE id=? AND owner_uid=? AND status='approved' AND consumed_at IS NULL AND reservation_id=?"
+      ).run(consumedAt, id, actorUid, reservationId);
+      if (Number(result.changes ?? 0) !== 1) {
+        const existing = this.getApproval(id, actorUid);
+        this.db.exec('COMMIT');
+        return existing?.consumedAt ? existing : null;
+      }
+      const reservedApproval = this.getApproval(id, actorUid);
+      if (!reservedApproval) throw new Error('Consumed approval could not be reloaded.');
+      this.audit(actorUid, 'approval.consumed', { id, action: reservedApproval.action, consumedAt, reservationId });
+      const consumed = this.getApproval(id, actorUid);
+      this.db.exec('COMMIT');
+      return consumed;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
     }
-    this.audit(actorUid, 'approval.consumed', { id, action: 'bitcoin_transfer', consumedAt, reservationId });
-    return this.getApproval(id, actorUid);
   }
 
   releaseApprovalReservation(id: string, actorUid: string, reservationId: string): boolean {
-    const result = this.db.prepare(
-      "UPDATE approvals SET reservation_id=NULL, reserved_at=NULL WHERE id=? AND owner_uid=? AND consumed_at IS NULL AND reservation_id=?"
-    ).run(id, actorUid, reservationId);
-    if (Number(result.changes ?? 0) === 1) this.audit(actorUid, 'approval.reservation_released', { id, reservationId });
-    return Number(result.changes ?? 0) === 1;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(
+        "UPDATE approvals SET reservation_id=NULL, reserved_at=NULL WHERE id=? AND owner_uid=? AND consumed_at IS NULL AND reservation_id=?"
+      ).run(id, actorUid, reservationId);
+      if (Number(result.changes ?? 0) === 1) {
+        this.audit(actorUid, 'approval.reservation_released', { id, reservationId });
+      }
+      this.db.exec('COMMIT');
+      return Number(result.changes ?? 0) === 1;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
   }
 
   consumeApproval(id: string, action: HighImpactAction, actorUid: string, expectedScope?: Record<string, unknown>): ApprovalRequest | null {
     const consumedAt = now();
     const expectedHash = hashScope(expectedScope);
     const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
-    const result = this.db.prepare(
-      "UPDATE approvals SET consumed_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND reservation_id IS NULL AND created_at>=? AND (? IS NULL OR scope_hash=?)"
-    ).run(consumedAt, id, actorUid, action, cutoff, expectedHash ?? null, expectedHash ?? null);
-    if (Number(result.changes ?? 0) !== 1) return null;
-    const consumed = this.getApproval(id, actorUid);
-    if (!consumed) return null;
-    this.audit(actorUid, 'approval.consumed', { id, action, consumedAt });
-    return consumed;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(
+        "UPDATE approvals SET consumed_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND reservation_id IS NULL AND created_at>=? AND (? IS NULL OR scope_hash=?)"
+      ).run(consumedAt, id, actorUid, action, cutoff, expectedHash ?? null, expectedHash ?? null);
+      if (Number(result.changes ?? 0) !== 1) {
+        this.db.exec('COMMIT');
+        return null;
+      }
+      const consumed = this.getApproval(id, actorUid);
+      if (!consumed) throw new Error('Consumed approval could not be reloaded.');
+      this.audit(actorUid, 'approval.consumed', { id, action, consumedAt });
+      this.db.exec('COMMIT');
+      return consumed;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
   }
 
   getApproval(id: string, ownerUid: string): ApprovalRequest | null {
-    const row = this.db.prepare('SELECT id,action,summary,amount_usd AS amountUsd,scope_json AS scopeJson,scope_hash AS scopeHash,status,created_at AS createdAt,decided_at AS decidedAt,decided_by AS decidedBy,consumed_at AS consumedAt,owner_uid AS ownerUid FROM approvals WHERE id=? AND owner_uid=?')
-      .get(id, ownerUid) as { id: string; action: HighImpactAction; summary: string; amountUsd?: number; scopeJson?: string; scopeHash?: string; status: 'pending' | 'approved' | 'rejected'; createdAt: string; decidedAt?: string; decidedBy?: string; consumedAt?: string; ownerUid?: string } | undefined;
+    const row = this.db.prepare('SELECT id,action,summary,amount_usd AS amountUsd,scope_json AS scopeJson,scope_hash AS scopeHash,status,created_at AS createdAt,decided_at AS decidedAt,decided_by AS decidedBy,consumed_at AS consumedAt,reservation_id AS reservationId,reserved_at AS reservedAt,owner_uid AS ownerUid FROM approvals WHERE id=? AND owner_uid=?')
+      .get(id, ownerUid) as { id: string; action: HighImpactAction; summary: string; amountUsd?: number; scopeJson?: string; scopeHash?: string; status: 'pending' | 'approved' | 'rejected'; createdAt: string; decidedAt?: string; decidedBy?: string; consumedAt?: string; reservationId?: string; reservedAt?: string; ownerUid?: string } | undefined;
     if (!row) return null;
     return { ...row, scope: row.scopeJson ? JSON.parse(row.scopeJson) : undefined, scopeHash: row.scopeHash } as ApprovalRequest;
   }
@@ -331,13 +501,50 @@ export class SecurityStore {
     const verify = (rows: any[]) => {
       let previous = 'GENESIS';
       for (const row of rows) {
-        const details = typeof row.details === 'string' ? row.details : JSON.stringify(row.details ?? {});
+        const details = typeof row.details === 'string' ? row.details : JSON.stringify(canonicalize(row.details ?? {}));
         const expected = sha256(`${previous}\n${row.createdAt}\n${row.actorUid ?? 'system'}\n${row.event}\n${details}`);
         if (row.previousHash !== previous || row.entryHash !== expected) throw new Error(`Security backup audit chain is invalid at event ${row.event}.`);
         previous = row.entryHash;
       }
     };
     verify(snapshot.audit);
+  }
+
+  restoreSnapshotWithApproval(snapshot: any, actorUid: string, approvalId: string): void {
+    this.validateSnapshot(snapshot);
+    const expectedScopeHash = hashScope({ operation: 'security_backup_restore' })!;
+    const consumedAt = now();
+    const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const consumed = this.db.prepare(
+        "UPDATE approvals SET consumed_at=:consumedAt WHERE id=:approvalId AND owner_uid=:actorUid AND action='high_impact_change' AND status='approved' AND consumed_at IS NULL AND reservation_id IS NULL AND created_at>=:cutoff AND scope_hash=:expectedScopeHash"
+      ).run({ consumedAt, approvalId, actorUid, cutoff, expectedScopeHash });
+      if (Number(consumed.changes ?? 0) !== 1) {
+        throw new Error('A fresh approved high-impact restore authorization is required.');
+      }
+
+      this.db.prepare('DELETE FROM approvals WHERE owner_uid=?').run(actorUid);
+      this.db.prepare('DELETE FROM approved_contacts WHERE owner_uid=?').run(actorUid);
+      this.db.prepare('DELETE FROM audit_log WHERE owner_uid=?').run(actorUid);
+      this.db.prepare('DELETE FROM idempotency WHERE actor_uid=?').run(actorUid);
+      const approvalStmt = this.db.prepare('INSERT INTO approvals(id,action,summary,amount_usd,scope_json,scope_hash,status,created_at,decided_at,decided_by,consumed_at,owner_uid) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');
+      for (const a of snapshot.approvals) approvalStmt.run(a.id,a.action,a.summary,a.amountUsd ?? null,a.scopeJson ?? (a.scope ? JSON.stringify(canonicalize(a.scope)) : null),a.scopeHash ?? hashScope(a.scope),a.status,a.createdAt,a.decidedAt ?? null,a.decidedBy ?? null,a.consumedAt ?? null,actorUid);
+      const contactStmt = this.db.prepare('INSERT INTO approved_contacts(id,name,email,purpose,status,created_at,updated_at,owner_uid) VALUES(?,?,?,?,?,?,?,?)');
+      for (const contact of snapshot.contacts) contactStmt.run(contact.id,contact.name,contact.email,contact.purpose,contact.status,contact.createdAt,contact.updatedAt,actorUid);
+      const auditStmt = this.db.prepare('INSERT INTO audit_log(actor_uid,event,details,created_at,owner_uid,previous_hash,entry_hash) VALUES(?,?,?,?,?,?,?)');
+      for (const entry of snapshot.audit) auditStmt.run(entry.actorUid ?? null,entry.event,typeof entry.details === 'string' ? entry.details : JSON.stringify(entry.details ?? {}),entry.createdAt,actorUid,entry.previousHash,entry.entryHash);
+      this.audit(actorUid, 'security.backup.restored', {
+        approvalId,
+        approvalConsumedAt: consumedAt,
+        approvalCount: snapshot.approvals.length,
+        contactCount: snapshot.contacts.length,
+      });
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   importSnapshot(snapshot: any, actorUid: string): void {

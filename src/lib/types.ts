@@ -190,6 +190,8 @@ export interface ApprovalRequest {
   requestedAt: string;
   decision: 'pending' | 'approved' | 'rejected';
   decidedAt?: string;
+  /** Set atomically when this authorization is consumed to start a task execution. */
+  consumedAt?: string;
 }
 
 export interface WalletTransaction {
@@ -214,6 +216,8 @@ export interface WalletTransaction {
   confirmationDepth?: number;
   verifiedBlockHeight?: number;
   verifiedBlockHash?: string;
+  /** Monotonic journal generation; increments only after a reorged tx is reconfirmed. */
+  journalCycle?: number;
   approvalId?: string;
 
 }
@@ -237,9 +241,13 @@ export interface VisionAnalysisRecord {
   timestamp: string;
 }
 
+export type JerryMemoryArea = 'owner_profile' | 'mission_projects' | 'knowledge_experience';
+
 export interface MemoryEntry {
   id: string;
   category: 'goal' | 'decision' | 'lesson' | 'preference' | 'workflow';
+  /** Three top-level searchable memory spaces; optional for legacy callers. */
+  area?: JerryMemoryArea;
   title: string;
   content: string;
   outcome?: 'success' | 'correction' | 'insight';
@@ -278,7 +286,13 @@ export interface OpportunityAlert {
   profitabilityAnalysis: string;
   riskAnalysis: string;
   estimatedCapitalUsd: number;
+  /** Empty unless independently verified; sourceReferences are retrieved references only. */
   verifiedSources: Array<{ title: string; uri: string }>;
+  sourceReferences?: Array<{ title: string; uri: string; publishedDate: string | null }>;
+  evidenceStatus?: string;
+  sourceSupportedObservations?: string[];
+  capitalFit?: 'within_budget' | 'above_budget';
+  estimatesAndAssumptions?: string[];
   nextAction: string;
   status: 'new' | 'reviewed' | 'converted_to_goal' | 'dismissed';
   createdAt: string;
@@ -398,12 +412,12 @@ export interface DailySummaryReport {
   notificationRead: boolean;
   modelUsed: string;
   metrics: {
-    todayProfitUsd: number;
-    previousDayProfitUsd: number;
+    todayProfitUsd: number | null;
+    previousDayProfitUsd: number | null;
     activeTasksCount: number;
     completedTasksCount: number;
     newRevenueInsightsCount: number;
-    internetAuthorityScore: number;
+    internetAuthorityScore: number | null;
   };
   chartSeries: Array<{
     label: string;
@@ -414,6 +428,7 @@ export interface DailySummaryReport {
     name: string;
     count: number;
   }>;
+  financialDataStatus: 'unavailable_not_loaded_from_verified_ledger' | 'verified_from_ledger';
 }
 
 export interface JerryState {

@@ -31,7 +31,7 @@ test('wrong action cannot consume an approval', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'jerry-security-'));
   const store = new SecurityStore(path.join(dir, 'security.sqlite'));
   try {
-    const approval = store.createApproval({ action: 'financial_commitment', summary: 'Financial action', ownerUid: 'owner-1' });
+    const approval = store.createApproval({ action: 'financial_commitment', summary: 'Financial action', amountUsd: 25, scope: { recipient: 'Test vendor', purpose: 'Test financial approval scope' }, ownerUid: 'owner-1' });
     store.decideApproval(approval.id, 'approved', 'owner-1');
     assert.equal(store.consumeApproval(approval.id, 'high_impact_change', 'owner-1'), null);
     assert.equal(store.consumeApproval(approval.id, 'financial_commitment', 'owner-1')?.id, approval.id);
@@ -67,7 +67,7 @@ test('security records are isolated by Firebase owner UID', () => {
 
 test('financial commitment approval stores an explicit USD limit', () => {
   const store = new SecurityStore(':memory:');
-  const approval = store.createApproval({ action: 'financial_commitment', summary: 'Scoped action', amountUsd: 250, ownerUid: 'owner-scope' });
+  const approval = store.createApproval({ action: 'financial_commitment', summary: 'Scoped action', amountUsd: 250, scope: { recipient: 'Approved vendor Ltd', purpose: 'Purchase approved project equipment' }, ownerUid: 'owner-scope' });
   assert.equal(approval.amountUsd, 250);
   assert.equal(store.decideApproval(approval.id, 'approved', 'owner-scope')?.amountUsd, 250);
 });
@@ -75,7 +75,7 @@ test('financial commitment approval stores an explicit USD limit', () => {
 test('approved bitcoin transfer is bound to exact scope and cannot consume a different transfer', () => {
   const file = tempDb('bitcoin-scope');
   const store = new SecurityStore(file);
-  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qexample', amount: 0.01, fee: 0.0001 };
+  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', amount: 0.01, fee: 0.0001 };
   const approval = store.createApproval({ action: 'bitcoin_transfer', summary: 'Send exact BTC transfer', scope, ownerUid: 'owner-scope' });
   store.decideApproval(approval.id, 'approved', 'owner-scope');
   assert.equal(store.consumeApproval(approval.id, 'bitcoin_transfer', 'owner-scope', { ...scope, amount: 0.02 }), null);
@@ -99,7 +99,8 @@ test('expired approval is not consumed or burned', () => {
 
 test('Bitcoin transfer approval reservation survives PostgreSQL failure safely and can be released', () => {
   const store = new SecurityStore(':memory:');
-  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qexample', amount: 0.01, fee: 0.0001 };
+  store.setEmergencyStop(false, 'owner-reserve', 'Test explicitly resumes execution for reservation');
+  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', amount: 0.01, fee: 0.0001 };
   const approval = store.createApproval({ action: 'bitcoin_transfer', summary: 'Reserve then release', scope, ownerUid: 'owner-reserve' });
   store.decideApproval(approval.id, 'approved', 'owner-reserve');
   const reservationId = 'a'.repeat(64);
@@ -113,7 +114,8 @@ test('Bitcoin transfer approval reservation survives PostgreSQL failure safely a
 
 test('Bitcoin transfer approval is consumed only when its reservation is finalized', () => {
   const store = new SecurityStore(':memory:');
-  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qexample', amount: 0.01, fee: 0.0001 };
+  store.setEmergencyStop(false, 'owner-finalize', 'Test explicitly resumes execution for reservation');
+  const scope = { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'bc1qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', amount: 0.01, fee: 0.0001 };
   const approval = store.createApproval({ action: 'bitcoin_transfer', summary: 'Reserve then finalize', scope, ownerUid: 'owner-finalize' });
   store.decideApproval(approval.id, 'approved', 'owner-finalize');
   const reservationId = 'c'.repeat(64);
@@ -123,4 +125,402 @@ test('Bitcoin transfer approval is consumed only when its reservation is finaliz
   assert.equal(store.reserveApproval(approval.id, 'bitcoin_transfer', 'owner-finalize', 'd'.repeat(64), scope), null);
   assert.ok(store.verifyAuditChain('owner-finalize').ok);
   store.close();
+});
+
+
+test('approval decision is single-use and an expired pending approval cannot be decided', () => {
+  const file = tempDb('approval-decision-race');
+  const store = new SecurityStore(file);
+  try {
+    const approval = store.createApproval({ action: 'high_impact_change', summary: 'Single decision', ownerUid: 'owner-decision' });
+    assert.equal(store.decideApproval(approval.id, 'approved', 'owner-decision')?.status, 'approved');
+    assert.equal(store.decideApproval(approval.id, 'rejected', 'owner-decision'), null);
+    assert.equal(store.getApproval(approval.id, 'owner-decision')?.status, 'approved');
+
+    const expired = store.createApproval({ action: 'high_impact_change', summary: 'Expired pending', ownerUid: 'owner-decision' });
+    const db = new DatabaseSync(file);
+    db.prepare('UPDATE approvals SET created_at=? WHERE id=?').run(new Date(Date.now() - 16 * 60 * 1000).toISOString(), expired.id);
+    db.close();
+    assert.equal(store.decideApproval(expired.id, 'approved', 'owner-decision'), null);
+    assert.equal(store.getApproval(expired.id, 'owner-decision')?.status, 'pending');
+    assert.equal(store.verifyAuditChain('owner-decision').ok, true);
+  } finally {
+    store.close();
+    rmSync(path.dirname(file), { recursive: true, force: true });
+  }
+});
+
+
+test('financial commitment approvals reject missing or incomplete scopes', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    assert.throws(
+      () => store.createApproval({ action: 'financial_commitment', summary: 'Unscoped financial action', amountUsd: 250, ownerUid: 'owner-scope' }),
+      /explicit, immutable action scope/,
+    );
+    assert.throws(
+      () => store.createApproval({ action: 'purchase', summary: 'Incomplete purchase', amountUsd: 100, scope: { recipient: 'Vendor only' }, ownerUid: 'owner-scope' }),
+      /exact recipient or destination, and a clear purpose/,
+    );
+    const valid = store.createApproval({
+      action: 'purchase', summary: 'Scoped purchase', amountUsd: 100,
+      scope: { recipient: 'Vendor Ltd', purpose: 'Purchase project materials' },
+      ownerUid: 'owner-scope',
+    });
+    assert.equal(valid.scopeHash?.length, 64);
+  } finally {
+    store.close();
+  }
+});
+
+test('Bitcoin transfer approvals reject incomplete or imprecise scope', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    assert.throws(
+      () => store.createApproval({
+        action: 'bitcoin_transfer', summary: 'Bad transfer',
+        scope: { asset: 'BTC', network: 'Bitcoin Mainnet', destination: 'not-a-bitcoin-address', amount: 0.01, fee: 0.0001 },
+        ownerUid: 'owner-btc',
+      }),
+      /valid destination address/,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+
+test('owner emergency stop is durable, audited and explicitly recoverable', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    assert.equal(store.getEmergencyStop().stopped, true);
+    const stopped = store.setEmergencyStop(true, 'owner-stop', 'Owner requested immediate shutdown');
+    assert.equal(stopped.stopped, true);
+    assert.equal(stopped.ownerUid, 'owner-stop');
+    assert.equal(store.getEmergencyStop().reason, 'Owner requested immediate shutdown');
+    const resumed = store.setEmergencyStop(false, 'owner-stop', 'Owner verified recovery conditions');
+    assert.equal(resumed.stopped, false);
+    assert.equal(store.verifyAuditChain('owner-stop').ok, true);
+  } finally {
+    store.close();
+  }
+});
+
+test('emergency stop requires an owner and a meaningful reason', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    assert.throws(() => store.setEmergencyStop(true, '', 'stop now'), /Owner UID/);
+    assert.throws(() => store.setEmergencyStop(true, 'owner-stop', 'no'), /meaningful emergency-control reason/);
+    assert.equal(store.getEmergencyStop().stopped, true);
+  } finally {
+    store.close();
+  }
+});
+
+
+test('emergency stop prevents atomic reservation of an approved Bitcoin transfer', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    const scope = {
+      asset: 'BTC', network: 'Bitcoin Mainnet',
+      destination: 'bc1q' + 'a'.repeat(30), amount: 0.01, fee: 0.0001,
+    };
+    const approval = store.createApproval({ action: 'bitcoin_transfer', summary: 'Transfer before stop', scope, ownerUid: 'owner-stop' });
+    store.decideApproval(approval.id, 'approved', 'owner-stop');
+    store.setEmergencyStop(true, 'owner-stop', 'Emergency stop before transfer reservation');
+    assert.equal(store.reserveApproval(approval.id, 'bitcoin_transfer', 'owner-stop', 'e'.repeat(64), scope), null);
+    assert.equal(store.getApproval(approval.id, 'owner-stop')?.consumedAt ?? null, null);
+  } finally {
+    store.close();
+  }
+});
+
+test('new security store starts with the emergency stop engaged', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    const control = store.getEmergencyStop();
+    assert.equal(control.stopped, true);
+    assert.equal(control.ownerUid, 'system');
+    assert.match(control.reason, /secure first-boot default/i);
+  } finally {
+    store.close();
+  }
+});
+
+test('explicit owner resume is preserved across security store initialization', () => {
+  const file = tempDb('owner-resume-preserved');
+  const first = new SecurityStore(file);
+  first.setEmergencyStop(false, 'owner-uid-1', 'Owner explicitly resumed after checks');
+  first.close();
+  const reopened = new SecurityStore(file);
+  try {
+    const control = reopened.getEmergencyStop();
+    assert.equal(control.stopped, false);
+    assert.equal(control.ownerUid, 'owner-uid-1');
+    assert.equal(control.reason, 'Owner explicitly resumed after checks');
+  } finally {
+    reopened.close();
+    rmSync(path.dirname(file), { recursive: true, force: true });
+  }
+});
+
+
+test('security backup restore consumes approval and replaces records atomically', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    const existing = store.createContact({ name: 'Existing contact', email: 'existing@example.com', purpose: 'Existing test contact', ownerUid: 'owner-restore' });
+    const snapshot = store.exportSnapshot('owner-restore');
+    const approval = store.createApproval({
+      action: 'high_impact_change',
+      summary: 'Restore validated Jerry security backup',
+      scope: { operation: 'security_backup_restore' },
+      ownerUid: 'owner-restore',
+    });
+    store.decideApproval(approval.id, 'approved', 'owner-restore');
+
+    store.restoreSnapshotWithApproval(snapshot, 'owner-restore', approval.id);
+
+    assert.equal(store.getApproval(approval.id, 'owner-restore'), null);
+    assert.equal(store.getContact(existing.id, 'owner-restore')?.name, 'Existing contact');
+    assert.equal(store.verifyAuditChain('owner-restore').ok, true);
+    const restoredAudit = store.listAudit(20, 'owner-restore');
+    assert.equal(restoredAudit[0]?.event, 'security.backup.restored');
+    assert.equal((restoredAudit[0]?.details as { approvalId?: string })?.approvalId, approval.id);
+  } finally {
+    store.close();
+  }
+});
+
+test('failed security backup restore rolls back approval consumption and all record changes', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    const approval = store.createApproval({
+      action: 'high_impact_change',
+      summary: 'Attempt invalid restore',
+      scope: { operation: 'security_backup_restore' },
+      ownerUid: 'owner-restore-fail',
+    });
+    store.decideApproval(approval.id, 'approved', 'owner-restore-fail');
+    const duplicate = {
+      id: 'duplicate-snapshot-approval',
+      action: 'high_impact_change',
+      summary: 'Duplicate',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    const invalidSnapshot = {
+      version: 1,
+      approvals: [duplicate, duplicate],
+      contacts: [],
+      audit: [],
+    };
+
+    assert.throws(
+      () => store.restoreSnapshotWithApproval(invalidSnapshot, 'owner-restore-fail', approval.id),
+    );
+    const preserved = store.getApproval(approval.id, 'owner-restore-fail');
+    assert.equal(preserved?.status, 'approved');
+    assert.equal(preserved?.consumedAt ?? null, null);
+    assert.equal(store.verifyAuditChain('owner-restore-fail').ok, true);
+  } finally {
+    store.close();
+  }
+});
+
+
+test('workspace reset approval is exact-scope, reserved once, and consumed on finalization', () => {
+  const store = new SecurityStore(':memory:');
+  const ownerUid = 'owner-reset';
+  store.setEmergencyStop(false, ownerUid, 'Test explicitly resumes execution for reset approval');
+  const scope = { operation: 'workspace_reset' };
+  const approval = store.createApproval({
+    action: 'high_impact_change',
+    summary: 'Reset Jerry workspace',
+    scope,
+    ownerUid,
+  });
+  store.decideApproval(approval.id, 'approved', ownerUid);
+
+  assert.equal(
+    store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'a'.repeat(64), { operation: 'delete_account' }),
+    null,
+  );
+  assert.ok(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'b'.repeat(64), scope));
+  assert.equal(
+    store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'c'.repeat(64), scope),
+    null,
+  );
+  assert.equal(store.finalizeApprovalReservation(approval.id, ownerUid, 'b'.repeat(64))?.consumedAt != null, true);
+  assert.equal(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'd'.repeat(64), scope), null);
+  assert.equal(store.verifyAuditChain(ownerUid).ok, true);
+  assert.equal(
+    (store.listAudit(20, ownerUid).find((entry) => entry.event === 'approval.consumed')?.details as { action?: string } | undefined)?.action,
+    'high_impact_change',
+  );
+  store.close();
+});
+
+
+test('emergency-stop state and audit event roll back together when audit persistence fails', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    const before = store.getEmergencyStop();
+    const originalAudit = store.audit.bind(store);
+    store.audit = (() => { throw new Error('audit disk failure'); }) as typeof store.audit;
+    assert.throws(
+      () => store.setEmergencyStop(false, 'owner-atomic', 'Owner resume must be audited'),
+      /audit disk failure/,
+    );
+    store.audit = originalAudit;
+    assert.deepEqual(store.getEmergencyStop(), before,
+      'A failed audit write must not leave the local emergency stop changed.');
+    assert.equal(store.verifyAuditChain('owner-atomic').entries, 0);
+  } finally {
+    store.close();
+  }
+});
+
+
+test('SQLite emergency-stop mirror rejects delayed older shared epochs atomically', () => {
+  const filename = tempDb('stop-epoch-order');
+  const store = new SecurityStore(filename);
+  try {
+    const resumed = store.synchronizeEmergencyStop(false, 'owner-1', 'owner approved recovery', 4);
+    assert.equal(resumed.stopped, false);
+    assert.equal(resumed.sharedEpoch, 4);
+
+    const stopped = store.synchronizeEmergencyStop(true, 'owner-1', 'owner engaged emergency stop', 5);
+    assert.equal(stopped.stopped, true);
+    assert.equal(stopped.sharedEpoch, 5);
+
+    const delayed = store.synchronizeEmergencyStop(false, 'owner-1', 'delayed older recovery', 4);
+    assert.equal(delayed.stopped, true);
+    assert.equal(delayed.sharedEpoch, 5);
+    assert.throws(
+      () => store.setEmergencyStop(false, 'owner-1', 'delayed owner recovery write', 4),
+      /Stale emergency-stop update rejected/,
+    );
+
+    assert.throws(
+      () => store.synchronizeEmergencyStop(false, 'owner-1', 'conflicting same epoch', 5),
+      /Conflicting emergency-stop state/,
+    );
+    assert.equal(store.getEmergencyStop().stopped, true);
+    assert.equal(store.getEmergencyStop().sharedEpoch, 5);
+    assert.equal(store.verifyAuditChain('owner-1').ok, true);
+  } finally {
+    store.close();
+    rmSync(path.dirname(filename), { recursive: true, force: true });
+  }
+});
+
+
+test('approval reservation and audit evidence roll back together on persistence failure', () => {
+  const store = new SecurityStore(':memory:');
+  const ownerUid = 'owner-approval-atomic';
+  try {
+    store.setEmergencyStop(false, ownerUid, 'Test owner recovery for approval reservation');
+    const scope = { operation: 'workspace_reset' };
+    const approval = store.createApproval({
+      action: 'high_impact_change',
+      summary: 'Atomic approval reservation test',
+      scope,
+      ownerUid,
+    });
+    assert.ok(store.decideApproval(approval.id, 'approved', ownerUid));
+    const originalAudit = store.audit.bind(store);
+    store.audit = (() => { throw new Error('approval audit disk failure'); }) as typeof store.audit;
+
+    assert.throws(
+      () => store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'f'.repeat(64), scope),
+      /approval audit disk failure/,
+    );
+    store.audit = originalAudit;
+    const unchanged = store.getApproval(approval.id, ownerUid);
+    assert.equal(unchanged?.reservationId ?? null, null);
+    assert.equal(unchanged?.consumedAt ?? null, null);
+    assert.equal(store.verifyAuditChain(ownerUid).ok, true);
+  } finally {
+    store.close();
+  }
+});
+
+test('approval consumption and reservation release roll back when audit persistence fails', () => {
+  const store = new SecurityStore(':memory:');
+  const ownerUid = 'owner-approval-finalize-atomic';
+  const scope = { operation: 'workspace_reset' };
+  const reservationId = 'a'.repeat(64);
+  try {
+    store.setEmergencyStop(false, ownerUid, 'Test owner recovery for approval finalization');
+    const approval = store.createApproval({
+      action: 'high_impact_change',
+      summary: 'Atomic approval finalization test',
+      scope,
+      ownerUid,
+    });
+    assert.ok(store.decideApproval(approval.id, 'approved', ownerUid));
+    assert.ok(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, reservationId, scope));
+
+    const originalAudit = store.audit.bind(store);
+    store.audit = (() => { throw new Error('approval audit disk failure'); }) as typeof store.audit;
+    assert.throws(
+      () => store.finalizeApprovalReservation(approval.id, ownerUid, reservationId),
+      /approval audit disk failure/,
+    );
+    assert.throws(
+      () => store.releaseApprovalReservation(approval.id, ownerUid, reservationId),
+      /approval audit disk failure/,
+    );
+    store.audit = originalAudit;
+
+    const unchanged = store.getApproval(approval.id, ownerUid);
+    assert.equal(unchanged?.consumedAt ?? null, null);
+    assert.equal(unchanged?.reservationId, reservationId);
+    assert.equal(store.verifyAuditChain(ownerUid).ok, true);
+  } finally {
+    store.close();
+  }
+});
+
+
+test('expired reserved approval can only resume with its original idempotency reservation', () => {
+  const filename = tempDb('approval-reservation-recovery');
+  const ownerUid = 'owner-approval-recovery';
+  const store = new SecurityStore(filename);
+  try {
+    store.setEmergencyStop(false, ownerUid, 'Test owner recovery for approval reservation retry');
+    const scope = { operation: 'workspace_reset' };
+    const approval = store.createApproval({
+      action: 'high_impact_change',
+      summary: 'Recover interrupted workspace reset',
+      scope,
+      ownerUid,
+    });
+    assert.ok(store.decideApproval(approval.id, 'approved', ownerUid));
+    const originalReservation = '1'.repeat(64);
+    assert.ok(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, originalReservation, scope));
+
+    const maintenance = new DatabaseSync(filename);
+    try {
+      maintenance.prepare('UPDATE approvals SET created_at=? WHERE id=?').run('2000-01-01T00:00:00.000Z', approval.id);
+    } finally {
+      maintenance.close();
+    }
+
+    assert.equal(
+      store.reserveApproval(approval.id, 'high_impact_change', ownerUid, '2'.repeat(64), scope),
+      null,
+      'An expired reservation must not be reassigned to a different operation.',
+    );
+    assert.ok(
+      store.reserveApproval(approval.id, 'high_impact_change', ownerUid, originalReservation, scope),
+      'The original idempotent operation must be able to resume after a crash.',
+    );
+    assert.ok(store.finalizeApprovalReservation(approval.id, ownerUid, originalReservation)?.consumedAt);
+    assert.equal(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, originalReservation, scope), null);
+    assert.equal(store.verifyAuditChain(ownerUid).ok, true);
+  } finally {
+    store.close();
+    rmSync(path.dirname(filename), { recursive: true, force: true });
+  }
 });

@@ -94,12 +94,30 @@ export const dailySummaryReports = pgTable('daily_summary_reports', {
   reportDate: text('report_date').notNull(),
   headline: text('headline').notNull(),
   summaryText: text('summary_text').notNull(),
-  dailyProfitUsd: doublePrecision('daily_profit_usd').notNull(),
+  dailyProfitUsd: doublePrecision('daily_profit_usd'),
   activeTasksCount: integer('active_tasks_count').notNull(),
   insightsCount: integer('insights_count').notNull(),
   chartDataJson: jsonb('chart_data_json').notNull(),
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+
+export const memoryEntries = pgTable('memory_entries', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  category: text('category').notNull(),
+  memoryArea: text('memory_area').notNull().default('knowledge_experience'),
+  title: text('title').notNull(),
+  content: text('content').notNull(),
+  outcome: text('outcome'),
+  tags: jsonb('tags').$type<string[]>().notNull().default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const memoryEntriesRelations = relations(memoryEntries, ({ one }) => ({
+  owner: one(users, { fields: [memoryEntries.userId], references: [users.id] }),
+}));
 
 export const usersRelations = relations(users, ({ one, many }) => ({
   workspace: one(workspaces, {
@@ -110,6 +128,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   dailySummaries: many(dailySummaryReports),
   idempotencyKeys: many(idempotencyKeys),
   taskExecutions: many(taskExecutions),
+  memoryEntries: many(memoryEntries),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ one }) => ({

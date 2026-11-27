@@ -5,6 +5,11 @@ on:
     branches: ["**"]
   pull_request:
 
+# Keep only the newest verification run per workflow and branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -44,6 +49,7 @@ jobs:
         env:
           NODE_ENV: test
           JERRY_JOURNAL_TEST_DATABASE: "1"
+          JERRY_PROVIDER_LEDGER_TEST_DATABASE: "1"
           SQL_HOST: 127.0.0.1
           SQL_USER: jerry_test
           SQL_PASSWORD: jerry_test
@@ -64,8 +70,11 @@ jobs:
           NODE_ENV: test
           JERRY_TENANT_TEST_DATABASE: "1"
           JERRY_JOURNAL_TEST_DATABASE: "1"
+          JERRY_PROVIDER_LEDGER_TEST_DATABASE: "1"
           SQL_HOST: 127.0.0.1
           SQL_USER: jerry_test
           SQL_PASSWORD: jerry_test
           SQL_DB_NAME: jerry_tenant_test
         run: bun run verify:release
+      - name: Build production backend container
+        run: docker build --tag jerry-backend:ci .

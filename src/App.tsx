@@ -19,7 +19,6 @@ import {
   calculateUnifiedPortfolio,
   createAutonomousTask,
   evaluateDailyGrowthProgression,
-  evaluateInternetDominanceProgress,
   executeLearnedDiscovery,
   executeRevenueTask,
   mergeUniqueDailyDiscoveries,
@@ -56,7 +55,7 @@ import type {
 } from './lib/types';
 import { OwnerAvatar } from './components/OwnerAvatar';
 import { SecurityApprovals } from './components/SecurityApprovals';
-import { apiFetch } from './lib/apiClient';
+import { apiFetch, checkBackendReadiness } from './lib/apiClient';
 import { OverviewHub } from './components/OverviewHub';
 import { BrainConsole } from './components/BrainConsole';
 import { GoalsPlanner } from './components/GoalsPlanner';
@@ -81,29 +80,49 @@ const NAV_ITEMS: Array<{ id: WorkspaceTab; label: string; icon: typeof LayoutDas
 ];
 
 export default function App() {
-  const { user, idToken, signInWithGoogle, signOutUser } = useAuth();
+  const { user, idToken, loading: authLoading, authError, signInWithGoogle, signOutUser } = useAuth();
   const [state, setState] = useState<JerryState>(INITIAL_JERRY_STATE);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [backendReady, setBackendReady] = useState<boolean | null>(null);
+  const [backendProbeAttempt, setBackendProbeAttempt] = useState(0);
+  const [workspaceLoadError, setWorkspaceLoadError] = useState(false);
   const autoSummaryTriggeredRef = useRef(false);
 
   useEffect(() => {
     let active = true;
     if (!idToken) {
+      setBackendReady(null);
+      return () => { active = false; };
+    }
+    setBackendReady(null);
+    void checkBackendReadiness().then((ready) => {
+      if (active) setBackendReady(ready);
+    });
+    return () => { active = false; };
+  }, [idToken, backendProbeAttempt]);
+
+  useEffect(() => {
+    let active = true;
+    if (!idToken) {
       setLoaded(true);
-      return () => {
-        active = false;
-      };
+      return () => { active = false; };
+    }
+    if (backendReady !== true) {
+      setLoaded(false);
+      return () => { active = false; };
     }
 
     setLoaded(false);
+    setWorkspaceLoadError(false);
     apiFetch('/api/state', {
       headers: { Authorization: `Bearer ${idToken}` },
     })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error('State load failed'))))
       .then((data: JerryState) => {
-        if (active && data && data.owner) {
+        if (!data || !data.owner) throw new Error('Authenticated workspace response was invalid.');
+        if (active) {
           setState(normalizeJerryWalletState({
             ...INITIAL_JERRY_STATE,
             ...data,
@@ -115,18 +134,16 @@ export default function App() {
         }
       })
       .catch(() => {
-        // Keep the safe local seed state if the authenticated workspace is unavailable.
+        if (active) setWorkspaceLoadError(true);
       })
       .finally(() => {
         if (active) setLoaded(true);
       });
-    return () => {
-      active = false;
-    };
-  }, [idToken]);
+    return () => { active = false; };
+  }, [idToken, backendReady]);
 
   useEffect(() => {
-    if (!idToken) return;
+    if (!idToken || backendReady !== true) return;
     let active = true;
     apiFetch('/api/cloudsql/workspace', {
       headers: { Authorization: `Bearer ${idToken}` },
@@ -148,7 +165,27 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [idToken]);
+  }, [idToken, backendReady]);
+
+  useEffect(() => {
+    if (!idToken || backendReady !== true) return;
+    let active = true;
+    apiFetch('/api/memory')
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error('Persistent memory load failed'))))
+      .then((payload: { entries?: MemoryEntry[] }) => {
+        if (!active || !Array.isArray(payload.entries)) return;
+        setState((previous) => {
+          const merged = new Map<string, MemoryEntry>();
+          for (const entry of previous.memories ?? []) merged.set(entry.id, entry);
+          for (const entry of payload.entries ?? []) merged.set(entry.id, entry);
+          return { ...previous, memories: [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) };
+        });
+      })
+      .catch(() => {
+        // Keep the existing workspace snapshot if the dedicated memory service is unavailable.
+      });
+    return () => { active = false; };
+  }, [idToken, backendReady]);
 
   const commitState = useCallback(
     (updater: (prev: JerryState) => JerryState) => {
@@ -190,9 +227,10 @@ export default function App() {
           }),
         });
         if (res.ok) {
-          const data = (await res.json()) as { audioBase64?: string };
+          const data = (await res.json()) as { audioBase64?: string; mimeType?: string };
           if (data.audioBase64) {
-            const audio = new Audio(`data:audio/wav;base64,${data.audioBase64}`);
+            const safeMimeType = data.mimeType && /^audio\/[a-z0-9.+-]+$/i.test(data.mimeType) ? data.mimeType : 'audio/mpeg';
+            const audio = new Audio(`data:${safeMimeType};base64,${data.audioBase64}`);
             await audio.play();
             return;
           }
@@ -566,13 +604,6 @@ export default function App() {
         return `Today's daily summary report (${todayIso}) is already compiled.`;
       }
 
-      const growth = evaluateDailyGrowthProgression(
-        state.transactions,
-        state.dailyProfitHistory ?? [],
-        state.owner.dailyProfitThresholdUsd
-      );
-      const internetProg = evaluateInternetDominanceProgress(state.internetMastery ?? []);
-
       const activeTasksCount = state.tasks.filter(
         (t) => t.status === 'queued' || t.status === 'running'
       ).length;
@@ -584,20 +615,11 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          todayProfitUsd: growth.todayProfitUsd,
-          previousDayProfitUsd: growth.previousDayProfitUsd,
-          dailyThresholdUsd: state.owner.dailyProfitThresholdUsd,
           activeTasksCount,
           completedTasksCount,
           interruptedTasksCount,
           awaitingApprovalCount,
           newRevenueInsightsCount: (state.dailyDiscoveries ?? []).length,
-          topDiscoveries: (state.dailyDiscoveries ?? []).slice(0, 3).map((d) => ({
-            title: d.title,
-            estimatedDailyProfitUsd: d.estimatedDailyProfitUsd,
-          })),
-          dailyTrend: growth.dailyTrend,
-          internetAuthorityScore: internetProg.todayAuthorityScore,
         }),
       });
       const data = (await res.json()) as { report?: DailySummaryReport; error?: string };
@@ -890,24 +912,163 @@ export default function App() {
     setState(normalizeJerryWalletState(data.state));
   };
 
-  const handleAddMemory = (entry: Omit<MemoryEntry, 'id' | 'createdAt'>) => {
-    commitState((prev) => ({
-      ...prev,
-      memories: [
-        {
-          ...entry,
-          id: `mem-${Date.now()}`,
-          createdAt: new Date().toISOString(),
-        },
-        ...prev.memories,
-      ],
-    }));
+  const handleAddMemory = async (entry: Omit<MemoryEntry, 'id' | 'createdAt'>) => {
+    const memoryEntry: MemoryEntry = {
+      ...entry,
+      id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      const response = await apiFetch('/api/memory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entry: memoryEntry }),
+      });
+      const payload = await response.json() as { entry?: MemoryEntry; error?: string };
+      if (!response.ok || !payload.entry) {
+        throw new Error(payload.error || 'Jerry could not persist this memory.');
+      }
+      commitState((previous) => ({
+        ...previous,
+        memories: [payload.entry!, ...previous.memories.filter((item) => item.id !== payload.entry!.id)],
+      }));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Jerry memory could not be saved. Please retry.');
+    }
   };
 
   const activeNavLabel = NAV_ITEMS.find((item) => item.id === activeTab)?.label ?? 'Command Hub';
   const pendingCount =
     state.tasks.filter((t) => t.status === 'awaiting_approval').length +
     state.transactions.filter((t) => t.status === 'pending_approval').length;
+
+  if (authLoading) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <div className="w-full max-w-sm text-center space-y-4">
+          <Brain className="w-12 h-12 mx-auto text-blue-400" />
+          <h1 className="text-2xl font-bold">JERRY</h1>
+          <p className="text-sm text-slate-300">Checking your secure owner session...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!user || !idToken) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <section className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-7 shadow-2xl">
+          <div className="flex justify-center mb-5">
+            <Brain className="w-14 h-14 text-blue-400" />
+          </div>
+          <h1 className="text-center text-3xl font-bold tracking-wide">JERRY</h1>
+          <p className="mt-3 text-center text-sm text-slate-300">
+            Your private business, productivity and technology partner.
+          </p>
+          <div className="mt-6 rounded-lg border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
+            Sign in with the owner's Google account to unlock Jerry. Workspace data and protected actions are unavailable until authentication succeeds.
+          </div>
+          {authError && (
+            <p role="alert" className="mt-4 rounded-lg border border-rose-800 bg-rose-950 p-3 text-sm text-rose-200">
+              {authError}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => void signInWithGoogle()}
+            className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-500"
+          >
+            Sign in securely with Google
+          </button>
+          {user && (
+            <button
+              type="button"
+              onClick={() => void signOutUser()}
+              className="mt-3 w-full rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+            >
+              Reset sign-in session
+            </button>
+          )}
+          <p className="mt-5 text-center text-xs text-slate-500">
+            Owner-only access · No paid services are activated by signing in
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  if (backendReady === null) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <div className="w-full max-w-sm text-center space-y-4">
+          <Brain className="w-12 h-12 mx-auto text-blue-400" />
+          <h1 className="text-2xl font-bold">JERRY</h1>
+          <p className="text-sm text-slate-300">Checking secure backend connection...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!backendReady) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <section className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-7">
+          <div className="flex justify-center mb-5"><Brain className="w-14 h-14 text-blue-400" /></div>
+          <h1 className="text-center text-3xl font-bold">JERRY</h1>
+          <h2 className="mt-4 text-center text-lg font-semibold">Backend not connected</h2>
+          <p className="mt-3 text-center text-sm text-slate-300">
+            Jerry has not loaded your owner workspace. Connect a verified HTTPS backend with the required database migrations before using live memory, business or execution features.
+          </p>
+          <p role="status" className="mt-4 rounded-lg border border-slate-700 bg-slate-950 p-3 text-xs text-slate-400">
+            No demo workspace will be presented as live owner data. Paid services remain disabled.
+          </p>
+          <button
+            type="button"
+            onClick={() => setBackendProbeAttempt((value) => value + 1)}
+            className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-500"
+          >
+            Retry backend connection
+          </button>
+          <button
+            type="button"
+            onClick={() => void signOutUser()}
+            className="mt-3 w-full rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+          >
+            Sign out
+          </button>
+        </section>
+      </main>
+    );
+  }
+
+  if (!loaded) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <p className="text-sm text-slate-300">Loading your owner workspace...</p>
+      </main>
+    );
+  }
+
+  if (workspaceLoadError) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <section className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-7">
+          <h1 className="text-center text-2xl font-bold">JERRY</h1>
+          <h2 className="mt-4 text-center text-lg font-semibold">Owner workspace unavailable</h2>
+          <p className="mt-3 text-center text-sm text-slate-300">
+            The backend is responding, but Jerry could not load the authenticated owner workspace. Check owner authorization and database readiness. No local demo data has been substituted.
+          </p>
+          <button
+            type="button"
+            onClick={() => { setWorkspaceLoadError(false); setBackendReady(null); setBackendProbeAttempt((value) => value + 1); }}
+            className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-500"
+          >
+            Retry secure workspace loading
+          </button>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex">
@@ -1069,6 +1230,11 @@ export default function App() {
         </header>
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1280px] w-full mx-auto">
+          {authError && (
+            <div role="alert" className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+              {authError}
+            </div>
+          )}
           {!loaded ? (
             <div className="bg-white border border-slate-200 rounded-xl p-8 text-sm text-slate-500">
               Loading Jerry workspace memory...

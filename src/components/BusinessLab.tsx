@@ -142,9 +142,11 @@ export function BusinessLab({
         alerts?: OpportunityAlert[];
         modelUsed?: string;
         error?: string;
+        message?: string;
+        code?: string;
       };
       if (!response.ok || !data.alerts) {
-        throw new Error(data.error || 'Opportunity Radar scan failed.');
+        throw new Error(data.error || data.message || data.code || `Opportunity Radar scan failed (HTTP ${response.status}).`);
       }
       onAddOpportunityAlerts(data.alerts);
       setScanMessage(
@@ -869,17 +871,53 @@ export function BusinessLab({
                   </div>
                 </div>
 
+                {alert.capitalFit && (
+                  <p className={`text-xs font-medium ${alert.capitalFit === 'within_budget' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    Capital fit: {alert.capitalFit === 'within_budget' ? 'Within stated budget' : 'Above stated budget'} — estimate ${alert.estimatedCapitalUsd.toLocaleString()} USD; no spending is authorized.
+                  </p>
+                )}
+
+                {alert.evidenceStatus && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Evidence status: Source-referenced AI analysis, not independently verified. Treat conclusions and estimates as provisional.
+                  </p>
+                )}
+
+                {alert.sourceSupportedObservations && alert.sourceSupportedObservations.length > 0 && (
+                  <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
+                    <p className="text-xs font-semibold text-slate-900">Observations supported by retrieved material</p>
+                    <ul className="list-disc pl-5 mt-1 space-y-1 text-xs text-slate-600">
+                      {alert.sourceSupportedObservations.map((observation, idx) => <li key={idx}>{observation}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {alert.estimatesAndAssumptions && alert.estimatesAndAssumptions.length > 0 && (
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                    <p className="text-xs font-semibold text-amber-900">Estimates and assumptions — not verified facts</p>
+                    <ul className="list-disc pl-5 mt-1 space-y-1 text-xs text-amber-900">
+                      {alert.estimatesAndAssumptions.map((assumption, idx) => <li key={idx}>{assumption}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {alert.sourceReferences && alert.sourceReferences.length > 0 && (
+                  <div className="text-xs text-slate-500 flex flex-col gap-2 pt-1">
+                    <span className="font-medium text-slate-700">Retrieved references (not independently verified):</span>
+                    {alert.sourceReferences.map((src, idx) => (
+                      <a key={idx} href={src.uri} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-700 hover:underline break-all">
+                        {src.title}{src.publishedDate ? ` · ${src.publishedDate.slice(0, 10)}` : ''}
+                        <ArrowUpRight className="w-3 h-3 shrink-0" />
+                      </a>
+                    ))}
+                  </div>
+                )}
+
                 {alert.verifiedSources.length > 0 && (
                   <div className="text-xs text-slate-500 flex flex-wrap items-center gap-3 pt-1">
-                    <span className="font-medium text-slate-700">Sources:</span>
+                    <span className="font-medium text-slate-700">Independently verified sources:</span>
                     {alert.verifiedSources.map((src, idx) => (
-                      <a
-                        key={idx}
-                        href={src.uri}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-blue-700 hover:underline"
-                      >
+                      <a key={idx} href={src.uri} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-700 hover:underline">
                         {src.title}
                         <ArrowUpRight className="w-3 h-3" />
                       </a>

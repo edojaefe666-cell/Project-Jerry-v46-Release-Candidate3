@@ -27,7 +27,10 @@ test('outbox worker leaves failed events pending for retry instead of dropping f
 });
 
 
-test('reorg events remain journalable even after verification is withdrawn', () => {
+test('reorg events remain journalable through the centralized wallet journal policy', () => {
   const source = fs.readFileSync(path.join(root, 'src/db/users.ts'), 'utf8');
-  assert.match(source, /\(\(txRow\.status === 'confirmed' && txRow\.isVerifiedOnChain\) \|\| txRow\.status === 'reorged'\)/);
+  const policy = fs.readFileSync(path.join(root, 'src/lib/walletJournalPolicy.ts'), 'utf8');
+  assert.match(source, /isEligibleWalletJournalEvent\(txRow\)/);
+  assert.match(policy, /transaction\.status === 'reorged'/);
+  assert.match(policy, /transaction\.status === 'confirmed' && transaction\.isVerifiedOnChain === true/);
 });

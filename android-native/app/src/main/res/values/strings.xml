@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Public OAuth web client ID; never put a client secret in the Android app. -->
+    <string name="default_web_client_id" translatable="false">146588155710-bj4k42ir10daeek7dd11cmjcjl09rkpv.apps.googleusercontent.com</string>
+</resources>

@@ -1,8 +1,10 @@
-import { useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Search, Plus, Upload, ShieldAlert, RotateCcw } from 'lucide-react';
 import { filterMemories } from '../lib/jerryEngine';
+import { apiFetch } from '../lib/apiClient';
+import { memoryAreaForCategory } from '../lib/learningMemory';
 import { ARCHITECTURE_MODULES, DEVELOPMENT_ROADMAP } from '../lib/seedData';
-import type { MemoryEntry, OwnerProfile, PhoneIntegrationItem } from '../lib/types';
+import type { JerryMemoryArea, MemoryEntry, OwnerProfile, PhoneIntegrationItem } from '../lib/types';
 import { OwnerAvatar } from './OwnerAvatar';
 
 interface MemoryAndSystemProps {
@@ -26,6 +28,9 @@ export function MemoryAndSystem({
 }: MemoryAndSystemProps) {
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [memoryAreaFilter, setMemoryAreaFilter] = useState<'all' | JerryMemoryArea>('all');
+  const [persistentSearchResults, setPersistentSearchResults] = useState<MemoryEntry[] | null>(null);
+  const [memorySearchStatus, setMemorySearchStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const [memTitle, setMemTitle] = useState('');
   const [memContent, setMemContent] = useState('');
   const [memCategory, setMemCategory] = useState<MemoryEntry['category']>('lesson');
@@ -44,14 +49,102 @@ export function MemoryAndSystem({
   );
   const [identityMessage, setIdentityMessage] = useState<string | null>(null);
   const [resetApprovalId, setResetApprovalId] = useState('');
+  const [memoryExportStatus, setMemoryExportStatus] = useState<string | null>(null);
 
-  const visibleMemories = filterMemories(memories, query, categoryFilter);
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    setPersistentSearchResults(null);
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams();
+      if (query.trim()) params.set('q', query.trim());
+      if (categoryFilter !== 'all') params.set('category', categoryFilter);
+      if (memoryAreaFilter !== 'all') params.set('area', memoryAreaFilter);
+      params.set('limit', '100');
+      setMemorySearchStatus('loading');
+      apiFetch(`/api/memory?${params.toString()}`, { signal: controller.signal })
+        .then(async (response) => {
+          const payload = await response.json() as { entries?: MemoryEntry[] };
+          if (!response.ok || !Array.isArray(payload.entries)) throw new Error('Persistent memory search is unavailable.');
+          if (active) {
+            setPersistentSearchResults(payload.entries);
+            setMemorySearchStatus('ready');
+          }
+        })
+        .catch(() => {
+          if (active && !controller.signal.aborted) {
+            setPersistentSearchResults(null);
+            setMemorySearchStatus('unavailable');
+          }
+        });
+    }, 220);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query, categoryFilter, memoryAreaFilter]);
+
+  const visibleMemories = persistentSearchResults ?? filterMemories(memories, query, categoryFilter).filter((entry) =>
+    memoryAreaFilter === 'all' || (entry.area ?? memoryAreaForCategory(entry.category)) === memoryAreaFilter,
+  );
+
+  const handleExportMemory = async () => {
+    setMemoryExportStatus('Preparing complete secure memory export…');
+    try {
+      const allEntries: unknown[] = [];
+      let cursor: string | null = null;
+      let exportMetadata: { schemaVersion: number; exportedAt: string; ownerUid?: string } | null = null;
+      do {
+        const query = cursor ? `?limit=500&cursor=${encodeURIComponent(cursor)}` : '?limit=500';
+        const response = await apiFetch(`/api/memory/export${query}`, { method: 'GET' });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(payload.error || `Memory export failed (HTTP ${response.status}).`);
+        }
+        const page = await response.json() as {
+          schemaVersion: number;
+          exportedAt: string;
+          ownerUid?: string;
+          entries: unknown[];
+          nextCursor: string | null;
+        };
+        if (!Array.isArray(page.entries) || (page.nextCursor !== null && typeof page.nextCursor !== 'string')) {
+          throw new Error('Jerry returned an invalid memory export page.');
+        }
+        exportMetadata ??= { schemaVersion: page.schemaVersion, exportedAt: page.exportedAt, ownerUid: page.ownerUid };
+        allEntries.push(...page.entries);
+        cursor = page.nextCursor;
+        setMemoryExportStatus(`Preparing complete secure memory export… ${allEntries.length} entries collected.`);
+      } while (cursor);
+
+      const exportDocument = {
+        ...exportMetadata,
+        count: allEntries.length,
+        truncated: false,
+        entries: allEntries,
+      };
+      const blob = new Blob([JSON.stringify(exportDocument, null, 2)], { type: 'application/json' });
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = 'jerry-memory-export.json';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      setMemoryExportStatus(`Complete memory export prepared: ${allEntries.length} entries. Keep this file private; it contains your saved Jerry knowledge.`);
+    } catch (error) {
+      setMemoryExportStatus(error instanceof Error ? error.message : 'Memory export failed.');
+    }
+  };
 
   const handleSaveMemory = (e: FormEvent) => {
     e.preventDefault();
     if (!memTitle.trim() || !memContent.trim()) return;
     onAddMemory({
       category: memCategory,
+      area: memoryAreaForCategory(memCategory),
       title: memTitle.trim(),
       content: memContent.trim(),
       outcome: memCategory === 'lesson' ? 'insight' : 'success',
@@ -103,6 +196,43 @@ export function MemoryAndSystem({
             </p>
           </div>
 
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-500" role="status">
+              {memorySearchStatus === 'loading'
+              ? 'Searching Jerry’s owner-scoped persistent memory…'
+              : memorySearchStatus === 'ready'
+                ? 'Showing database-backed memory results.'
+                : 'Persistent search is unavailable; showing locally available workspace memories.'}
+            </p>
+            <button type="button" onClick={() => void handleExportMemory()} className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50">
+              Export persistent memory
+            </button>
+          </div>
+          {memoryExportStatus && <p className="text-xs text-slate-600" role="status">{memoryExportStatus}</p>}
+
+          <div className="flex flex-wrap gap-2" aria-label="Persistent memory areas">
+            {([
+              ['all', 'All memory'],
+              ['owner_profile', 'Owner Profile'],
+              ['mission_projects', 'Mission & Projects'],
+              ['knowledge_experience', 'Knowledge & Experience'],
+            ] as const).map(([area, label]) => (
+              <button
+                key={area}
+                type="button"
+                onClick={() => setMemoryAreaFilter(area)}
+                aria-pressed={memoryAreaFilter === area}
+                className={`px-3 py-1.5 text-xs font-medium rounded-full border cursor-pointer ${
+                  memoryAreaFilter === area
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-white text-slate-600 border-slate-300 hover:border-slate-500'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -141,6 +271,7 @@ export function MemoryAndSystem({
                 onClick={() => {
                   setQuery('');
                   setCategoryFilter('all');
+                  setMemoryAreaFilter('all');
                 }}
                 className="mt-2 text-xs font-medium text-blue-700 hover:text-blue-800 cursor-pointer"
               >
@@ -153,7 +284,7 @@ export function MemoryAndSystem({
                 <div key={entry.id} className="py-3.5 first:pt-1 last:pb-0 space-y-1">
                   <div className="flex items-center justify-between text-xs text-slate-500">
                     <span className="capitalize font-medium text-blue-700">
-                      {entry.category}
+                      {entry.area ?? memoryAreaForCategory(entry.category)} · {entry.category}
                       {entry.tags.length > 0 ? ` · ${entry.tags.join(' · ')}` : ''}
                     </span>
                     <span className="font-mono tabular-nums">{entry.createdAt.slice(0, 10)}</span>

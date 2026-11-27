@@ -1,8 +1,10 @@
 import { eq, desc, sql } from 'drizzle-orm';
 import { db } from './index.ts';
 import { enqueueWalletJournalEvent } from './walletJournalOutbox.ts';
+import { isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
 import { dailySummaryReports, idempotencyKeys, ledgerTransactions, taskExecutions, users, workspaces } from './schema.ts';
 import type { DailySummaryReport, JerryState, WalletTransaction } from '../lib/types.ts';
+import { consumeAutonomousTaskApproval } from '../lib/taskApproval.ts';
 import crypto from 'node:crypto';
 
 export async function getOrCreateUser(uid: string, email: string) {
@@ -80,57 +82,57 @@ export async function recordLedgerTransactionsForUser(
   if (txs.length === 0) return;
   try {
     const user = await getOrCreateUser(uid, email);
-    const existing = await db
-      .select({ txRef: ledgerTransactions.txRef })
-      .from(ledgerTransactions)
-      .where(eq(ledgerTransactions.userId, user.id));
-    const seen = new Set(existing.map((r) => r.txRef));
-    const toInsert = txs.filter((tx) => !seen.has(tx.id));
-    if (toInsert.length === 0) return;
-
-    await db.insert(ledgerTransactions).values(
-      toInsert.map((tx) => ({
-        userId: user.id,
-        txRef: tx.id,
-        timestamp: tx.timestamp,
-        txType: tx.type,
-        asset: tx.asset,
-        network: tx.network,
-        amount: tx.amount,
-        usdValue: tx.usdValue ?? null,
-        usdValuationAt: tx.usdValuationAt ?? null,
-        usdValuationSource: tx.usdValuationSource ?? null,
-        fee: tx.fee,
-        counterparty: tx.counterparty,
-        status: tx.status,
-        note: tx.note,
-        txHash: tx.txHash ?? null,
-        isVerifiedOnChain: Boolean(tx.isVerifiedOnChain),
-        confirmationDepth: tx.confirmationDepth ?? null,
-        verifiedBlockHeight: tx.verifiedBlockHeight ?? null,
-        verifiedBlockHash: tx.verifiedBlockHash ?? null,
-      }))
-    ).onConflictDoUpdate({
-      target: [ledgerTransactions.userId, ledgerTransactions.txRef],
-      set: {
-        timestamp: sql`excluded.timestamp`,
-        txType: sql`excluded.tx_type`,
-        asset: sql`excluded.asset`,
-        network: sql`excluded.network`,
-        amount: sql`excluded.amount`,
-        usdValue: sql`excluded.usd_value`,
-        usdValuationAt: sql`excluded.usd_valuation_at`,
-        usdValuationSource: sql`excluded.usd_valuation_source`,
-        fee: sql`excluded.fee`,
-        counterparty: sql`excluded.counterparty`,
-        status: sql`excluded.status`,
-        note: sql`excluded.note`,
-        txHash: sql`excluded.tx_hash`,
-        isVerifiedOnChain: sql`excluded.is_verified_on_chain`,
-        confirmationDepth: sql`excluded.confirmation_depth`,
-        verifiedBlockHeight: sql`excluded.verified_block_height`,
-        verifiedBlockHash: sql`excluded.verified_block_hash`,
-      },
+    // Upsert every supplied transaction, not only unseen IDs: a pending or
+    // previously unverified row may have become confirmed or reorged since
+    // the previous sync. The journal outbox event is committed atomically.
+    await db.transaction(async (tx) => {
+      await tx.insert(ledgerTransactions).values(
+        txs.map((tx) => ({
+          userId: user.id,
+          txRef: tx.id,
+          timestamp: tx.timestamp,
+          txType: tx.type,
+          asset: tx.asset,
+          network: tx.network,
+          amount: tx.amount,
+          usdValue: tx.usdValue ?? null,
+          usdValuationAt: tx.usdValuationAt ?? null,
+          usdValuationSource: tx.usdValuationSource ?? null,
+          fee: tx.fee,
+          counterparty: tx.counterparty,
+          status: tx.status,
+          note: tx.note,
+          txHash: tx.txHash ?? null,
+          isVerifiedOnChain: Boolean(tx.isVerifiedOnChain),
+          confirmationDepth: tx.confirmationDepth ?? null,
+          verifiedBlockHeight: tx.verifiedBlockHeight ?? null,
+          verifiedBlockHash: tx.verifiedBlockHash ?? null,
+        }))
+      ).onConflictDoUpdate({
+        target: [ledgerTransactions.userId, ledgerTransactions.txRef],
+        set: {
+          timestamp: sql`excluded.timestamp`,
+          txType: sql`excluded.tx_type`,
+          asset: sql`excluded.asset`,
+          network: sql`excluded.network`,
+          amount: sql`excluded.amount`,
+          usdValue: sql`excluded.usd_value`,
+          usdValuationAt: sql`excluded.usd_valuation_at`,
+          usdValuationSource: sql`excluded.usd_valuation_source`,
+          fee: sql`excluded.fee`,
+          counterparty: sql`excluded.counterparty`,
+          status: sql`excluded.status`,
+          note: sql`excluded.note`,
+          txHash: sql`excluded.tx_hash`,
+          isVerifiedOnChain: sql`excluded.is_verified_on_chain`,
+          confirmationDepth: sql`excluded.confirmation_depth`,
+          verifiedBlockHeight: sql`excluded.verified_block_height`,
+          verifiedBlockHash: sql`excluded.verified_block_hash`,
+        },
+      });
+      for (const txRow of txs) {
+        if (isEligibleWalletJournalEvent(txRow)) await enqueueWalletJournalEvent(tx, user.id, txRow);
+      }
     });
   } catch (error) {
     console.error('Database ledger sync failed:', error);
@@ -214,6 +216,9 @@ export async function updateWorkspaceForUserAtomic(
             verifiedBlockHash: txRow.verifiedBlockHash ?? null,
           },
         });
+      }
+      for (const txRow of next.transactions ?? []) {
+        if (isEligibleWalletJournalEvent(txRow)) await enqueueWalletJournalEvent(tx, user.id, txRow);
       }
       return next;
     });
@@ -325,8 +330,7 @@ export async function runIdempotentWorkspaceCommand<T extends object>(
       });
     }
     for (const txRow of state.transactions ?? []) {
-      if (txRow.asset === 'BTC' && txRow.network === 'Bitcoin Mainnet' &&
-          ((txRow.status === 'confirmed' && txRow.isVerifiedOnChain) || txRow.status === 'reorged')) {
+      if (isEligibleWalletJournalEvent(txRow)) {
         await enqueueWalletJournalEvent(tx, user.id, txRow);
       }
     }
@@ -360,25 +364,29 @@ export async function startTaskExecution(
     const task = current.tasks.find((item) => item.id === taskId);
     if (!task) throw new Error('Task not found.');
     if (task.status === 'completed') throw new Error('Task is already completed.');
+    if (task.status === 'running' || task.status === 'interrupted') {
+      throw new Error('Task execution is already active or interrupted; reconcile the prior external operation before retrying.');
+    }
 
     // Re-check authorization inside the same per-user transaction/lock that
     // creates the durable execution. This closes the race where an approval
     // could be revoked after the HTTP handler's earlier read but before start.
     const taskRevenue = Math.max(0, Number(task.expectedRevenueUsd ?? task.projectedRevenueUsd ?? 0) || 0);
     const mustHaveApproval = task.requiresApproval || taskRevenue > 0 || task.financialImpactUsd > 0 || task.category === 'financial';
+    let approvals = current.approvals ?? [];
     if (mustHaveApproval) {
-      const approval = (current.approvals ?? []).find((item) =>
-        item.id === approvalId && item.subjectId === taskId && item.kind === 'autonomous_task'
-      );
-      if (!approval || approval.decision !== 'approved') {
-        throw new Error('A currently approved task authorization is required to start execution.');
+      const consumedApprovals = consumeAutonomousTaskApproval(approvals, taskId, approvalId);
+      if (!consumedApprovals) {
+        throw new Error('A currently approved task authorization is required to start execution; it must be fresh and unused.');
       }
+      approvals = consumedApprovals;
     }
 
     const executionId = `exec-${crypto.randomUUID()}`;
     const now = new Date();
     const next: JerryState = {
       ...current,
+      approvals,
       tasks: current.tasks.map((item) => item.id === taskId ? {
         ...item,
         status: 'running',

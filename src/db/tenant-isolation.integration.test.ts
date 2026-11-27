@@ -17,6 +17,7 @@ test('PostgreSQL tenant isolation: workspace, approvals, idempotency, tasks, led
   assert.notEqual(process.env.NODE_ENV, 'production', 'Tenant integration tests must never run in production.');
   assert.ok(databaseConfigured, 'Tenant integration was requested, but SQL_HOST, SQL_USER, or a safe SQL_DB_NAME containing test/tenant is missing.');
   const { createPool } = await import('./index.ts');
+  const { saveMemoryEntryForUser, searchMemoryForUser } = await import('./memoryStore.ts');
   const {
     getWorkspaceForUser,
     saveWorkspaceForUser,
@@ -71,6 +72,52 @@ test('PostgreSQL tenant isolation: workspace, approvals, idempotency, tasks, led
   });
 
   try {
+    const memoryA = {
+      id: `memory-A-${suffix}`, category: 'lesson' as const, title: 'Tenant A private discovery',
+      content: 'quartz-lighthouse insight must remain private to tenant A', outcome: 'insight' as const,
+      tags: ['tenant-a', 'private'], createdAt: new Date().toISOString(),
+    };
+    const memoryB = {
+      ...memoryA, id: `memory-B-${suffix}`, title: 'Tenant B private discovery',
+      content: 'cobalt-orchid insight must remain private to tenant B', tags: ['tenant-b', 'private'],
+    };
+    await Promise.all([
+      saveMemoryEntryForUser(userA.uid, userA.email, memoryA),
+      saveMemoryEntryForUser(userB.uid, userB.email, memoryB),
+    ]);
+    const memoryProfileA = {
+      id: `memory-profile-A-${suffix}`, category: 'preference' as const,
+      title: 'Tenant A owner preference', content: 'Owner profile preference must be searchable.',
+      outcome: 'insight' as const, tags: ['owner-profile'], createdAt: new Date().toISOString(),
+    };
+    const memoryProjectA = {
+      id: `memory-project-A-${suffix}`, category: 'goal' as const,
+      title: 'Tenant A project goal', content: 'Mission project goal must be searchable.',
+      outcome: 'insight' as const, tags: ['mission-project'], createdAt: new Date().toISOString(),
+    };
+    await Promise.all([
+      saveMemoryEntryForUser(userA.uid, userA.email, memoryProfileA),
+      saveMemoryEntryForUser(userA.uid, userA.email, memoryProjectA),
+    ]);
+    const [memoriesA, memoriesB, queryAFromB, ownerProfileA, projectsA, knowledgeAFromB] = await Promise.all([
+      searchMemoryForUser(userA.uid, userA.email, { query: 'quartz-lighthouse' }),
+      searchMemoryForUser(userB.uid, userB.email, { query: 'cobalt-orchid' }),
+      searchMemoryForUser(userB.uid, userB.email, { query: 'quartz-lighthouse' }),
+      searchMemoryForUser(userA.uid, userA.email, { area: 'owner_profile' }),
+      searchMemoryForUser(userA.uid, userA.email, { area: 'mission_projects' }),
+      searchMemoryForUser(userB.uid, userB.email, { area: 'knowledge_experience' }),
+    ]);
+    assert.ok(memoriesA.some((entry) => entry.id === memoryA.id));
+    assert.ok(memoriesB.some((entry) => entry.id === memoryB.id));
+    assert.equal(queryAFromB.some((entry) => entry.id === memoryA.id), false,
+      'Memory search must not expose another tenant entry even when its unique content is queried.');
+    assert.ok(ownerProfileA.some((entry) => entry.id === memoryProfileA.id));
+    assert.equal(ownerProfileA.some((entry) => entry.id === memoryA.id), false);
+    assert.ok(projectsA.some((entry) => entry.id === memoryProjectA.id));
+    assert.equal(projectsA.some((entry) => entry.id === memoryA.id), false);
+    assert.equal(knowledgeAFromB.some((entry) => entry.id === memoryA.id), false,
+      'Area-filtered memory search must remain tenant-scoped.');
+
     await saveWorkspaceForUser(userA.uid, userA.email, makeState('Tenant A', [approval]));
     await saveWorkspaceForUser(userB.uid, userB.email, makeState('Tenant B', [approvalB]));
 
@@ -139,7 +186,7 @@ test('PostgreSQL tenant isolation: workspace, approvals, idempotency, tasks, led
       headline: owner, summaryText: `private ${owner} summary`, notificationTitle: owner,
       notificationRead: false, modelUsed: 'integration-test',
       metrics: { todayProfitUsd: 0, previousDayProfitUsd: 0, activeTasksCount: 0, completedTasksCount: 0, newRevenueInsightsCount: 0, internetAuthorityScore: 0 },
-      chartSeries: [], taskBreakdown: [],
+      chartSeries: [], taskBreakdown: [], financialDataStatus: 'unavailable_not_loaded_from_verified_ledger',
     });
     await saveDailySummaryForUser(userA.uid, userA.email, summaryFor('A'));
     await saveDailySummaryForUser(userB.uid, userB.email, summaryFor('B'));

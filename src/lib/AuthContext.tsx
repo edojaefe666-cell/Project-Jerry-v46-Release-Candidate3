@@ -9,10 +9,18 @@ import {
 import {
   onAuthStateChanged,
   signInWithPopup,
+  signInWithCredential,
+  GoogleAuthProvider,
   signOut,
   type User,
 } from 'firebase/auth';
 import { auth, googleAuthProvider } from './firebase';
+
+declare global {
+  interface Window {
+    JerryNativeAuth?: { postMessage: (message: string) => void };
+  }
+}
 
 interface AuthContextValue {
   user: User | null;
@@ -39,6 +47,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
+    const handleNativeAuthResult = (event: Event) => {
+      const idToken = (event as CustomEvent<{ idToken?: string }>).detail?.idToken;
+      if (!idToken) {
+        setAuthError('Android sign-in did not return a valid Google identity token.');
+        return;
+      }
+      void signInWithCredential(auth, GoogleAuthProvider.credential(idToken))
+        .then(async (result) => {
+          setUser(result.user);
+          setIdToken(await result.user.getIdToken());
+          setAuthError(null);
+        })
+        .catch((error: unknown) => {
+          setAuthError(error instanceof Error ? error.message : 'Google sign-in failed.');
+        });
+    };
+    const handleNativeAuthError = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail?.message;
+      setAuthError(message || 'Google sign-in was cancelled or unavailable.');
+    };
+    window.addEventListener('jerry-native-auth-result', handleNativeAuthResult);
+    window.addEventListener('jerry-native-auth-error', handleNativeAuthError);
+    return () => {
+      window.removeEventListener('jerry-native-auth-result', handleNativeAuthResult);
+      window.removeEventListener('jerry-native-auth-error', handleNativeAuthError);
+    };
+  }, []);
+
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
       setUser(nextUser);
       if (nextUser) {
@@ -58,6 +95,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signInWithGoogle = useCallback(async () => {
     setAuthError(null);
+    if (window.JerryNativeAuth?.postMessage) {
+      try {
+        window.JerryNativeAuth.postMessage('signInWithGoogle');
+      } catch {
+        setAuthError('Android Google sign-in could not be started.');
+      }
+      return;
+    }
     try {
       const result = await signInWithPopup(auth, googleAuthProvider);
       const token = await result.user.getIdToken();

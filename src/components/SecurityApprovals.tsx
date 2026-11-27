@@ -8,7 +8,7 @@ interface ApprovalRequest { id: string; action: string; summary: string; amountU
 interface Contact { id: string; name: string; email: string; purpose: string; status: 'active' | 'revoked'; createdAt: string; updatedAt: string; }
 interface AuditEntry { seq: number; actorUid?: string; event: string; details: unknown; createdAt: string; previousHash: string; entryHash: string; }
 
-type Panel = 'approvals' | 'backup' | 'contacts' | 'sessions' | 'audit';
+type Panel = 'approvals' | 'backup' | 'contacts' | 'sessions' | 'audit' | 'provider-usage';
 
 export function SecurityApprovals() {
   const [panel, setPanel] = useState<Panel>('approvals');
@@ -32,6 +32,7 @@ export function SecurityApprovals() {
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [integrity, setIntegrity] = useState<{ ok: boolean; entries: number; error?: string } | null>(null);
+  const [providerUsage, setProviderUsage] = useState<any>(null);
   const [session, setSession] = useState<any>(null);
   const [sessionBusy, setSessionBusy] = useState(false);
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' });
@@ -48,7 +49,7 @@ export function SecurityApprovals() {
 
   const createApproval = async () => {
     if (!summary.trim()) return; setCreating(true); setError(null);
-    try { await apiJson('/api/security/approvals', { method: 'POST', body: JSON.stringify({ action, summary: summary.trim(), ...(amountUsd.trim() ? { amountUsd: Number(amountUsd) } : {}), ...(action === 'bitcoin_transfer' ? { scope: { asset: 'BTC', network: 'Bitcoin Mainnet', destination: btcScope.destination.trim(), amount: Number(btcScope.amount), fee: Number(btcScope.fee) } } : {}) }) }); setSummary(''); setAmountUsd(''); setBtcScope({ destination: '', amount: '', fee: '' }); setStatus('pending'); await loadApprovals(); }
+    try { await apiJson('/api/security/approvals', { method: 'POST', body: JSON.stringify({ action, summary: summary.trim(), ...(amountUsd.trim() ? { amountUsd: Number(amountUsd) } : {}), ...(action === 'bitcoin_transfer' ? { scope: { asset: 'BTC', network: 'Bitcoin Mainnet', destination: btcScope.destination.trim(), amount: Number(btcScope.amount), fee: Number(btcScope.fee) } } : action === 'high_impact_change' ? { scope: { operation: 'security_backup_restore' } } : {}) }) }); setSummary(''); setAmountUsd(''); setBtcScope({ destination: '', amount: '', fee: '' }); setStatus('pending'); await loadApprovals(); }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not create approval.'); }
     finally { setCreating(false); }
   };
@@ -64,6 +65,8 @@ export function SecurityApprovals() {
 
   const loadAudit = useCallback(async () => { try { const [a, i] = await Promise.all([apiJson<{ entries: AuditEntry[] }>('/api/security/audit?limit=100'), apiJson<{ ok: boolean; entries: number; error?: string }>('/api/security/audit/integrity')]); setAudit(a.entries); setIntegrity(i); } catch (e) { setError(e instanceof Error ? e.message : 'Could not load audit.'); } }, []);
   useEffect(() => { if (panel === 'audit') void loadAudit(); }, [panel, loadAudit]);
+  const loadProviderUsage = useCallback(async () => { setError(null); try { setProviderUsage(await apiJson('/api/security/provider-usage?days=30')); } catch (e) { setError(e instanceof Error ? e.message : 'Could not load provider usage.'); } }, []);
+  useEffect(() => { if (panel === 'provider-usage') void loadProviderUsage(); }, [panel, loadProviderUsage]);
   const loadSession = useCallback(async () => { try { setSession(await apiJson('/api/security/session')); } catch (e) { setError(e instanceof Error ? e.message : 'Could not load session.'); } }, []);
   useEffect(() => { if (panel === 'sessions') void loadSession(); }, [panel, loadSession]);
 
@@ -86,6 +89,7 @@ export function SecurityApprovals() {
     ['contacts', 'Approved Contacts', <Users className="h-4 w-4" />],
     ['sessions', 'Sessions & Credential', <KeyRound className="h-4 w-4" />],
     ['audit', 'Audit Integrity', <FileKey2 className="h-4 w-4" />],
+    ['provider-usage', 'Provider Budgets', <Clock3 className="h-4 w-4" />],
   ];
 
   return <section className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
@@ -107,6 +111,20 @@ export function SecurityApprovals() {
 
     {panel === 'sessions' && <div className="grid gap-5 lg:grid-cols-2"><div className="rounded-xl border border-slate-800 bg-slate-950/60 p-5 space-y-3"><h2 className="text-sm font-semibold text-white">Current Firebase session</h2>{session ? <><div className="text-xs text-slate-400">{session.email ?? session.uid}</div><div className="grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div>Provider<br/><span className="text-slate-200">{session.provider ?? 'unknown'}</span></div><div>Issued<br/><span className="text-slate-200">{session.issuedAt ? new Date(session.issuedAt*1000).toLocaleString() : '—'}</span></div><div>Expires<br/><span className="text-slate-200">{session.expiresAt ? new Date(session.expiresAt*1000).toLocaleString() : '—'}</span></div><div>UID<br/><span className="font-mono text-slate-200">{session.uid}</span></div></div></> : <p className="text-xs text-slate-500">Loading…</p>}<button disabled={sessionBusy} onClick={() => void revokeAll()} className="mt-2 rounded-lg border border-rose-500/30 px-4 py-2 text-xs text-rose-300">{sessionBusy ? 'Revoking…' : 'Revoke all Firebase refresh sessions'}</button></div><div className="rounded-xl border border-slate-800 bg-slate-950/60 p-5 space-y-3"><h2 className="text-sm font-semibold text-white">Credential rotation</h2><p className="text-xs text-slate-500">For email/password Firebase accounts, re-authenticate before changing the password. Google-managed accounts must be changed with Google.</p><input type="password" value={passwords.current} onChange={e => setPasswords({...passwords,current:e.target.value})} placeholder="Current password" className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"/><input type="password" value={passwords.next} onChange={e => setPasswords({...passwords,next:e.target.value})} placeholder="New password (14+ characters)" className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"/><input type="password" value={passwords.confirm} onChange={e => setPasswords({...passwords,confirm:e.target.value})} placeholder="Confirm new password" className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"/><button onClick={() => void rotatePassword()} className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950">Rotate password</button>{credentialMessage && <div className="rounded-lg bg-emerald-500/10 p-3 text-xs text-emerald-300">{credentialMessage}</div>}</div></div>}
 
+    {panel === 'provider-usage' && <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-white">Provider budget ledger</h2><p className="mt-1 text-xs text-slate-500">Owner-only view · last 30 days · ambiguous reservations remain charged until independently reconciled.</p></div><button onClick={() => void loadProviderUsage()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300">Refresh ledger</button></div>
+      {!providerUsage ? <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-5 text-xs text-slate-500">Loading provider ledger…</div> : <>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-5"><h3 className="text-xs font-semibold text-white">Daily token accounting</h3><div className="mt-3 space-y-2">{providerUsage.tokens.daily.map((d: any) => <div key={d.day} className="rounded-lg bg-slate-900 p-3"><div className="flex justify-between text-xs text-slate-300"><span>{d.day}</span><span>Limit {Number(d.dailyLimitTokens).toLocaleString()}</span></div><div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><span>Reserved: <b className="text-amber-300">{Number(d.reservedTokens).toLocaleString()}</b></span><span>Settled: <b className="text-emerald-300">{Number(d.actualTokens).toLocaleString()}</b></span></div></div>)}{providerUsage.tokens.daily.length === 0 && <p className="text-xs text-slate-500">No token usage recorded.</p>}</div></div>
+          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-5"><h3 className="text-xs font-semibold text-white">Daily USD cost accounting</h3><p className="mt-1 text-[10px] text-slate-500">Amounts shown in USD; sourced from explicitly configured model rates.</p><div className="mt-3 space-y-2">{providerUsage.costs.daily.map((d: any) => <div key={d.day} className="rounded-lg bg-slate-900 p-3"><div className="flex justify-between text-xs text-slate-300"><span>{d.day}</span><span>Limit \${(Number(d.dailyLimitMicroUsd)/1_000_000).toFixed(4)}</span></div><div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><span>Reserved: <b className="text-amber-300">\${(Number(d.reservedMicroUsd)/1_000_000).toFixed(4)}</b></span><span>Settled: <b className="text-emerald-300">\${(Number(d.actualMicroUsd)/1_000_000).toFixed(4)}</b></span></div></div>)}{providerUsage.costs.daily.length === 0 && <p className="text-xs text-slate-500">No USD cost ledger recorded.</p>}</div></div>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-5"><h3 className="text-xs font-semibold text-white">Recent token reservations</h3><div className="mt-3 space-y-2">{providerUsage.tokens.reservations.map((r: any) => <div key={r.reservationId} className="rounded-lg bg-slate-900 p-3"><div className="flex justify-between gap-2 text-[11px]"><span className="font-mono text-slate-400">{r.reservationId.slice(0, 12)}…</span><span className={r.status === 'settled' ? 'text-emerald-300' : 'text-amber-300'}>{r.status === 'settled' ? 'settled' : 'reserved / unresolved'}</span></div><div className="mt-1 text-[10px] text-slate-500">{r.day} · {Number(r.reservedTokens).toLocaleString()} tokens · {new Date(r.createdAt).toLocaleString()}</div></div>)}{providerUsage.tokens.reservations.length === 0 && <p className="text-xs text-slate-500">No reservations recorded.</p>}</div></div>
+          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-5"><h3 className="text-xs font-semibold text-white">Recent USD reservations</h3><div className="mt-3 space-y-2">{providerUsage.costs.reservations.map((r: any) => <div key={r.reservationId} className="rounded-lg bg-slate-900 p-3"><div className="flex justify-between gap-2 text-[11px]"><span className="font-mono text-slate-400">{r.reservationId.slice(0, 12)}…</span><span className={r.status === 'settled' ? 'text-emerald-300' : 'text-amber-300'}>{r.status === 'settled' ? 'settled' : 'reserved / unresolved'}</span></div><div className="mt-1 text-[10px] text-slate-500">{r.day} · \${(Number(r.reservedMicroUsd)/1_000_000).toFixed(6)} reserved · {new Date(r.createdAt).toLocaleString()}</div></div>)}{providerUsage.costs.reservations.length === 0 && <p className="text-xs text-slate-500">No USD reservations recorded.</p>}</div></div>
+        </div>
+        <p className="text-[10px] text-slate-600">This is a reservation ledger, not a provider invoice. Missing usage metadata, failed calls and ambiguous timeouts remain conservatively reserved. No automatic refund or manual release is available here.</p>
+      </>}
+    </div>}
     {panel === 'audit' && <div className="space-y-4"><div className={`rounded-xl border p-4 ${integrity?.ok ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-rose-500/30 bg-rose-500/10'}`}><div className="flex items-center gap-2 text-sm font-semibold text-white">{integrity?.ok ? <ShieldCheck className="h-4 w-4 text-emerald-400"/> : <AlertTriangle className="h-4 w-4 text-rose-400"/>}{integrity ? `${integrity.ok ? 'Audit chain verified' : 'Audit chain FAILED'} · ${integrity.entries} entries` : 'Checking audit chain…'}</div>{integrity?.error && <p className="mt-2 text-xs text-rose-300">{integrity.error}</p>}</div><div className="space-y-2">{audit.map(a => <div key={a.seq} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"><div className="flex flex-wrap justify-between gap-2 text-[10px] text-slate-500"><span>#{a.seq} · {a.event}</span><span>{new Date(a.createdAt).toLocaleString()}</span></div><div className="mt-2 text-xs text-slate-300">{JSON.stringify(a.details)}</div><div className="mt-2 break-all font-mono text-[9px] text-slate-700">{a.entryHash}</div></div>)}</div></div>}
   </section>;
 }
