@@ -118,7 +118,9 @@ jobs:
         run: |
           gradle --no-daemon :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:lintDebug :app:lintRelease
           sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/app-debug.apk.sha256
-          sha256sum app/build/outputs/apk/release/app-release.apk > app/build/outputs/apk/release/app-release.apk.sha256
+          release_apk="$(find app/build/outputs/apk/release -maxdepth 1 -name 'app-release*.apk' -print -quit)"
+          test -n "$release_apk"
+          sha256sum "$release_apk" > "$release_apk.sha256"
 
       # Publish compiled candidates even if the emulator smoke test fails, so
       # a device-installable diagnostic build is not lost with the test result.
@@ -131,6 +133,7 @@ jobs:
             android-native/app/build/outputs/apk/debug/app-debug.apk
             android-native/app/build/outputs/apk/debug/app-debug.apk.sha256
             android-native/app/build/outputs/apk/release/*.apk
+            android-native/app/build/outputs/apk/release/*.sha256
             android-native/app/build/outputs/apk/release/app-release-unsigned.apk.sha256
           if-no-files-found: warn
           retention-days: 14
