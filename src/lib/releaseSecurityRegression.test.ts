@@ -169,8 +169,8 @@ test('emergency stop keeps internal wallet journal recovery separate from extern
 
 
 test('shared execution leases serialize owner stop with active ledger side effects', () => {
-  const control = require('node:fs').readFileSync(new URL('../db/executionControl.ts', import.meta.url), 'utf8');
-  const outbox = require('node:fs').readFileSync(new URL('../db/walletJournalOutbox.ts', import.meta.url), 'utf8');
+  const control = fs.readFileSync(path.join(root, 'src/db/executionControl.ts'), 'utf8');
+  const outbox = fs.readFileSync(path.join(root, 'src/db/walletJournalOutbox.ts'), 'utf8');
   assert.match(control, /FOR SHARE/);
   assert.match(control, /withSharedExecutionLease/);
   assert.match(outbox, /withSharedExecutionLease\(async/);
