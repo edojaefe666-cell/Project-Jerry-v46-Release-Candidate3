@@ -147,7 +147,7 @@ export function DeviceManagement() {
         setMessage('An owner recovery envelope already exists for key version 1. Jerry will not overwrite it; use your existing offline recovery key.');
         return;
       } catch (cause) {
-        if (!(cause instanceof Error) || !/not found|404/i.test(cause.message)) throw cause;
+        if (!(cause instanceof Error) || !/no owner recovery envelope exists|not found|404/i.test(cause.message)) throw cause;
       }
       if (!(await isAndroidMemoryKeyInstalled(user.uid, 1))) throw new Error('This phone does not have the protected memory key. Restore it before creating a recovery backup.');
       const created = await createNativeOwnerMemoryRecoveryEnvelope(user.uid, currentDeviceId || getOrCreateJerryDeviceId(), 1);
