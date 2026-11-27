@@ -62,3 +62,27 @@ export async function apiJson<T>(input: RequestInfo | URL, init: RequestInit = {
   }
   return payload as T;
 }
+
+/**
+ * Checks the backend's public, non-diagnostic readiness endpoint. Android's
+ * local WebView must never mistake its asset origin for a connected backend.
+ */
+export async function checkBackendReadiness(): Promise<boolean> {
+  if (API_BASE_IS_PLACEHOLDER) return false;
+  if (typeof window === 'undefined') return false;
+  if (!API_BASE && window.location.origin === 'https://localhost') return false;
+  const target = API_BASE ? `${API_BASE}/readyz` : '/readyz';
+  try {
+    const response = await fetch(target, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) return false;
+    const payload: unknown = await response.json();
+    return !!payload && typeof payload === 'object' &&
+      (payload as { status?: unknown }).status === 'ready';
+  } catch {
+    return false;
+  }
+}
