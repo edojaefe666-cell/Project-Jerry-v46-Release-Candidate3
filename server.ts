@@ -34,6 +34,8 @@ import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } f
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { reserveConfiguredProviderOperation } from './src/db/providerOperationStore.ts';
 import { reserveProviderTokens, settleProviderTokens, type ProviderUsageReservation } from './src/db/providerUsageStore.ts';
+import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, type ProviderCostReservation, type ProviderModelPricing } from './src/db/providerCostStore.ts';
+import { parseProviderPricingFromEnvironment } from './src/lib/providerAdapters.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
 import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
@@ -141,6 +143,53 @@ async function settleDirectGeminiTokens(
   } catch {
     // Preserve the full reservation when reconciliation is unavailable.
   }
+}
+
+
+async function generateDirectGeminiWithBudget<T extends {
+  usageMetadata?: { totalTokenCount?: number; promptTokenCount?: number; candidatesTokenCount?: number };
+}>(
+  ownerUid: string,
+  prompt: string,
+  signal: AbortSignal,
+  generate: () => Promise<T>,
+): Promise<T> {
+  const model = 'gemini-4-hydrogen';
+  const pricing = parseProviderPricingFromEnvironment(process.env.JERRY_PROVIDER_MODEL_PRICING_JSON);
+  const modelPricing = pricing[`google/${model}`];
+  const dailyLimitMicroUsd = Number(process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD);
+  if ((!modelPricing || !Number.isSafeInteger(dailyLimitMicroUsd) || dailyLimitMicroUsd < 1) &&
+      process.env.NODE_ENV === 'production') {
+    throw new Error('Explicit Google model pricing and JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD are required before direct Gemini execution.');
+  }
+
+  return withSharedExecutionLease(async () => {
+    if (signal.aborted || isEmergencyStopActive()) throw new Error('Jerry direct Gemini request cancelled by emergency stop.');
+    const tokenReservation = await reserveDirectGeminiTokens(ownerUid, prompt);
+    await reserveConfiguredProviderOperation(ownerUid);
+    let costReservation: ProviderCostReservation | undefined;
+    if (modelPricing && Number.isSafeInteger(dailyLimitMicroUsd) && dailyLimitMicroUsd > 0) {
+      const inputUpperBound = Buffer.byteLength(prompt, 'utf8') + 512;
+      const reserveMicroUsd = estimateProviderCostMicroUsd(inputUpperBound, 2048, modelPricing);
+      costReservation = await reserveProviderCost({ ownerUid, reserveMicroUsd, dailyLimitMicroUsd });
+    }
+
+    // The durable shared stop lease covers every budget reservation and the
+    // direct SDK request, preventing a cross-instance stop from racing admission.
+    const response = await generate();
+    await settleDirectGeminiTokens(tokenReservation, response);
+    const inputTokens = Number(response.usageMetadata?.promptTokenCount);
+    const outputTokens = Number(response.usageMetadata?.candidatesTokenCount);
+    if (costReservation && modelPricing &&
+        Number.isSafeInteger(inputTokens) && inputTokens >= 0 &&
+        Number.isSafeInteger(outputTokens) && outputTokens >= 0) {
+      const actualMicroUsd = estimateProviderCostMicroUsd(inputTokens, outputTokens, modelPricing);
+      try { await settleProviderCost(costReservation, actualMicroUsd); } catch {
+        // Keep the full conservative reservation if reconciliation is unavailable.
+      }
+    }
+    return response;
+  });
 }
 
 async function startServer() {
@@ -2338,14 +2387,13 @@ async function startServer() {
           (focusHint ? `Owner focus hint: "${focusHint}". ` : '') +
           `Avoid repeating these titles: ${existingTitles.slice(0, 12).join('; ') || 'none'}. ` +
           'Return ONLY a valid JSON array of up to 3 methods with keys: title, methodCategory (one of "Automation Template", "Productized Service", "AI Micro-Tool", "Retainer Upsell", "Data & API Feed"), whyEasierAndFaster, executionShortcut, estimatedHoursSavedPerWeek (number), estimatedDailyProfitUsd (number), startupCapitalUsd (number). Explain pricing, volume, cost and capacity assumptions for any nonzero financial scenario. Prefer estimatedDailyProfitUsd 0 when assumptions cannot be substantiated.';
-      const tokenReservation = await reserveDirectGeminiTokens(req.user!.uid, prompt);
-      await reserveConfiguredProviderOperation(req.user!.uid);
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: prompt,
-        config: { tools: [{ googleSearch: {} }], maxOutputTokens: 2048, abortSignal: execution.signal },
-      });
-      await settleDirectGeminiTokens(tokenReservation, response);
+      const response = await generateDirectGeminiWithBudget(req.user!.uid, prompt, execution.signal, () =>
+        ai.models.generateContent({
+          model: 'gemini-4-hydrogen',
+          contents: prompt,
+          config: { tools: [{ googleSearch: {} }], maxOutputTokens: 2048, abortSignal: execution.signal },
+        })
+      );
 
       if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({
@@ -2539,28 +2587,27 @@ async function startServer() {
           `${cleanHint ? `Specific observation or context to reflect on: "${cleanHint}". ` : ''}` +
           `Avoid repeating existing insights: ${existingTitles.slice(0, 10).join('; ') || 'none'}. ` +
           `Return valid JSON matching the schema with a domain ("Buyer Psychology" | "Owner Style" | "Communication & Trust" | "Decision Friction" | "Offer Framing"), concise title, deep human observation, practicalApplication, and clarityScoreGain (2-5).`;
-      const tokenReservation = await reserveDirectGeminiTokens(req.user!.uid, prompt);
-      await reserveConfiguredProviderOperation(req.user!.uid);
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          maxOutputTokens: 2048,
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              domain: { type: Type.STRING },
-              title: { type: Type.STRING },
-              observation: { type: Type.STRING },
-              practicalApplication: { type: Type.STRING },
-              clarityScoreGain: { type: Type.NUMBER },
+      const response = await generateDirectGeminiWithBudget(req.user!.uid, prompt, execution.signal, () =>
+        ai.models.generateContent({
+          model: 'gemini-4-hydrogen',
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            maxOutputTokens: 2048,
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                domain: { type: Type.STRING },
+                title: { type: Type.STRING },
+                observation: { type: Type.STRING },
+                practicalApplication: { type: Type.STRING },
+                clarityScoreGain: { type: Type.NUMBER },
+              },
             },
+            abortSignal: execution.signal,
           },
-          abortSignal: execution.signal,
-        },
-      });
-      await settleDirectGeminiTokens(tokenReservation, response);
+        })
+      );
 
       if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
@@ -2696,28 +2743,27 @@ async function startServer() {
           `${cleanHint ? `Focus topic: "${cleanHint}". ` : ''}` +
           `Avoid repeating existing playbooks: ${existingTitles.slice(0, 10).join('; ') || 'none'}. ` +
           `Return ONLY JSON matching the schema with pillar ("SEO & Organic Reach" | "Autonomous Distribution" | "Viral Product Loops" | "Developer & API Ecosystem" | "Conversion & Monetization"), concise title, actionable tactic, expectedImpact, and authorityGainPts (3-5).`;
-      const tokenReservation = await reserveDirectGeminiTokens(req.user!.uid, prompt);
-      await reserveConfiguredProviderOperation(req.user!.uid);
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          maxOutputTokens: 2048,
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              pillar: { type: Type.STRING },
-              title: { type: Type.STRING },
-              tactic: { type: Type.STRING },
-              expectedImpact: { type: Type.STRING },
-              authorityGainPts: { type: Type.NUMBER },
+      const response = await generateDirectGeminiWithBudget(req.user!.uid, prompt, execution.signal, () =>
+        ai.models.generateContent({
+          model: 'gemini-4-hydrogen',
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            maxOutputTokens: 2048,
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                pillar: { type: Type.STRING },
+                title: { type: Type.STRING },
+                tactic: { type: Type.STRING },
+                expectedImpact: { type: Type.STRING },
+                authorityGainPts: { type: Type.NUMBER },
+              },
             },
+            abortSignal: execution.signal,
           },
-          abortSignal: execution.signal,
-        },
-      });
-      await settleDirectGeminiTokens(tokenReservation, response);
+        })
+      );
 
       if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
