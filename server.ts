@@ -410,7 +410,7 @@ async function startServer() {
         const uploaded = await fetch(signed.url, {
           method: 'PUT',
           headers: signed.headers,
-          body: req.body,
+          body: new Uint8Array(req.body),
           signal: AbortSignal.timeout(20_000),
         });
         if (!uploaded.ok) {
