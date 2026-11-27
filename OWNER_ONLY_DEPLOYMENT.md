@@ -35,6 +35,14 @@ This control does not replace action-level approvals, audit logging, tenant isol
 - This is an application-side stop for the currently implemented outgoing-transfer staging boundary. No Bitcoin broadcast implementation exists in this branch. Future external execution adapters must enforce the same stop independently at their own execution boundary before they are enabled.
 
 
+## Android sign-in and device permissions
+
+- The Android WebView uses the native Google Credential Manager flow. It obtains a Google ID token through Android system UI and exchanges that token with Firebase Web Auth using the public web OAuth client ID. The Android APK contains no OAuth client secret.
+- Register the Android application ID `com.projectjerry.android` in the Firebase project and register the SHA-1/SHA-256 fingerprints for the actual signing certificate in Google/Firebase configuration. The CI debug APK is a build-verification artifact and its ephemeral runner signing certificate is not a production signing identity.
+- Before a distributable release, create and protect a stable owner-controlled release signing key outside the repository and CI logs. Configure signing through protected CI secrets or the owner's secure local build environment. Never commit the keystore or passwords.
+- The app requests microphone permission only when its trusted local WebView asks for audio capture. Other WebView origins and non-audio capture requests are denied. Contacts and phone-state permissions are not requested because the current Android features do not need them.
+- Physical-device verification must confirm Google sign-in, token refresh, owner-only API access, microphone consent and sign-out on Android 10. CI compilation alone does not prove these device flows work.
+
 ## Android build connectivity
 
 The Android CI workflow reads the non-secret GitHub Actions repository variable `JERRY_BACKEND_ORIGIN` and embeds that HTTPS origin as `VITE_API_BASE_URL` in the Android web assets. Configure it under **Repository Settings → Secrets and variables → Actions → Variables** only after a real backend is deployed and its HTTPS origin is verified. The variable must be a clean origin (scheme and host only; no path, credentials, query or fragment). If it is absent, CI deliberately falls back to `https://jerry-backend.invalid`; the Android API client detects that placeholder and returns a clear backend-not-connected error for API calls. That APK is a build-verification artifact, not a connected release APK. The workflow validates the origin before building. After setting the variable, rebuild and verify Firebase owner authentication, database migrations, emergency-stop behavior and provider configuration against that deployment. Never put provider credentials or owner UID values in Vite variables or APK assets.
