@@ -55,7 +55,7 @@ import type {
 } from './lib/types';
 import { OwnerAvatar } from './components/OwnerAvatar';
 import { SecurityApprovals } from './components/SecurityApprovals';
-import { apiFetch } from './lib/apiClient';
+import { apiFetch, checkBackendReadiness } from './lib/apiClient';
 import { OverviewHub } from './components/OverviewHub';
 import { BrainConsole } from './components/BrainConsole';
 import { GoalsPlanner } from './components/GoalsPlanner';
@@ -85,24 +85,44 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [backendReady, setBackendReady] = useState<boolean | null>(null);
+  const [backendProbeAttempt, setBackendProbeAttempt] = useState(0);
+  const [workspaceLoadError, setWorkspaceLoadError] = useState(false);
   const autoSummaryTriggeredRef = useRef(false);
 
   useEffect(() => {
     let active = true;
     if (!idToken) {
+      setBackendReady(null);
+      return () => { active = false; };
+    }
+    setBackendReady(null);
+    void checkBackendReadiness().then((ready) => {
+      if (active) setBackendReady(ready);
+    });
+    return () => { active = false; };
+  }, [idToken, backendProbeAttempt]);
+
+  useEffect(() => {
+    let active = true;
+    if (!idToken) {
       setLoaded(true);
-      return () => {
-        active = false;
-      };
+      return () => { active = false; };
+    }
+    if (backendReady !== true) {
+      setLoaded(false);
+      return () => { active = false; };
     }
 
     setLoaded(false);
+    setWorkspaceLoadError(false);
     apiFetch('/api/state', {
       headers: { Authorization: `Bearer ${idToken}` },
     })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error('State load failed'))))
       .then((data: JerryState) => {
-        if (active && data && data.owner) {
+        if (!data || !data.owner) throw new Error('Authenticated workspace response was invalid.');
+        if (active) {
           setState(normalizeJerryWalletState({
             ...INITIAL_JERRY_STATE,
             ...data,
@@ -114,15 +134,13 @@ export default function App() {
         }
       })
       .catch(() => {
-        // Keep the safe local seed state if the authenticated workspace is unavailable.
+        if (active) setWorkspaceLoadError(true);
       })
       .finally(() => {
         if (active) setLoaded(true);
       });
-    return () => {
-      active = false;
-    };
-  }, [idToken]);
+    return () => { active = false; };
+  }, [idToken, backendReady]);
 
   useEffect(() => {
     if (!idToken) return;
@@ -974,6 +992,79 @@ export default function App() {
           <p className="mt-5 text-center text-xs text-slate-500">
             Owner-only access · No paid services are activated by signing in
           </p>
+        </section>
+      </main>
+    );
+  }
+
+  if (backendReady === null) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <div className="w-full max-w-sm text-center space-y-4">
+          <Brain className="w-12 h-12 mx-auto text-blue-400" />
+          <h1 className="text-2xl font-bold">JERRY</h1>
+          <p className="text-sm text-slate-300">Checking secure backend connection...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!backendReady) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <section className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-7">
+          <div className="flex justify-center mb-5"><Brain className="w-14 h-14 text-blue-400" /></div>
+          <h1 className="text-center text-3xl font-bold">JERRY</h1>
+          <h2 className="mt-4 text-center text-lg font-semibold">Backend not connected</h2>
+          <p className="mt-3 text-center text-sm text-slate-300">
+            Jerry has not loaded your owner workspace. Connect a verified HTTPS backend with the required database migrations before using live memory, business or execution features.
+          </p>
+          <p role="status" className="mt-4 rounded-lg border border-slate-700 bg-slate-950 p-3 text-xs text-slate-400">
+            No demo workspace will be presented as live owner data. Paid services remain disabled.
+          </p>
+          <button
+            type="button"
+            onClick={() => setBackendProbeAttempt((value) => value + 1)}
+            className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-500"
+          >
+            Retry backend connection
+          </button>
+          <button
+            type="button"
+            onClick={() => void signOutUser()}
+            className="mt-3 w-full rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+          >
+            Sign out
+          </button>
+        </section>
+      </main>
+    );
+  }
+
+  if (!loaded) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <p className="text-sm text-slate-300">Loading your encrypted owner workspace...</p>
+      </main>
+    );
+  }
+
+  if (workspaceLoadError) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <section className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-7">
+          <h1 className="text-center text-2xl font-bold">JERRY</h1>
+          <h2 className="mt-4 text-center text-lg font-semibold">Owner workspace unavailable</h2>
+          <p className="mt-3 text-center text-sm text-slate-300">
+            The backend is responding, but Jerry could not load the authenticated owner workspace. Check owner authorization and database readiness. No local demo data has been substituted.
+          </p>
+          <button
+            type="button"
+            onClick={() => { setWorkspaceLoadError(false); setBackendReady(null); setBackendProbeAttempt((value) => value + 1); }}
+            className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-500"
+          >
+            Retry secure workspace loading
+          </button>
         </section>
       </main>
     );
