@@ -7,6 +7,7 @@ export type StoredObjectMetadata = {
   id: string;
   objectKey: string;
   contentType: string;
+  fileName: string;
   byteSize: number;
   createdAt: string;
 };
@@ -16,6 +17,7 @@ function toMetadata(row: typeof storageObjects.$inferSelect): StoredObjectMetada
     id: row.id,
     objectKey: row.objectKey,
     contentType: row.contentType,
+    fileName: row.fileName,
     byteSize: row.byteSize,
     createdAt: row.createdAt.toISOString(),
   };
@@ -24,7 +26,7 @@ function toMetadata(row: typeof storageObjects.$inferSelect): StoredObjectMetada
 export async function recordStorageObjectForUser(
   uid: string,
   email: string,
-  object: { id: string; objectKey: string; contentType: string; byteSize: number },
+  object: { id: string; objectKey: string; contentType: string; fileName: string; byteSize: number },
 ): Promise<StoredObjectMetadata> {
   if (!Number.isSafeInteger(object.byteSize) || object.byteSize < 1 || object.byteSize > 8 * 1024 * 1024) {
     throw new Error('Storage object size is invalid.');
@@ -35,6 +37,7 @@ export async function recordStorageObjectForUser(
     userId: user.id,
     objectKey: object.objectKey,
     contentType: object.contentType,
+    fileName: object.fileName,
     byteSize: object.byteSize,
   }).returning();
   if (!rows[0]) throw new Error('Storage metadata could not be saved.');
