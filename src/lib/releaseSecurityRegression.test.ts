@@ -1114,25 +1114,25 @@ test('wallet external-service operation reservations are acquired inside the sha
       name: 'incoming Bitcoin settlement verification',
       start: "app.post('/api/wallet/commands/record-income'",
       end: "app.post('/api/wallet/commands/submit-transfer'",
-      count: 3,
+      reservation: 'reserveExternalServiceOperations(uid, 3)',
     },
     {
       name: 'on-chain wallet synchronization',
       start: "app.post('/api/wallet/sync-onchain'",
       end: "app.post('/api/wallet/verify-tx'",
-      count: 2,
+      reservation: 'reserveExternalServiceOperations(uid, 2)',
     },
     {
       name: 'Bitcoin transaction verification',
       start: "app.post('/api/wallet/verify-tx'",
       end: "app.get('/api/wallet/financial-truth'",
-      count: 2,
+      reservation: 'reserveExternalServiceOperations(req.user!.uid, 2)',
     },
     {
       name: 'Bitcoin transaction reconciliation',
       start: "app.post('/api/wallet/commands/reconcile-tx'",
       end: "app.post('/api/jerry/chat'",
-      count: 2,
+      reservation: 'reserveExternalServiceOperations(uid, 2)',
     },
   ];
 
@@ -1142,11 +1142,11 @@ test('wallet external-service operation reservations are acquired inside the sha
     assert.ok(start >= 0 && end > start, `${item.name} route boundaries must exist`);
     const route = server.slice(start, end);
     const lease = route.indexOf('await withSharedExecutionLease(async () =>');
-    const reservation = route.indexOf('await reserveExternalServiceOperations(');
-    const firstOutbound = route.search(/fetch\\(['\\x60]https:\\/\\//);
+    const reservation = route.indexOf('await ' + item.reservation);
+    const singleQuotedFetch = route.indexOf("fetch('https://");
+    const templateFetch = route.indexOf('fetch(`https://');
+    const firstOutbound = [singleQuotedFetch, templateFetch].filter((value) => value >= 0).sort((a, b) => a - b)[0] ?? -1;
     assert.ok(lease >= 0 && reservation > lease && firstOutbound > reservation,
       `${item.name}: quota reservation and outbound request must both occur after acquiring the shared stop lease`);
-    assert.match(route.slice(reservation, reservation + 100),
-      new RegExp(`reserveExternalServiceOperations\\\\((?:uid|req\\\\.user!\\\\.uid), ${item.count}\\\\)`));
   }
 });
