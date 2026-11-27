@@ -13,6 +13,15 @@ export type DeviceExchangePublicKey = {
   key_ops?: string[];
 };
 
+export type DeviceSigningPublicKey = {
+  kty: 'EC';
+  crv: 'P-256';
+  x: string;
+  y: string;
+  ext?: boolean;
+  key_ops?: string[];
+};
+
 export type DeviceRegistrationStatus = 'pending' | 'active' | 'revoked';
 
 export type DeviceRegistrationInput = {
@@ -20,6 +29,7 @@ export type DeviceRegistrationInput = {
   deviceName: string;
   platform: 'android' | 'web' | 'ios' | 'other';
   exchangePublicKey: DeviceExchangePublicKey;
+  signingPublicKey: DeviceSigningPublicKey;
 };
 
 export type DeviceRegistrationRecord = {
@@ -46,6 +56,13 @@ export function assertValidDeviceRegistrationInput(input: DeviceRegistrationInpu
   }
   if (!['android', 'web', 'ios', 'other'].includes(input.platform)) {
     throw new Error('Device platform is invalid.');
+  }
+  const signingKey = input.signingPublicKey;
+  if (!signingKey || signingKey.kty !== 'EC' || signingKey.crv !== 'P-256' ||
+      typeof signingKey.x !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(signingKey.x) ||
+      typeof signingKey.y !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(signingKey.y) ||
+      'd' in (signingKey as unknown as Record<string, unknown>)) {
+    throw new Error('Only a valid P-256 public signing key may be registered.');
   }
   const key = input.exchangePublicKey;
   if (!key || key.kty !== 'EC' || key.crv !== 'P-256' ||
@@ -89,6 +106,7 @@ export async function requestDeviceRegistrationForUser(
     deviceName: input.deviceName.trim(),
     platform: input.platform,
     exchangePublicKey: input.exchangePublicKey,
+    signingPublicKey: input.signingPublicKey,
     status: 'pending',
   }).returning();
   if (!rows[0]) throw new Error('Device registration could not be created.');
