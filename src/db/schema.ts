@@ -179,6 +179,22 @@ export const deviceMemoryKeyEnvelopes = pgTable('device_memory_key_envelopes', {
   ownerCreatedIndex: index('device_memory_key_envelopes_owner_created_idx').on(table.userId, table.createdAt),
 }));
 
+
+export const memoryRecoveryEnvelopes = pgTable('memory_recovery_envelopes', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  keyVersion: integer('key_version').notNull(),
+  envelopeVersion: integer('envelope_version').notNull(),
+  algorithm: text('algorithm').notNull(),
+  salt: text('salt').notNull(),
+  iv: text('iv').notNull(),
+  ciphertext: text('ciphertext').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  ownerKeyVersionUnique: uniqueIndex('memory_recovery_envelopes_owner_key_version_unique').on(table.userId, table.keyVersion),
+  ownerCreatedIndex: index('memory_recovery_envelopes_owner_created_idx').on(table.userId, table.createdAt),
+}));
+
 export const encryptedMemoryRecords = pgTable('encrypted_memory_records', {
   id: text('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
