@@ -111,6 +111,41 @@ test('rejects empty prompts and unconfigured providers', async () => {
   await assert.rejects(() => generateWithModelFallback({ task: 'chat', prompt: 'hello', configuration: {} }), /No model provider/);
 });
 
+test('reserves a shared operation slot before every provider fallback attempt', async () => {
+  const events: string[] = [];
+  let attempt = 0;
+  const result = await generateWithModelFallback({
+    task: 'chat',
+    prompt: 'check fallback accounting',
+    ownerUid: 'owner-123',
+    configuration: {
+      google: { apiKey: 'g-key', model: 'gemini-test' },
+      openai: { apiKey: 'o-key', model: 'gpt-test' },
+    },
+    reserveTokens: async (input) => ({
+      ownerUid: input.ownerUid,
+      day: '2026-11-27',
+      reservedTokens: input.reserveTokens,
+      dailyLimitTokens: input.dailyLimitTokens,
+    }),
+    settleTokens: async () => {},
+    reserveOperation: async (ownerUid) => { events.push(`reserve:${ownerUid}`); },
+    fetchImpl: async (input) => {
+      attempt += 1;
+      events.push(`fetch:${String(input).includes('generativelanguage') ? 'google' : 'openai'}`);
+      if (attempt === 1) return jsonResponse({ error: 'unavailable' }, 503);
+      return jsonResponse({ choices: [{ message: { content: 'fallback ok' } }], usage: { total_tokens: 12 } });
+    },
+  });
+  assert.equal(result.provider, 'openai');
+  assert.deepEqual(events, [
+    'reserve:owner-123',
+    'fetch:google',
+    'reserve:owner-123',
+    'fetch:openai',
+  ]);
+});
+
 test('loads provider credentials from server environment names only', () => {
   const config = providerConfigurationFromEnvironment({
     GEMINI_API_KEY: 'g', OPENAI_API_KEY: 'o', ANTHROPIC_API_KEY: 'a',
