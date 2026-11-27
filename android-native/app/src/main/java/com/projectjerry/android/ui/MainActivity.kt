@@ -140,8 +140,41 @@ class MainActivity : AppCompatActivity() {
                     true
                 }
                 "deleteDeviceMemoryExchangeKey" -> {
-                    deviceMemoryExchangeKeyStore.deleteKey()
-                    replyProxy.postMessage(JSONObject().put("ok", true).put("requestId", requestId).toString())
+                    AlertDialog.Builder(this)
+                        .setTitle("Delete this device's memory key?")
+                        .setMessage(
+                            "This permanently removes this device's protected memory exchange key. " +
+                                "Existing Jerry memory-key envelopes for this device may become unreadable. " +
+                                "Continue only if you understand that this device may lose access to encrypted memory."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Memory exchange key deletion was cancelled by the owner.").toString()
+                            )
+                        }
+                        .setPositiveButton("Delete key") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                deviceMemoryExchangeKeyStore.deleteKey()
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "Memory exchange key deletion failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Memory exchange key deletion was cancelled by the owner.").toString()
+                            )
+                        }
+                        .show()
                     true
                 }
                 "signDeviceApprovalChallenge" -> {
