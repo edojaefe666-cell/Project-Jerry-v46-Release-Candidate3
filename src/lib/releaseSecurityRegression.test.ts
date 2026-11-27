@@ -53,6 +53,22 @@ test('readiness is dependency-aware and does not expose database errors', () => 
   assert.doesNotMatch(block, /res\.status\(503\).*error|error\.message/);
 });
 
+test('container liveness and readiness probes are public, bounded, and non-disclosing', () => {
+  const liveness = server.match(/app\\.get\\('\\/healthz'[\\s\\S]*?\\n  \\}\);/);
+  assert.ok(liveness, 'liveness probe must exist');
+  assert.match(liveness[0], /status: 'ok'/);
+  assert.doesNotMatch(liveness[0], /db\\.execute|readSharedExecutionControl/);
+
+  const readiness = server.match(/app\\.get\\('\\/readyz'[\\s\\S]*?\\n  \\}\);/);
+  assert.ok(readiness, 'readiness probe must exist');
+  assert.match(readiness[0], /JERRY_OWNER_UID/);
+  assert.match(readiness[0], /db\\.execute\\(sql`SELECT 1`\\)/);
+  assert.match(readiness[0], /to_regclass\\('public\\.app_sql_migrations'\\)/);
+  assert.match(readiness[0], /readSharedExecutionControl/);
+  assert.match(readiness[0], /status\\(503\\)\\.json\\(\\{ status: 'not_ready' \\}\\)/);
+  assert.doesNotMatch(readiness[0], /error\\.message|SQL_HOST|JERRY_OWNER_UID.*json/);
+});
+
 test('production startup fails closed when the built SPA entrypoint is missing', () => {
   assert.match(server, /await fs\.access\(entrypoint\)/);
   assert.match(server, /Production build is missing/);
