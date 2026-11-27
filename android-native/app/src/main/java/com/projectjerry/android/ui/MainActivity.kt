@@ -172,6 +172,66 @@ class MainActivity : AppCompatActivity() {
                         .show()
                     true
                 }
+                "signDeviceMemoryRequestChallenge" -> {
+                    val challenge = message.optJSONObject("challenge")
+                        ?: throw IllegalArgumentException("Memory request challenge is required.")
+                    val method = challenge.optString("method")
+                    val targetPath = challenge.optString("path")
+                    val collectionRead = method == "GET" && targetPath == "/api/memory/encrypted"
+                    val recordRead = method == "GET" &&
+                        targetPath.matches(Regex("/api/memory/encrypted/[A-Za-z0-9_-]{16,128}"))
+                    val isWrite = method == "POST" || method == "PUT"
+                    val allowedWrite = (method == "POST" && targetPath == "/api/memory/encrypted") ||
+                        (method == "PUT" &&
+                            targetPath.matches(Regex("/api/memory/encrypted/[A-Za-z0-9_-]{16,128}")))
+                    require(collectionRead || recordRead || allowedWrite) {
+                        "Only encrypted-memory requests can be signed."
+                    }
+                    val signAndReply = {
+                        try {
+                            val proof = deviceSigningKeyStore.signMemoryRequestChallenge(challenge.toString())
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", true).put("requestId", requestId)
+                                    .put("proof", proof).toString()
+                            )
+                        } catch (error: Exception) {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", error.message ?: "Memory request signing failed.").toString()
+                            )
+                        }
+                    }
+                    if (isWrite) {
+                        AlertDialog.Builder(this)
+                            .setTitle("Authorize Jerry memory change?")
+                            .setMessage(
+                                "Jerry is requesting to " + method + " encrypted memory.\\n\\n" +
+                                    "Target: " + targetPath + "\\n\\n" +
+                                    "Only approve if you initiated this memory change."
+                            )
+                            .setNegativeButton("Cancel") { dialog, _ ->
+                                dialog.dismiss()
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", "Memory request signing was cancelled by the owner.").toString()
+                                )
+                            }
+                            .setPositiveButton("Authorize") { dialog, _ ->
+                                dialog.dismiss()
+                                signAndReply()
+                            }
+                            .setOnCancelListener {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", "Memory request signing was cancelled by the owner.").toString()
+                                )
+                            }
+                            .show()
+                    } else {
+                        signAndReply()
+                    }
+                    true
+                }
                 "deleteDeviceSigningKey" -> {
                     deviceSigningKeyStore.deleteKey()
                     replyProxy.postMessage(JSONObject().put("ok", true).put("requestId", requestId).toString())
