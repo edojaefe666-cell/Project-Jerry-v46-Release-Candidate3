@@ -52,3 +52,42 @@ test('missing or out-of-bound usage metadata never releases reservation', async 
   } as never);
   assert.equal(called,false);
 });
+
+
+test('PostgreSQL provider token reservations enforce concurrent ceilings and exactly-once settlement', {
+  skip: process.env.JERRY_PROVIDER_LEDGER_TEST_DATABASE !== '1'
+    ? 'Set JERRY_PROVIDER_LEDGER_TEST_DATABASE=1 for a disposable PostgreSQL database.'
+    : false,
+}, async () => {
+  assert.notEqual(process.env.NODE_ENV, 'production');
+  assert.ok(process.env.SQL_HOST && process.env.SQL_USER && /test|tenant/i.test(process.env.SQL_DB_NAME ?? ''),
+    'Provider ledger integration requires a disposable PostgreSQL database name containing test/tenant.');
+  const { createPool } = await import('./index.ts');
+  const { randomUUID } = await import('node:crypto');
+  const pool = createPool();
+  const ownerUid = 'provider-token-integration-' + randomUUID();
+  try {
+    const attempts = await Promise.allSettled([
+      reserveProviderTokens({ ownerUid, reserveTokens: 60, dailyLimitTokens: 100 }),
+      reserveProviderTokens({ ownerUid, reserveTokens: 60, dailyLimitTokens: 100 }),
+    ]);
+    const accepted = attempts.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof reserveProviderTokens>>> => result.status === 'fulfilled');
+    assert.equal(accepted.length, 1, 'only one concurrent reservation may fit under the daily ceiling');
+    const reservation = accepted[0].value;
+    const settlements = await Promise.allSettled([
+      settleProviderTokens(reservation, 40),
+      settleProviderTokens(reservation, 40),
+    ]);
+    assert.equal(settlements.filter(result => result.status === 'fulfilled').length, 1,
+      'concurrent duplicate settlement must apply exactly once');
+    const daily = await pool.query(
+      'SELECT reserved_tokens, actual_tokens FROM jerry_provider_daily_usage WHERE owner_uid=$1 AND usage_day=$2::date',
+      [ownerUid, reservation.day],
+    );
+    assert.equal(Number(daily.rows[0].reserved_tokens), 0);
+    assert.equal(Number(daily.rows[0].actual_tokens), 40);
+  } finally {
+    await pool.query('DELETE FROM jerry_provider_token_reservations WHERE owner_uid=$1', [ownerUid]);
+    await pool.query('DELETE FROM jerry_provider_daily_usage WHERE owner_uid=$1', [ownerUid]);
+  }
+});
