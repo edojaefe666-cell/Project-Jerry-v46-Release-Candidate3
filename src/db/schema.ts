@@ -239,6 +239,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   storageObjects: many(storageObjects),
   deviceRegistrations: many(deviceRegistrations),
   deviceMemoryKeyEnvelopes: many(deviceMemoryKeyEnvelopes),
+  memoryRecoveryEnvelopes: many(memoryRecoveryEnvelopes),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ one }) => ({
