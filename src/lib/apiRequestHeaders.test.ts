@@ -42,3 +42,27 @@ test('supports URL and string inputs with explicit headers', () => {
   assert.equal(mergeRequestHeaders(new URL('https://example.test')).get('accept'), null);
   assert.equal(mergeRequestHeaders('/api/tasks', { Accept: 'application/json' }).get('accept'), 'application/json');
 });
+
+test('preserves Request method and body when rebasing its URL', async () => {
+  const request = new Request('https://assets.localhost/api/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Request-Trace': 'trace-456' },
+    body: JSON.stringify({ task: 'persist request semantics' }),
+  });
+
+  const rebased = resolveRequestForFetch(
+    request,
+    'https://backend.example/api/tasks',
+  );
+  assert.ok(rebased instanceof Request);
+  assert.equal(rebased.url, 'https://backend.example/api/tasks');
+  assert.equal(rebased.method, 'POST');
+  assert.equal(rebased.headers.get('content-type'), 'application/json');
+  assert.equal(rebased.headers.get('x-request-trace'), 'trace-456');
+  assert.deepEqual(await rebased.json(), { task: 'persist request semantics' });
+});
+
+test('keeps the original Request when its URL does not need rebasing', () => {
+  const request = new Request('https://backend.example/api/tasks', { method: 'GET' });
+  assert.equal(resolveRequestForFetch(request, request.url), request);
+});
