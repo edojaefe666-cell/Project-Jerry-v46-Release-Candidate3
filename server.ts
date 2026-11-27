@@ -16,6 +16,7 @@ import { adminAuth } from './src/lib/firebase-admin.ts';
 import { SecurityStore } from './src/lib/securityStore.ts';
 import { ExecutionRegistry } from './src/lib/executionRegistry.ts';
 import { db } from './src/db/index.ts';
+import { readSharedExecutionControl, updateSharedExecutionControl } from './src/db/executionControl.ts';
 import { ensureWalletTransactionJournaled } from './src/db/walletJournal.ts';
 import { drainWalletJournalOutbox } from './src/db/walletJournalOutbox.ts';
 import { saveMemoryEntryForUser, searchMemoryForUser } from './src/db/memoryStore.ts';
@@ -126,20 +127,39 @@ async function startServer() {
       return true;
     }
   };
-  const requireExecutionEnabled = (_req: AuthRequest, res: express.Response, next: express.NextFunction): void => {
-    if (isEmergencyStopActive()) {
-      // Synchronize the in-process cancellation registry with the durable latch
-      // and environment hard stop whenever any guarded route observes a stop.
-      executionRegistry.setStopped(true, 'Emergency stop latch observed by guarded route');
-      res.status(423).json({ error: 'Jerry emergency stop is engaged. No external execution or transfer staging is permitted.' });
-      return;
+  const requireExecutionEnabled = async (_req: AuthRequest, res: express.Response, next: express.NextFunction): Promise<void> => {
+    try {
+      const sharedControl = await readSharedExecutionControl();
+      if (sharedControl.stopped || isEmergencyStopActive()) {
+        executionRegistry.setStopped(true, 'Shared or local emergency stop observed by guarded route');
+        res.status(423).json({ error: 'Jerry emergency stop is engaged. No external execution or transfer staging is permitted.' });
+        return;
+      }
+      next();
+    } catch {
+      executionRegistry.setStopped(true, 'Shared execution-control store unavailable; fail closed');
+      res.status(503).json({ error: 'Jerry shared execution control is unavailable. Execution is blocked.' });
     }
-    next();
   };
 
-  // Track in-flight isolated code verification requests so an owner stop command
-  // can abort their HTTP requests immediately rather than only blocking new work.
+  // Track in-flight requests and synchronize stop state across instances.
   const executionRegistry = new ExecutionRegistry(isEmergencyStopActive());
+  const synchronizeSharedExecutionControl = async (): Promise<void> => {
+    try {
+      const sharedControl = await readSharedExecutionControl();
+      executionRegistry.setStopped(
+        sharedControl.stopped || isEmergencyStopActive(),
+        sharedControl.stopped ? 'Shared owner emergency stop propagated to this instance' : 'Local emergency stop remains active',
+      );
+    } catch {
+      executionRegistry.setStopped(true, 'Shared execution-control read failed; fail closed');
+    }
+  };
+  const executionControlPoller = setInterval(() => {
+    void synchronizeSharedExecutionControl();
+  }, 2_000);
+  executionControlPoller.unref();
+  void synchronizeSharedExecutionControl();
   const runIsolatedTestsWithStop = async (input: { language: string; source: string; testCode: string }) => {
     if (isEmergencyStopActive()) {
       return { status: 'unavailable' as const, report: 'Emergency stop is active. Isolated verification was not started.' };
@@ -250,20 +270,25 @@ async function startServer() {
     res.json({ approval });
   });
 
-  app.get('/api/security/emergency-stop', requireAuth, (_req: AuthRequest, res) => {
+  app.get('/api/security/emergency-stop', requireAuth, async (_req: AuthRequest, res) => {
     try {
-      const control = securityStore.getEmergencyStop();
+      const [localControl, sharedControl] = await Promise.all([
+        Promise.resolve(securityStore.getEmergencyStop()),
+        readSharedExecutionControl(),
+      ]);
       res.json({
-        ...control,
+        ...localControl,
+        sharedControl,
         hardStop: process.env.JERRY_EMERGENCY_STOP === '1',
-        executionBlocked: isEmergencyStopActive(),
+        executionBlocked: isEmergencyStopActive() || sharedControl.stopped,
       });
     } catch {
+      executionRegistry.setStopped(true, 'Emergency-stop status unavailable; fail closed');
       res.status(503).json({ error: 'Emergency-stop control is unavailable; execution is blocked.' });
     }
   });
 
-  app.post('/api/security/emergency-stop', requireAuth, (req: AuthRequest, res) => {
+  app.post('/api/security/emergency-stop', requireAuth, async (req: AuthRequest, res) => {
     const body = req.body as { action?: string; reason?: string; confirmation?: string };
     const reason = String(body.reason ?? '').trim();
     if (body.action !== 'stop' && body.action !== 'resume') {
@@ -285,13 +310,32 @@ async function startServer() {
       }
     }
     try {
-      const control = securityStore.setEmergencyStop(body.action === 'stop', req.user!.uid, reason);
-      executionRegistry.setStopped(body.action === 'stop', body.action === 'stop'
-        ? 'Owner emergency stop engaged'
-        : 'Owner explicitly resumed execution');
-      res.json({ ...control, hardStop: process.env.JERRY_EMERGENCY_STOP === '1', executionBlocked: isEmergencyStopActive() });
+      let sharedControl;
+      let control;
+      if (body.action === 'stop') {
+        // Commit the shared stop first so every instance observes the stop
+        // before this instance performs local cancellation and audit updates.
+        sharedControl = await updateSharedExecutionControl({ stopped: true, actorUid: req.user!.uid, reason });
+        control = securityStore.setEmergencyStop(true, req.user!.uid, reason);
+      } else {
+        // Resume local state first; the shared latch is cleared last. If the
+        // shared write fails, other instances remain stopped (fail-safe).
+        control = securityStore.setEmergencyStop(false, req.user!.uid, reason);
+        sharedControl = await updateSharedExecutionControl({ stopped: false, actorUid: req.user!.uid, reason });
+      }
+      executionRegistry.setStopped(
+        body.action === 'stop' || isEmergencyStopActive() || sharedControl.stopped,
+        body.action === 'stop' ? 'Owner emergency stop engaged' : 'Owner explicitly resumed shared execution',
+      );
+      res.json({
+        ...control,
+        sharedControl,
+        hardStop: process.env.JERRY_EMERGENCY_STOP === '1',
+        executionBlocked: isEmergencyStopActive() || sharedControl.stopped,
+      });
     } catch {
-      res.status(503).json({ error: 'Emergency-stop state could not be safely updated.' });
+      executionRegistry.setStopped(true, 'Emergency-stop update failed; fail closed');
+      res.status(503).json({ error: 'Emergency-stop state could not be safely updated. Execution remains blocked on this instance.' });
     }
   });
 
@@ -2381,8 +2425,14 @@ async function startServer() {
       // Prevent overlapping timer ticks from creating redundant drain loops.
       // PostgreSQL SKIP LOCKED remains the cross-process concurrency control.
       if (outboxDrainInFlight) return;
-      if (isEmergencyStopActive()) {
-        executionRegistry.setStopped(true, 'Emergency stop paused wallet journal outbox worker');
+      try {
+        const sharedControl = await readSharedExecutionControl();
+        if (sharedControl.stopped || isEmergencyStopActive()) {
+          executionRegistry.setStopped(true, 'Shared emergency stop paused wallet journal outbox worker');
+          return;
+        }
+      } catch {
+        executionRegistry.setStopped(true, 'Shared execution-control unavailable; wallet journal worker paused');
         return;
       }
       const execution = executionRegistry.register();
