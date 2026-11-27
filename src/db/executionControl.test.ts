@@ -420,3 +420,69 @@ test('PostgreSQL stop then resume advances epoch and invalidates an earlier inst
     }
   }
 });
+
+
+test('a restarted application instance inherits the durable owner emergency stop', {
+  skip: process.env.JERRY_JOURNAL_TEST_DATABASE !== '1'
+    ? 'Set JERRY_JOURNAL_TEST_DATABASE=1 for a disposable PostgreSQL database.'
+    : false,
+}, async () => {
+  assert.notEqual(process.env.NODE_ENV, 'production');
+  assert.ok(process.env.SQL_HOST && process.env.SQL_USER && /test|tenant/i.test(process.env.SQL_DB_NAME ?? ''),
+    'Execution-control integration requires a disposable PostgreSQL database name containing test/tenant.');
+
+  const { createPool } = await import('./index.ts');
+  const firstInstancePool = createPool();
+  const { readSharedExecutionControl, updateSharedExecutionControl } = await import('./executionControl.ts');
+  const actorUid = 'restart-stop-integration';
+  let ownsFixture = false;
+  let prior: { stopped: boolean; reason: string | null; updated_by: string | null } | undefined;
+  let restartedInstancePool: ReturnType<typeof createPool> | undefined;
+
+  try {
+    const snapshot = await firstInstancePool.query(
+      'SELECT stopped, reason, updated_by FROM jerry_execution_control WHERE id = 1',
+    );
+    assert.equal(snapshot.rowCount, 1, 'shared execution-control singleton must exist');
+    prior = snapshot.rows[0];
+
+    await updateSharedExecutionControl({
+      stopped: true,
+      actorUid,
+      reason: 'restart integration owner emergency stop',
+    });
+    ownsFixture = true;
+    assert.equal((await readSharedExecutionControl()).stopped, true);
+
+    // Simulate process death: discard the original pool and create a fresh
+    // application pool with no in-memory execution registry or prior state.
+    await firstInstancePool.end();
+    restartedInstancePool = createPool();
+
+    const { acquireSharedExecutionLease } = await import('./executionControl.ts');
+    await assert.rejects(
+      acquireSharedExecutionLease(() => restartedInstancePool!.connect()),
+      /emergency stop is engaged/i,
+      'A newly started instance must read the durable stop before admitting work.',
+    );
+  } finally {
+    try {
+      if (ownsFixture && prior) {
+        const cleanupPool = restartedInstancePool ?? firstInstancePool;
+        await cleanupPool.query(
+          `UPDATE jerry_execution_control
+              SET stopped = $1, epoch = epoch + 1, reason = $2,
+                  updated_by = $3, updated_at = now()
+            WHERE id = 1 AND stopped = true AND updated_by = $4
+              AND reason = $5`,
+          [prior.stopped, prior.reason, prior.updated_by, actorUid, 'restart integration owner emergency stop'],
+        );
+      }
+    } finally {
+      await Promise.all([
+        firstInstancePool.end().catch(() => undefined),
+        restartedInstancePool?.end(),
+      ].filter(Boolean));
+    }
+  }
+});
