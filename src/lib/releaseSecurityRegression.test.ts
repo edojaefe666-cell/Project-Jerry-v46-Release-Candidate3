@@ -695,3 +695,50 @@ test('offline learning fallbacks recheck shared emergency stop and fail closed w
     assert.match(route.slice(noProvider, fallbackResponse), /executionRegistry\.setStopped\(true/);
   }
 });
+
+test('Gemini learning and discovery routes refresh the durable shared stop before accepting provider output', () => {
+  assert.match(server, /const sharedStopBlocksAcceptance = async \(\): Promise<boolean> =>/);
+  assert.match(server, /readSharedExecutionControl\(\)/);
+  assert.match(server, /Shared execution-control read failed before accepting provider output/);
+  const routes = [
+    {
+      name: 'daily opportunity discovery',
+      start: "app.post('/api/jerry/discover-daily-ways'",
+      end: "app.post('/api/jerry/learn-human-insight'",
+    },
+    {
+      name: 'human insight',
+      start: "app.post('/api/jerry/learn-human-insight'",
+      end: "app.post('/api/jerry/learn-internet-growth'",
+    },
+    {
+      name: 'internet growth',
+      start: "app.post('/api/jerry/learn-internet-growth'",
+      end: "app.post('/api/jerry/daily-summary'",
+    },
+  ];
+  for (const routeSpec of routes) {
+    const start = server.indexOf(routeSpec.start);
+    const end = server.indexOf(routeSpec.end, start + routeSpec.start.length);
+    const route = server.slice(start, end);
+    const providerCall = route.indexOf('await ai.models.generateContent(');
+    const acceptanceGuard = route.indexOf('await sharedStopBlocksAcceptance()', providerCall);
+    const parseOrFallback = Math.max(
+      route.indexOf('const rawText', providerCall),
+      route.indexOf('const parsed = JSON.parse', providerCall),
+    );
+    assert.ok(providerCall >= 0 && acceptanceGuard > providerCall && parseOrFallback > acceptanceGuard,
+      `${routeSpec.name} must refresh the shared stop after Gemini completes and before parsing output`);
+  }
+  for (const [name, start, end, fallback] of [
+    ['human insight', "app.post('/api/jerry/learn-human-insight'", "app.post('/api/jerry/learn-internet-growth'", 'buildOfflineInsight()'],
+    ['internet growth', "app.post('/api/jerry/learn-internet-growth'", "app.post('/api/jerry/daily-summary'", 'buildOfflinePlaybook()'],
+  ] as const) {
+    const routeStart = server.indexOf(start);
+    const route = server.slice(routeStart, server.indexOf(end, routeStart + start.length));
+    const catchStart = route.lastIndexOf('} catch {');
+    const fallbackIndex = route.indexOf(fallback, catchStart);
+    assert.ok(catchStart >= 0 && route.indexOf('await sharedStopBlocksAcceptance()', catchStart) < fallbackIndex,
+      `${name} must recheck shared stop before returning a provider-error fallback`);
+  }
+});
