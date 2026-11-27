@@ -413,3 +413,71 @@ test('SQLite emergency-stop mirror rejects delayed older shared epochs atomicall
     rmSync(path.dirname(filename), { recursive: true, force: true });
   }
 });
+
+
+test('approval reservation and audit evidence roll back together on persistence failure', () => {
+  const store = new SecurityStore(':memory:');
+  const ownerUid = 'owner-approval-atomic';
+  try {
+    store.setEmergencyStop(false, ownerUid, 'Test owner recovery for approval reservation');
+    const scope = { operation: 'workspace_reset' };
+    const approval = store.createApproval({
+      action: 'high_impact_change',
+      summary: 'Atomic approval reservation test',
+      scope,
+      ownerUid,
+    });
+    assert.ok(store.decideApproval(approval.id, 'approved', ownerUid));
+    const originalAudit = store.audit.bind(store);
+    store.audit = (() => { throw new Error('approval audit disk failure'); }) as typeof store.audit;
+
+    assert.throws(
+      () => store.reserveApproval(approval.id, 'high_impact_change', ownerUid, 'f'.repeat(64), scope),
+      /approval audit disk failure/,
+    );
+    store.audit = originalAudit;
+    const unchanged = store.getApproval(approval.id, ownerUid);
+    assert.equal(unchanged?.reservationId ?? null, null);
+    assert.equal(unchanged?.consumedAt ?? null, null);
+    assert.equal(store.verifyAuditChain(ownerUid).ok, true);
+  } finally {
+    store.close();
+  }
+});
+
+test('approval consumption and reservation release roll back when audit persistence fails', () => {
+  const store = new SecurityStore(':memory:');
+  const ownerUid = 'owner-approval-finalize-atomic';
+  const scope = { operation: 'workspace_reset' };
+  const reservationId = 'a'.repeat(64);
+  try {
+    store.setEmergencyStop(false, ownerUid, 'Test owner recovery for approval finalization');
+    const approval = store.createApproval({
+      action: 'high_impact_change',
+      summary: 'Atomic approval finalization test',
+      scope,
+      ownerUid,
+    });
+    assert.ok(store.decideApproval(approval.id, 'approved', ownerUid));
+    assert.ok(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, reservationId, scope));
+
+    const originalAudit = store.audit.bind(store);
+    store.audit = (() => { throw new Error('approval audit disk failure'); }) as typeof store.audit;
+    assert.throws(
+      () => store.finalizeApprovalReservation(approval.id, ownerUid, reservationId),
+      /approval audit disk failure/,
+    );
+    assert.throws(
+      () => store.releaseApprovalReservation(approval.id, ownerUid, reservationId),
+      /approval audit disk failure/,
+    );
+    store.audit = originalAudit;
+
+    const unchanged = store.getApproval(approval.id, ownerUid);
+    assert.equal(unchanged?.consumedAt ?? null, null);
+    assert.equal(unchanged?.reservationId, reservationId);
+    assert.equal(store.verifyAuditChain(ownerUid).ok, true);
+  } finally {
+    store.close();
+  }
+});
