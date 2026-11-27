@@ -973,3 +973,13 @@ test('every wallet mutation or external verification route is owner-stop guarded
       `${item.name} must hold a durable cross-instance execution lease`);
   }
 });
+
+test('production startup rejects unsupported multi-instance SQLite approval authority', () => {
+  assert.match(server, /JERRY_SECURITY_STORE_TOPOLOGY !== 'single_instance'/);
+  assert.match(server, /Production startup blocked: Jerry approval authority is SQLite-local/);
+  assert.match(server, /multi-instance production is not yet supported/);
+  assert.ok(
+    server.indexOf("JERRY_SECURITY_STORE_TOPOLOGY !== 'single_instance'") < server.indexOf('const securityStore = new SecurityStore()'),
+    'topology must be checked before opening the local approval store',
+  );
+});
