@@ -23,6 +23,11 @@ on:
 permissions:
   contents: read
 
+# Avoid wasting runner time on superseded APK candidates.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   android:
     runs-on: ubuntu-latest
