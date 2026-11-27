@@ -139,6 +139,103 @@ class MainActivity : AppCompatActivity() {
                     )
                     true
                 }
+                "createInitialDeviceMemoryKey" -> {
+                    val ownerUid = message.optString("ownerUid")
+                    val deviceId = message.optString("deviceId")
+                    val keyVersion = message.optInt("keyVersion", -1)
+                    AlertDialog.Builder(this)
+                        .setTitle("Create Jerry's encrypted memory key?")
+                        .setMessage(
+                            "This creates a new encryption key for Jerry memory on this device. " +
+                                "The key stays inside Android's protected storage. It is not uploaded or shared. " +
+                                "Only continue if you initiated this setup."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Initial memory-key creation was cancelled by the owner.").toString()
+                            )
+                        }
+                        .setPositiveButton("Create key") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                val created = deviceMemoryExchangeKeyStore.createInitialMemoryDataKey(
+                                    ownerUid, deviceId, keyVersion
+                                )
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId)
+                                        .put("created", created).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "Initial memory-key creation failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Initial memory-key creation was cancelled by the owner.").toString()
+                            )
+                        }
+                        .show()
+                    true
+                }
+                "wrapMemoryKeyForApprovedDevice" -> {
+                    val recipient = message.optJSONObject("recipientPublicKey")
+                        ?: throw IllegalArgumentException("Recipient public exchange key is required.")
+                    val recipientKey = DeviceMemoryExchangeKeyStore.PublicJwk(
+                        kty = recipient.optString("kty"),
+                        crv = recipient.optString("crv"),
+                        x = recipient.optString("x"),
+                        y = recipient.optString("y"),
+                    )
+                    val ownerUid = message.optString("ownerUid")
+                    val senderDeviceId = message.optString("senderDeviceId")
+                    val recipientDeviceId = message.optString("recipientDeviceId")
+                    val keyVersion = message.optInt("keyVersion", -1)
+                    AlertDialog.Builder(this)
+                        .setTitle("Share Jerry's memory key?")
+                        .setMessage(
+                            "This will create an encrypted key envelope for approved device " +
+                                recipientDeviceId + ". The server checks that both devices are owner-approved. " +
+                                "The memory key itself is never sent to the server. Continue only if you recognize this device."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Memory-key sharing was cancelled by the owner.").toString()
+                            )
+                        }
+                        .setPositiveButton("Share key") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                val envelope = deviceMemoryExchangeKeyStore.wrapInstalledMemoryKeyForDevice(
+                                    ownerUid, senderDeviceId, recipientDeviceId, keyVersion, recipientKey
+                                )
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId)
+                                        .put("envelope", envelope).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "Memory-key envelope creation failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Memory-key sharing was cancelled by the owner.").toString()
+                            )
+                        }
+                        .show()
+                    true
+                }
                 "unwrapDeviceMemoryKeyEnvelope" -> {
                     val envelope = message.optJSONObject("envelope")
                         ?: throw IllegalArgumentException("Memory key envelope is required.")
