@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reserveProviderTokens, settleProviderTokens } from './providerUsageStore.ts';
+import { reserveProviderTokens, settleProviderTokens, getProviderUsageLedgerSnapshot } from './providerUsageStore.ts';
 
 test('provider token reservation atomically creates a unique ledger identity', async () => {
   let statement='';
@@ -51,4 +51,28 @@ test('missing or out-of-bound usage metadata never releases reservation', async 
     query:async()=>{called=true;return {rows:[],rowCount:1};},
   } as never);
   assert.equal(called,false);
+});
+
+
+test('provider token ledger snapshot is owner-scoped and exposes unsettled reservation evidence', async () => {
+  const statements: string[] = [];
+  const snapshot = await getProviderUsageLedgerSnapshot('owner-1', 20, {
+    query: async (sql: string, params?: unknown[]) => {
+      statements.push(sql);
+      if (sql.includes('CREATE TABLE')) return { rows: [], rowCount: 0 };
+      assert.deepEqual(params, ['owner-1', 20]);
+      if (sql.includes('jerry_provider_daily_usage WHERE')) return { rows: [{
+        day: '2026-11-27', dailyLimitTokens: '10000', reservedTokens: '2500', actualTokens: '500',
+      }], rowCount: 1 };
+      return { rows: [{
+        reservationId: 'pending-1', day: '2026-11-27', reservedTokens: '2500',
+        status: 'reserved', createdAt: '2026-11-27T10:00:00Z', settledAt: null,
+      }], rowCount: 1 };
+    },
+  } as never);
+  assert.equal(snapshot.daily[0].reservedTokens, '2500');
+  assert.equal(snapshot.reservations[0].status, 'reserved');
+  assert.equal(snapshot.reservations[0].settledAt, null);
+  assert.equal(statements.length, 3);
+  assert.ok(statements.every((sql) => !sql.includes('UPDATE ')));
 });
