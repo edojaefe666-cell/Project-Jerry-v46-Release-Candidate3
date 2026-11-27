@@ -54,7 +54,7 @@ test('verifies ECDSA proof only for the exact challenge and body bytes', async (
   const bytes = new Uint8Array(signature);
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  const proof = { challengeId: valid.challengeId, signature: btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '') };
+  const proof = { challengeId: valid.challengeId, signature: btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '') };
   const publicKey = { kty: 'EC' as const, crv: 'P-256' as const, x: jwk.x!, y: jwk.y! };
   assert.equal(await verifyDeviceHttpRequestProof(valid, proof, publicKey, body, now, cryptoProvider), true);
   assert.equal(await verifyDeviceHttpRequestProof(valid, proof, publicKey, new TextEncoder().encode('tampered'), now, cryptoProvider), false);
