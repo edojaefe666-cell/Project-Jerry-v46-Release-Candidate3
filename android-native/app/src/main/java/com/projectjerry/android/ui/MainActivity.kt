@@ -110,13 +110,16 @@ class MainActivity : AppCompatActivity() {
         messageData: String,
         replyProxy: JavaScriptReplyProxy
     ): Boolean {
+        var requestId = ""
         return try {
             val message = JSONObject(messageData)
+            requestId = message.optString("requestId")
+            require(requestId.matches(Regex("[A-Za-z0-9_-]{8,128}"))) { "Native request ID is invalid." }
             when (message.optString("type")) {
                 "getDeviceSigningPublicKey" -> {
                     val key = deviceSigningKeyStore.createOrGetPublicKey()
                     replyProxy.postMessage(
-                        JSONObject().put("ok", true).put(
+                        JSONObject().put("ok", true).put("requestId", requestId).put(
                             "publicKey",
                             JSONObject().put("kty", key.kty).put("crv", key.crv).put("x", key.x).put("y", key.y)
                         ).toString()
@@ -127,19 +130,19 @@ class MainActivity : AppCompatActivity() {
                     val challenge = message.optJSONObject("challenge")
                         ?: throw IllegalArgumentException("Approval challenge is required.")
                     val result = deviceSigningKeyStore.signApprovalChallenge(challenge.toString())
-                    replyProxy.postMessage(JSONObject().put("ok", true).put("proof", result).toString())
+                    replyProxy.postMessage(JSONObject().put("ok", true).put("requestId", requestId).put("proof", result).toString())
                     true
                 }
                 "deleteDeviceSigningKey" -> {
                     deviceSigningKeyStore.deleteKey()
-                    replyProxy.postMessage(JSONObject().put("ok", true).toString())
+                    replyProxy.postMessage(JSONObject().put("ok", true).put("requestId", requestId).toString())
                     true
                 }
                 else -> false
             }
         } catch (error: Exception) {
             replyProxy.postMessage(
-                JSONObject().put("ok", false).put(
+                JSONObject().put("ok", false).put("requestId", requestId).put(
                     "error",
                     error.message ?: "Native device signing operation failed."
                 ).toString()
