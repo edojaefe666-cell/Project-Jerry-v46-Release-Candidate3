@@ -1980,7 +1980,7 @@ async function startServer() {
       }
 
       const rawText = (response.text ?? '').trim();
-      const jsonMatch = rawText.match(/\\[[\\s\\S]*\\]/);
+      const jsonMatch = rawText.match(/\[[\s\S]*\]/);
       if (!jsonMatch) {
         res.status(502).json({ error: 'Research provider returned no valid opportunity list.', status: 'not_generated' });
         return;
