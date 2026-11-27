@@ -493,6 +493,7 @@ async function startServer() {
     req: RawBodyAuthRequest,
     res: express.Response,
     operation: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0], ownerId: number) => Promise<unknown>,
+    serializeOwnerFirst = false,
   ): Promise<void> => {
     const challengeId = req.header('x-jerry-challenge-id') ?? '';
     const signature = req.header('x-jerry-device-signature') ?? '';
@@ -527,7 +528,7 @@ async function startServer() {
           const [owner] = await tx.select({ id: users.id }).from(users).where(eq(users.uid, ownerUid)).limit(1);
           if (!owner) throw new Error('Owner account is unavailable.');
           return operation(tx, owner.id);
-        }),
+        }, serializeOwnerFirst),
       );
       if (result === null) {
         res.status(409).json({ error: 'Device request challenge was already used, expired, or revoked.' });
@@ -734,7 +735,7 @@ async function startServer() {
         revokedKeyEnvelopeCount: revokedEnvelopes.length,
         recordsPreserved: true,
       };
-    });
+    }, true);
   });
 
   app.post('/api/memory/encrypted', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
