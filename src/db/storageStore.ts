@@ -57,6 +57,30 @@ export async function listStorageObjectsForUser(
   return rows.map(toMetadata);
 }
 
+export async function getStorageObjectByIdForUser(
+  uid: string,
+  email: string,
+  objectId: string,
+): Promise<StoredObjectMetadata | null> {
+  const user = await getOrCreateUser(uid, email);
+  const rows = await db.select().from(storageObjects)
+    .where(and(eq(storageObjects.userId, user.id), eq(storageObjects.id, objectId)))
+    .limit(1);
+  return rows[0] ? toMetadata(rows[0]) : null;
+}
+
+export async function deleteStorageObjectForUser(
+  uid: string,
+  email: string,
+  objectId: string,
+): Promise<boolean> {
+  const user = await getOrCreateUser(uid, email);
+  const rows = await db.delete(storageObjects)
+    .where(and(eq(storageObjects.userId, user.id), eq(storageObjects.id, objectId)))
+    .returning({ id: storageObjects.id });
+  return rows.length === 1;
+}
+
 export async function getStorageObjectForUser(
   uid: string,
   email: string,
