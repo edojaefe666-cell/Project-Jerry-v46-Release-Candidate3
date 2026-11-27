@@ -5,6 +5,7 @@ on:
     paths:
       - "android-native/**"
       - "src/**"
+      - "scripts/**"
       - "vite.config.ts"
       - "package.json"
       - "bun.lock"
@@ -30,7 +31,7 @@ concurrency:
 
 jobs:
   android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - name: Check out source
@@ -145,6 +146,8 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          emulator-boot-timeout: 600
           disable-animations: true
           script: cd android-native && gradle --no-daemon :app:connectedDebugAndroidTest
 
