@@ -123,6 +123,19 @@ export async function signNativeDeviceApprovalChallenge(
   return reply.proof;
 }
 
+/** Signs a one-time first-owner-device challenge only after a dedicated native trust confirmation dialog. */
+export async function signNativeFirstDeviceBootstrapChallenge(
+  challenge: DeviceApprovalChallenge,
+): Promise<DeviceApprovalProof> {
+  const reply = await requestNative<NativeBridgeReply>('signFirstDeviceBootstrapChallenge', { challenge });
+  if (!reply.proof || typeof reply.proof !== 'object' ||
+      (reply.proof as DeviceApprovalProof).challengeId !== challenge.challengeId ||
+      typeof (reply.proof as DeviceApprovalProof).signature !== 'string') {
+    throw new Error('Android did not return a valid first-device trust proof.');
+  }
+  return reply.proof as DeviceApprovalProof;
+}
+
 /** Deletes the local private signing key; call only as part of an explicit owner recovery/revocation flow. */
 export async function deleteNativeDeviceSigningKey(): Promise<void> {
   await requestNative<NativeBridgeReply>('deleteDeviceSigningKey');
