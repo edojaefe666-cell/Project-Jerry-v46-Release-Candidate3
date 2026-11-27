@@ -4,6 +4,7 @@ import { generateWithModelFallback, type ModelGenerationResult } from './provide
 import { parseOpportunityScan } from './opportunityScan';
 import { reserveConfiguredProviderOperation } from '../db/providerOperationStore.ts';
 import { withSharedExecutionLease } from '../db/executionControl.ts';
+import { assertHostedProviderSpendEnabled } from './providerSpendPolicy.ts';
 import type { OpportunityAlert } from './types';
 
 export class OpportunityRadarError extends Error {
@@ -52,6 +53,11 @@ export async function runOpportunityRadar(options: OpportunityRadarOptions): Pro
       503,
       'LIVE_RESEARCH_NOT_CONFIGURED',
     );
+  }
+  try {
+    assertHostedProviderSpendEnabled('Tavily live research');
+  } catch (error) {
+    throw new OpportunityRadarError(error instanceof Error ? error.message : 'Paid research is disabled.', 503, 'PAID_SERVICES_DISABLED');
   }
 
   const search = options.search ?? searchLiveResearch;
