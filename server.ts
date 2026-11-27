@@ -507,8 +507,12 @@ async function startServer() {
       res.status(403).json({ error: 'Device request challenge is invalid or no longer active.' });
       return;
     }
+    if (!isRead && !rawBody) {
+      res.status(403).json({ error: 'Signed write request body is missing.' });
+      return;
+    }
     const verified = await verifyDeviceHttpRequestProof(
-      challenge, { challengeId, signature }, challenge.signingPublicKey, rawBody,
+      challenge, { challengeId, signature }, challenge.signingPublicKey, rawBody ?? Buffer.alloc(0),
     );
     if (!verified) {
       res.status(403).json({ error: 'Device request signature or body binding is invalid.' });
