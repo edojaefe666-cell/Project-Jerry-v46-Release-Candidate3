@@ -19,7 +19,7 @@ async function ensureSchema(client: Queryable = pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS jerry_owner_rate_limits_window
       ON jerry_owner_rate_limits(window_started_at);
   `);
-  schemaReady = true;
+  if (client === pool) schemaReady = true;
 }
 
 export interface SharedRateLimitResult {
