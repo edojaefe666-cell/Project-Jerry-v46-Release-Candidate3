@@ -65,6 +65,18 @@ import type {
 
 dotenv.config();
 
+async function reserveExternalServiceOperations(ownerUid: string, operationCount: number): Promise<void> {
+  if (!Number.isSafeInteger(operationCount) || operationCount < 1 || operationCount > 10) {
+    throw new Error('External service operation reservation count is invalid.');
+  }
+  // Reserve each outbound request independently before starting any request.
+  // A partial reservation failure blocks the whole batch; already reserved
+  // slots remain charged because provider processing may be ambiguous.
+  for (let index = 0; index < operationCount; index += 1) {
+    await reserveConfiguredProviderOperation(ownerUid);
+  }
+}
+
 const PORT = (() => {
   const raw = process.env.PORT ?? '3000';
   const parsed = Number(raw);
@@ -1001,6 +1013,7 @@ async function startServer() {
         res.status(409).json({ error: 'Configure a Bitcoin Mainnet receiving address in this workspace before recording settlement.' });
         return;
       }
+      await reserveExternalServiceOperations(uid, 3);
       const [detailsResp, statusResp, tipResp] = await Promise.all([
         fetch(`https://blockstream.info/api/tx/${cleanHash}`, { signal: AbortSignal.timeout(5000) }),
         fetch(`https://blockstream.info/api/tx/${cleanHash}/status`, { signal: AbortSignal.timeout(5000) }),
@@ -1126,13 +1139,14 @@ async function startServer() {
   });
 
   // Real Live Bitcoin Market Price & Public On-Chain RPC Sync
-  async function fetchLiveSpotPrices(): Promise<{
+  async function fetchLiveSpotPrices(ownerUid: string): Promise<{
     prices: { BTC: number };
     priceSource: string;
     fetchedAt: string;
   }> {
     const fallback = 88400;
     try {
+      await reserveExternalServiceOperations(ownerUid, 1);
       const resp = await fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot', {
         signal: AbortSignal.timeout(4000),
       });
@@ -1181,6 +1195,7 @@ async function startServer() {
       }
 
       const fetchedAt = new Date().toISOString();
+      await reserveExternalServiceOperations(uid, 2);
       const [priceResp, addressResp] = await Promise.all([
         fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot', { signal: AbortSignal.timeout(4000) }),
         fetch(`https://blockstream.info/api/address/${encodeURIComponent(address)}`, { signal: AbortSignal.timeout(5000) }),
@@ -1272,6 +1287,7 @@ async function startServer() {
 
     try {
       await withSharedExecutionLease(async () => {
+      await reserveExternalServiceOperations(req.user!.uid, 2);
       const [txResp, tipResp] = await Promise.all([
         fetch(`https://blockstream.info/api/tx/${cleanHash}/status`, { signal: AbortSignal.timeout(5000) }),
         fetch('https://blockstream.info/api/blocks/tip/height', { signal: AbortSignal.timeout(5000) }),
@@ -1357,6 +1373,7 @@ async function startServer() {
       }
 
       const cleanHash = existing.txHash.trim().toLowerCase();
+      await reserveExternalServiceOperations(uid, 2);
       const [txResp, tipResp] = await Promise.all([
         fetch(`https://blockstream.info/api/tx/${cleanHash}/status`, { signal: AbortSignal.timeout(5000) }),
         fetch('https://blockstream.info/api/blocks/tip/height', { signal: AbortSignal.timeout(5000) }),
