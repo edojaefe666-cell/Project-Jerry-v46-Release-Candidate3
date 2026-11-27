@@ -3,6 +3,13 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val releaseStoreFile = System.getenv("JERRY_ANDROID_KEYSTORE_FILE")
+val releaseStorePassword = System.getenv("JERRY_ANDROID_STORE_PASSWORD")
+val releaseKeyAlias = System.getenv("JERRY_ANDROID_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("JERRY_ANDROID_KEY_PASSWORD")
+val hasReleaseSigning = listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword)
+    .all { !it.isNullOrBlank() && !it.contains("placeholder", ignoreCase = true) }
+
 android {
     namespace = "com.projectjerry.android"
     compileSdk = 35
@@ -21,6 +28,25 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("connectedRelease") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("connectedRelease")
+            }
+        }
+    }
+
     testOptions { unitTests.isReturnDefaultValues = true }
 }
 
