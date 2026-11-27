@@ -734,9 +734,9 @@ async function startServer() {
         res.status(404).json({ error: 'Workspace not initialized.' });
         return;
       }
-      await updateWorkspaceForUserAtomic(uid, email, (latest) =>
+      await withSharedExecutionLease(() => updateWorkspaceForUserAtomic(uid, email, (latest) =>
         mergeClientWorkspaceState(latest, incoming)
-      );
+      ));
       res.json({ ok: true });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to save Cloud SQL workspace';
