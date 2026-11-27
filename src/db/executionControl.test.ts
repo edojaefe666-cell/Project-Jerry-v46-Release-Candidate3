@@ -339,3 +339,83 @@ test('PostgreSQL stop committed after claim but before lease acquisition blocks 
     }
   }
 });
+
+
+test('PostgreSQL stop then resume advances epoch and invalidates an earlier instance admission', {
+  skip: process.env.JERRY_JOURNAL_TEST_DATABASE !== '1'
+    ? 'Set JERRY_JOURNAL_TEST_DATABASE=1 for a disposable PostgreSQL database.'
+    : false,
+}, async () => {
+  assert.notEqual(process.env.NODE_ENV, 'production');
+  assert.ok(process.env.SQL_HOST && process.env.SQL_USER && /test|tenant/i.test(process.env.SQL_DB_NAME ?? ''),
+    'Execution-control integration requires a disposable PostgreSQL database name containing test/tenant.');
+  const { createPool } = await import('./index.ts');
+  const instanceAPool = createPool();
+  const instanceBPool = createPool();
+  const {
+    acquireSharedExecutionLease,
+    readSharedExecutionControl,
+    updateSharedExecutionControl,
+  } = await import('./executionControl.ts');
+  const actorUid = 'cross-instance-epoch-integration';
+  let fixtureOwnsRow = false;
+  let prior: { stopped: boolean; reason: string | null; updated_by: string | null } | undefined;
+
+  try {
+    const snapshot = await instanceAPool.query(
+      'SELECT stopped, reason, updated_by FROM jerry_execution_control WHERE id = 1',
+    );
+    assert.equal(snapshot.rowCount, 1, 'shared execution-control singleton must exist');
+    prior = snapshot.rows[0];
+
+    await updateSharedExecutionControl({
+      stopped: false,
+      actorUid,
+      reason: 'cross-instance epoch fixture enabled',
+    });
+    fixtureOwnsRow = true;
+
+    // Instance A admits work and records the epoch attached to that work.
+    const admitted = await acquireSharedExecutionLease(() => instanceAPool.connect());
+    const admissionEpoch = admitted.epoch;
+    await admitted.release();
+
+    await updateSharedExecutionControl({
+      stopped: true,
+      actorUid,
+      reason: 'cross-instance epoch fixture owner stop',
+    });
+    await updateSharedExecutionControl({
+      stopped: false,
+      actorUid,
+      reason: 'cross-instance epoch fixture owner resume',
+    });
+
+    // Instance B sees the durable post-recovery epoch. The old provider result
+    // from A must fail the same epoch equality check used by response delivery.
+    const current = await acquireSharedExecutionLease(() => instanceBPool.connect());
+    try {
+      assert.ok(current.epoch > admissionEpoch,
+        'Stop/resume must advance the shared epoch beyond the original admission.');
+      assert.notEqual(current.epoch, admissionEpoch,
+        'An old execution must never become current again after owner recovery.');
+      assert.equal((await readSharedExecutionControl()).stopped, false);
+    } finally {
+      await current.release();
+    }
+  } finally {
+    try {
+      if (fixtureOwnsRow && prior) {
+        await instanceAPool.query(
+          `UPDATE jerry_execution_control
+              SET stopped = $1, epoch = epoch + 1, reason = $2,
+                  updated_by = $3, updated_at = now()
+            WHERE id = 1 AND updated_by = $4 AND reason = $5`,
+          [prior.stopped, prior.reason, prior.updated_by, actorUid, 'cross-instance epoch fixture owner resume'],
+        );
+      }
+    } finally {
+      await Promise.all([instanceAPool.end(), instanceBPool.end()]);
+    }
+  }
+});
