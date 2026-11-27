@@ -391,7 +391,7 @@ class DeviceMemoryExchangeKeyStore(
             iv = decodeBase64Url(envelope.getString("iv"), GCM_IV_BYTES, "recovery IV")
             ciphertext = decodeBase64Url(envelope.getString("ciphertext"), 48, "recovery ciphertext")
             contextBytes = expectedRecoveryContext.toByteArray(Charsets.UTF_8)
-            info = ("Jerry owner memory recovery v1\\u0000" + expectedRecoveryContext).toByteArray(Charsets.UTF_8)
+            info = ("Jerry owner memory recovery v1\u0000" + expectedRecoveryContext).toByteArray(Charsets.UTF_8)
             wrappingKey = hkdfSha256(recoveryKey, salt, info, 32)
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(wrappingKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
