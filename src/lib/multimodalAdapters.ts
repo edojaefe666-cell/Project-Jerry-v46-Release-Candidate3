@@ -32,6 +32,9 @@ async function postJson(url:string,headers:Record<string,string>,body:unknown,ti
       throw new Error(`Provider returned HTTP ${response.status}.`);
     }
     const value: unknown = await response.json();
+    if (request.signal.aborted) {
+      throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
+    }
     throwIfAborted(parentSignal);
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Provider returned an invalid response.');
     return value as Record<string, any>;
@@ -208,6 +211,9 @@ export async function transcribeAudioWithModelFallback(options: AudioTranscripti
             throw new Error(`Provider returned HTTP ${response.status}.`);
           }
           const body: unknown = await response.json();
+          if (request.signal.aborted) {
+            throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
+          }
           throwIfAborted(options.signal);
           const transcript = body && typeof body === 'object' ? (body as any).text : undefined;
           if (typeof transcript !== 'string' || !transcript.trim()) throw new Error('Provider returned no transcript.');
