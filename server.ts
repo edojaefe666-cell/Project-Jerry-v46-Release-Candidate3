@@ -35,7 +35,7 @@ import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { requestDeviceRegistrationForUser, listDeviceRegistrationsForUser, isActiveDeviceForUser } from './src/db/deviceRegistrationStore.ts';
-import { users, encryptedMemoryRecords } from './src/db/schema.ts';
+import { users, encryptedMemoryRecords, deviceRegistrations, deviceMemoryKeyEnvelopes } from './src/db/schema.ts';
 import {
   createDeviceHttpRequestChallengeForUser,
   getDeviceHttpRequestChallengeForUser,
@@ -43,6 +43,7 @@ import {
 } from './src/db/deviceHttpRequestChallengeStore.ts';
 import { verifyDeviceHttpRequestProof, isAllowedEncryptedMemoryTarget } from './src/lib/deviceHttpRequestProof.ts';
 import { validateEncryptedMemoryRecord } from './src/db/encryptedMemoryStore.ts';
+import { validateDeviceMemoryKeyEnvelope } from './src/db/deviceMemoryKeyEnvelopeStore.ts';
 import {
   createDeviceApprovalChallengeForUser,
   getDeviceApprovalChallengeForUser,
@@ -537,6 +538,113 @@ async function startServer() {
       res.status(503).json({ error: 'Encrypted memory operation could not be completed safely.' });
     }
   };
+
+  // Device key envelopes are owner-scoped and delivered only to the active
+  // device whose signing key created the one-use request challenge.
+  app.post('/api/memory/key-envelopes', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    const ownerUid = req.user!.uid;
+    const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+    const challengeId = req.header('x-jerry-challenge-id') ?? '';
+    const proofChallenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
+    if (!proofChallenge || proofChallenge.method !== 'POST' ||
+        proofChallenge.path !== '/api/memory/key-envelopes') {
+      res.status(403).json({ error: 'An active owner-device authorization is required.' });
+      return;
+    }
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const body = req.body as { recipientDeviceId?: unknown; envelope?: unknown };
+      if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).some((key) => key !== 'recipientDeviceId' && key !== 'envelope') ||
+          typeof body.recipientDeviceId !== 'string' ||
+          !/^[A-Za-z0-9_-]{16,128}$/.test(body.recipientDeviceId)) {
+        throw new Error('Recipient device or envelope is invalid.');
+      }
+      const envelope = body.envelope as Record<string, unknown>;
+      const validationError = validateDeviceMemoryKeyEnvelope(envelope);
+      if (validationError) throw new Error(validationError);
+      const context = envelope.context as { ownerUid: string; deviceId: string; keyVersion: number };
+      if (context.ownerUid !== ownerUid || context.deviceId !== body.recipientDeviceId) {
+        throw new Error('Envelope context does not match its owner and recipient.');
+      }
+      const [recipient] = await tx.select().from(deviceRegistrations).where(and(
+        eq(deviceRegistrations.userId, ownerId),
+        eq(deviceRegistrations.deviceId, body.recipientDeviceId),
+        eq(deviceRegistrations.status, 'active'),
+      )).limit(1).for('update');
+      const [authorizer] = await tx.select().from(deviceRegistrations).where(and(
+        eq(deviceRegistrations.userId, ownerId),
+        eq(deviceRegistrations.deviceId, proofChallenge.deviceId),
+        eq(deviceRegistrations.status, 'active'),
+      )).limit(1).for('share');
+      if (!recipient || !authorizer) throw new Error('Recipient and authorizing devices must both be active and owner-approved.');
+      const [row] = await tx.insert(deviceMemoryKeyEnvelopes).values({
+        id: randomUUID(),
+        userId: ownerId,
+        deviceRegistrationId: recipient.id,
+        createdByDeviceRegistrationId: authorizer.id,
+        keyVersion: context.keyVersion,
+        envelopeVersion: 1,
+        algorithm: 'ECDH-P256-HKDF-SHA256-AES-256-GCM',
+        ephemeralPublicKey: envelope.ephemeralPublicKey as Record<string, string>,
+        salt: envelope.salt as string,
+        iv: envelope.iv as string,
+        ciphertext: envelope.ciphertext as string,
+        status: 'active',
+      }).returning();
+      if (!row) throw new Error('Device key envelope was not stored.');
+      return { envelope: {
+        id: row.id,
+        keyVersion: row.keyVersion,
+        envelopeVersion: 1,
+        algorithm: row.algorithm,
+        context: { ownerUid, deviceId: body.recipientDeviceId, keyVersion: row.keyVersion },
+        ephemeralPublicKey: row.ephemeralPublicKey,
+        salt: row.salt,
+        iv: row.iv,
+        ciphertext: row.ciphertext,
+        createdAt: row.createdAt.toISOString(),
+      } };
+    });
+  });
+
+  app.get('/api/memory/key-envelopes/:keyVersion', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    const ownerUid = req.user!.uid;
+    const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+    const challengeId = req.header('x-jerry-challenge-id') ?? '';
+    const proofChallenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
+    const keyVersion = Number(req.params.keyVersion);
+    if (!proofChallenge || proofChallenge.method !== 'GET' ||
+        proofChallenge.path !== req.originalUrl || !Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+      res.status(403).json({ error: 'An active recipient-device authorization is required.' });
+      return;
+    }
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const [row] = await tx.select({ envelope: deviceMemoryKeyEnvelopes, device: deviceRegistrations })
+        .from(deviceMemoryKeyEnvelopes)
+        .innerJoin(deviceRegistrations, eq(deviceMemoryKeyEnvelopes.deviceRegistrationId, deviceRegistrations.id))
+        .where(and(
+          eq(deviceMemoryKeyEnvelopes.userId, ownerId),
+          eq(deviceMemoryKeyEnvelopes.keyVersion, keyVersion),
+          eq(deviceMemoryKeyEnvelopes.status, 'active'),
+          eq(deviceRegistrations.userId, ownerId),
+          eq(deviceRegistrations.deviceId, proofChallenge.deviceId),
+          eq(deviceRegistrations.status, 'active'),
+        )).limit(1);
+      if (!row) throw new Error('No active key envelope exists for this approved device.');
+      return { envelope: {
+        id: row.envelope.id,
+        keyVersion: row.envelope.keyVersion,
+        envelopeVersion: 1,
+        algorithm: row.envelope.algorithm,
+        context: { ownerUid, deviceId: proofChallenge.deviceId, keyVersion: row.envelope.keyVersion },
+        ephemeralPublicKey: row.envelope.ephemeralPublicKey,
+        salt: row.envelope.salt,
+        iv: row.envelope.iv,
+        ciphertext: row.envelope.ciphertext,
+        createdAt: row.envelope.createdAt.toISOString(),
+      } };
+    });
+  });
 
   app.get('/api/memory/encrypted', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
     await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
