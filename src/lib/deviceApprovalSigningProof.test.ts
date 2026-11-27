@@ -43,7 +43,7 @@ test('rejects a proof if owner, approver, target, nonce, or expiry is changed', 
 
 test('rejects expired challenges and proof replay against another challenge id', async () => {
   const pair = await createDeviceSigningKeyPair(cryptoProvider);
-  assert.rejects(() => signDeviceApprovalChallenge(challenge, pair.privateKey, Date.parse('2036-01-01'), cryptoProvider));
+  await assert.rejects(() => signDeviceApprovalChallenge(challenge, pair.privateKey, Date.parse('2036-01-01'), cryptoProvider));
   const proof = await signDeviceApprovalChallenge(challenge, pair.privateKey, Date.parse('2034-01-01'), cryptoProvider);
   assert.equal(await verifyDeviceApprovalProof({ ...challenge, challengeId: 'challenge_abcdefghijkl' }, proof, pair.publicKey, Date.parse('2034-01-01'), cryptoProvider), false);
 });
