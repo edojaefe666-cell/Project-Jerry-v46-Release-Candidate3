@@ -2057,13 +2057,27 @@ async function startServer() {
       return;
     }
 
-    const isolated = await runIsolatedTestsWithStop({ language, source: code, testCode });
-    res.json({
-      securityAuditPassed: true,
-      securityAuditNotes: audit.notes,
-      testStatus: isolated.status === 'passed' ? 'passed' : isolated.status === 'failed' ? 'failed' : 'pending',
-      testReport: isolated.report,
-    });
+    try {
+      // Keep the shared stop row locked for the full remote runner call. A
+      // preflight check alone would allow a stop to commit between admission
+      // and the external sandbox request.
+      const isolated = await withSharedExecutionLease(() =>
+        runIsolatedTestsWithStop({ language, source: code, testCode }),
+      );
+      res.json({
+        securityAuditPassed: true,
+        securityAuditNotes: audit.notes,
+        testStatus: isolated.status === 'passed' ? 'passed' : isolated.status === 'failed' ? 'failed' : 'pending',
+        testReport: isolated.report,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to verify upgrade.';
+      if (/emergency stop is engaged/i.test(message)) {
+        res.status(423).json({ error: 'Jerry emergency stop is engaged. Upgrade verification was not started.' });
+        return;
+      }
+      res.status(502).json({ error: 'Isolated upgrade verification failed. No deployment was performed.' });
+    }
   });
 
   // Task execution is fail-closed until a real, independently verifiable
