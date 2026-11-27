@@ -617,7 +617,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun dispatchNativeAuthError(isReauthentication) {
+    private fun dispatchNativeAuthError(isReauthentication: Boolean) {
         if (!::webView.isInitialized || isFinishing || isDestroyed) return
         webView.post {
             webView.evaluateJavascript(
