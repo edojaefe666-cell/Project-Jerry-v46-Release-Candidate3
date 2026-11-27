@@ -133,33 +133,6 @@ export async function settleProviderCost(
 }
 
 
-export interface ProviderCostLedgerSnapshot {
-  daily: Array<{ day: string; dailyLimitMicroUsd: string; reservedMicroUsd: string; actualMicroUsd: string }>;
-  reservations: Array<{ reservationId: string; day: string; reservedMicroUsd: string; status: 'reserved' | 'settled'; createdAt: string; settledAt: string | null }>;
-}
-
-/** Read-only owner-scoped audit view; unresolved reservations remain visibly reserved. */
-export async function getProviderCostLedgerSnapshot(ownerUid: string, limit = 30, queryable: Queryable = pool): Promise<ProviderCostLedgerSnapshot> {
-  const uid = ownerUid.trim();
-  if (!uid || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Provider cost ledger query is invalid.');
-  await ensureSchema(queryable);
-  const [daily, reservations] = await Promise.all([
-    queryable.query(
-      `SELECT usage_day::text AS day, daily_limit_micro_usd::text AS "dailyLimitMicroUsd",
-              reserved_micro_usd::text AS "reservedMicroUsd", actual_micro_usd::text AS "actualMicroUsd"
-       FROM jerry_provider_daily_cost WHERE owner_uid=$1
-       ORDER BY usage_day DESC LIMIT $2`, [uid, limit]),
-    queryable.query(
-      `SELECT reservation_id AS "reservationId", usage_day::text AS day,
-              reserved_micro_usd::text AS "reservedMicroUsd", status,
-              created_at::text AS "createdAt", settled_at::text AS "settledAt"
-       FROM jerry_provider_cost_reservations WHERE owner_uid=$1
-       ORDER BY created_at DESC, reservation_id DESC LIMIT $2`, [uid, limit]),
-  ]);
-  return { daily: daily.rows as ProviderCostLedgerSnapshot['daily'], reservations: reservations.rows as ProviderCostLedgerSnapshot['reservations'] };
-}
-
-
 export async function getProviderCostAudit(ownerUid: string, days = 30): Promise<{
   daily: Array<{ day: string; dailyLimitMicroUsd: number; reservedMicroUsd: number; actualMicroUsd: number }>;
   reservations: Array<{ reservationId: string; day: string; reservedMicroUsd: number; status: 'reserved' | 'settled'; createdAt: string; settledAt: string | null }>;
