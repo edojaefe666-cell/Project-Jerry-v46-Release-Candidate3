@@ -158,6 +158,27 @@ export const deviceHttpRequestChallenges = pgTable('device_http_request_challeng
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const deviceMemoryKeyEnvelopes = pgTable('device_memory_key_envelopes', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  deviceRegistrationId: text('device_registration_id').references(() => deviceRegistrations.id, { onDelete: 'cascade' }).notNull(),
+  createdByDeviceRegistrationId: text('created_by_device_registration_id').references(() => deviceRegistrations.id, { onDelete: 'restrict' }).notNull(),
+  keyVersion: integer('key_version').notNull(),
+  envelopeVersion: integer('envelope_version').notNull(),
+  algorithm: text('algorithm').notNull(),
+  ephemeralPublicKey: jsonb('ephemeral_public_key').notNull(),
+  salt: text('salt').notNull(),
+  iv: text('iv').notNull(),
+  ciphertext: text('ciphertext').notNull(),
+  status: text('status').notNull().default('active'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+}, (table) => ({
+  ownerDeviceVersionUnique: uniqueIndex('device_memory_key_envelopes_owner_device_version_unique')
+    .on(table.userId, table.deviceRegistrationId, table.keyVersion),
+  ownerCreatedIndex: index('device_memory_key_envelopes_owner_created_idx').on(table.userId, table.createdAt),
+}));
+
 export const encryptedMemoryRecords = pgTable('encrypted_memory_records', {
   id: text('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
@@ -201,6 +222,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   encryptedMemoryRecords: many(encryptedMemoryRecords),
   storageObjects: many(storageObjects),
   deviceRegistrations: many(deviceRegistrations),
+  deviceMemoryKeyEnvelopes: many(deviceMemoryKeyEnvelopes),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ one }) => ({
