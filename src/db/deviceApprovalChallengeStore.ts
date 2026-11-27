@@ -76,7 +76,7 @@ export async function getDeviceApprovalChallengeForUser(
       gt(deviceApprovalChallenges.expiresAt, new Date()),
       eq(deviceRegistrations.userId, user.id),
       eq(deviceRegistrations.status, 'active'),
-    )).limit(1).for('update');
+    )).limit(1);
   if (!row || !row.approver.signingPublicKey) return null;
   const [target] = await db.select().from(deviceRegistrations).where(and(
     eq(deviceRegistrations.userId, user.id),
@@ -118,7 +118,7 @@ export async function consumeDeviceApprovalChallengeAndApproveForUser(
       eq(deviceRegistrations.userId, user.id),
       eq(deviceRegistrations.id, challenge.approverRegistrationId),
       eq(deviceRegistrations.status, 'active'),
-    )).limit(1);
+    )).limit(1).for('update');
     const [target] = await tx.select().from(deviceRegistrations).where(and(
       eq(deviceRegistrations.userId, user.id),
       eq(deviceRegistrations.id, challenge.targetRegistrationId),
