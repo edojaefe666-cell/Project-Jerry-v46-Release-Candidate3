@@ -383,6 +383,11 @@ async function startServer() {
   const allowedStorageContentTypes = new Set([
     'image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain',
   ]);
+  const sanitizeStorageFileName = (value: unknown): string => {
+    const candidate = typeof value === 'string' ? value : 'file';
+    const safe = candidate.normalize('NFKC').replace(/[\\/\\\\\\u0000-\\u001f\\u007f]/g, '_').trim().slice(0, 180);
+    return safe || 'file';
+  };
 
   app.post(
     '/api/storage/upload',
@@ -390,6 +395,7 @@ async function startServer() {
     requireExecutionEnabled,
     express.raw({ type: 'application/octet-stream', limit: '8mb' }),
     async (req: AuthRequest, res) => {
+      let uploadedObjectKey: string | null = null;
       try {
         if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
           res.status(400).json({ error: 'A non-empty file body is required.' });
@@ -402,6 +408,7 @@ async function startServer() {
         }
         const objectId = randomUUID();
         const objectKey = `${storageOwnerPrefix(req.user!.uid)}${objectId}`;
+        const fileName = sanitizeStorageFileName(req.header('x-jerry-file-name'));
         const signed = createNeonStoragePresignedUrl({
           method: 'PUT',
           bucket: storageBucket,
@@ -419,13 +426,22 @@ async function startServer() {
           res.status(502).json({ error: 'Private file storage rejected the upload.' });
           return;
         }
+        uploadedObjectKey = objectKey;
         const metadata = await recordStorageObjectForUser(
           req.user!.uid,
           req.user!.email ?? 'owner@jerry.local',
-          { id: objectId, objectKey, contentType, byteSize: req.body.length },
+          { id: objectId, objectKey, contentType, fileName, byteSize: req.body.length },
         );
         res.status(201).json({ ...metadata, stored: true });
       } catch {
+        if (uploadedObjectKey) {
+          try {
+            const cleanup = createNeonStoragePresignedUrl({ method: 'DELETE', bucket: storageBucket, objectKey: uploadedObjectKey, expiresInSeconds: 120 });
+            await fetch(cleanup.url, { method: 'DELETE', signal: AbortSignal.timeout(10_000) });
+          } catch {
+            // Do not expose signed URLs or storage credentials in client errors.
+          }
+        }
         res.status(503).json({ error: 'Private file storage is unavailable; the upload was not confirmed.' });
       }
     },
