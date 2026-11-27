@@ -7,12 +7,13 @@ const dbName = process.env.SQL_DB_NAME ?? '';
 
 test('PostgreSQL journal posting, idempotency, reversal and tenant isolation', {
   skip: !optedIn ? 'Set JERRY_JOURNAL_TEST_DATABASE=1 for a disposable PostgreSQL database.' : false,
-}, async () => {
+}, async (t) => {
   assert.notEqual(process.env.NODE_ENV, 'production');
   assert.ok(process.env.SQL_HOST && process.env.SQL_USER && /test|tenant/i.test(dbName),
     'Journal integration requires SQL_HOST, SQL_USER and a disposable database name containing test/tenant.');
   const { createPool } = await import('./index.ts');
   const { getOrCreateUser } = await import('./users.ts');
+  const { updateSharedExecutionControl } = await import('./executionControl.ts');
   const { postJournalEntry, reversePostedJournalEntry, getJournalAccountBalances } = await import('./journal.ts');
   const pool = createPool(); // Immutable journal fixtures intentionally remain in this disposable test database.
   const suffix = randomUUID();
@@ -21,6 +22,21 @@ test('PostgreSQL journal posting, idempotency, reversal and tenant isolation', {
   const email = `journal-${suffix}@example.invalid`;
   await getOrCreateUser(uid, email);
   await getOrCreateUser(otherUid, `other-${email}`);
+  // Shared execution control defaults to stopped. Explicitly enable it only
+  // inside this disposable integration fixture so live outbox processing is
+  // tested under the same authorization state as its dedicated worker suite.
+  await updateSharedExecutionControl({
+    stopped: false,
+    actorUid: uid,
+    reason: 'Disposable journal integration fixture enabled execution',
+  });
+  t.after(async () => {
+    await updateSharedExecutionControl({
+      stopped: true,
+      actorUid: uid,
+      reason: 'Disposable journal integration fixture cleanup stop',
+    });
+  });
   const input = {
     uid,
     idempotencyKey: `deposit-${suffix}`,
