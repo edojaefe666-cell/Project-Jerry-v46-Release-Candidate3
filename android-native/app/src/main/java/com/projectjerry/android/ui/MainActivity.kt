@@ -139,6 +139,19 @@ class MainActivity : AppCompatActivity() {
                     )
                     true
                 }
+                "hasInstalledDeviceMemoryKey" -> {
+                    val ownerUid = message.optString("ownerUid")
+                    val deviceId = message.optString("deviceId")
+                    val keyVersion = message.optInt("keyVersion", -1)
+                    val installed = deviceMemoryExchangeKeyStore.hasInstalledMemoryKey(
+                        ownerUid, deviceId, keyVersion
+                    )
+                    replyProxy.postMessage(
+                        JSONObject().put("ok", true).put("requestId", requestId)
+                            .put("installed", installed).toString()
+                    )
+                    true
+                }
                 "createInitialDeviceMemoryKey" -> {
                     val ownerUid = message.optString("ownerUid")
                     val deviceId = message.optString("deviceId")

@@ -3,6 +3,7 @@ import { useAuth } from '../lib/AuthContext';
 import {
   createEncryptedMemoryRecord,
   initializeAndroidMemoryKey,
+  isAndroidMemoryKeyInstalled,
   listEncryptedMemoryRecords,
   type StoredEncryptedMemoryRecord,
 } from '../lib/encryptedMemoryApi';
@@ -54,8 +55,10 @@ export function EncryptedMemoryVault() {
     try {
       if (!window.JerryNativeAuth) throw new Error('Open Jerry inside the Android app to use its protected Keystore.');
       await initializeAndroidMemoryKey(user.uid, 1);
+      const installed = await isAndroidMemoryKeyInstalled(user.uid, 1);
+      if (!installed) throw new Error('Android did not find the protected memory key after setup.');
       setKeyReady(true);
-      setMessage('The local memory-key setup was confirmed by Android.');
+      setMessage('Android confirmed that the protected local memory key is installed.');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not initialize the local memory key.');
     } finally { setBusy(false); }
@@ -66,6 +69,12 @@ export function EncryptedMemoryVault() {
     setBusy(true); setError(''); setMessage('');
     try {
       if (!window.JerryNativeAuth) throw new Error('The Android Keystore bridge is unavailable.');
+      const installed = await isAndroidMemoryKeyInstalled(user.uid, 1);
+      if (!installed) {
+        setKeyReady(false);
+        setRecords([]);
+        throw new Error('This device has no installed key for this memory vault. Confirm or restore the owner-approved key before loading records.');
+      }
       const envelopes: StoredEncryptedMemoryRecord[] = await listEncryptedMemoryRecords();
       const decrypted: VaultEntry[] = [];
       const failures: string[] = [];

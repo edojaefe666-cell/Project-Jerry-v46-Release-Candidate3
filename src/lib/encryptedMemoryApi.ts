@@ -5,6 +5,7 @@ import {
   signNativeDeviceMemoryRequestChallenge,
   unwrapNativeDeviceMemoryKeyEnvelope,
   createNativeInitialDeviceMemoryKey,
+  hasNativeInstalledDeviceMemoryKey,
   wrapNativeMemoryKeyForApprovedDevice,
 } from './nativeDeviceSigning.ts';
 import type { DevicePublicKey } from './memoryKeyEnvelope.ts';
@@ -137,6 +138,18 @@ export async function fetchAndInstallDeviceMemoryKeyEnvelope(
     deviceId,
     keyVersion,
   });
+}
+
+/** Verifies that the current Android device has the requested protected memory key. */
+export async function isAndroidMemoryKeyInstalled(
+  ownerUid: string,
+  keyVersion = 1,
+): Promise<boolean> {
+  if (typeof ownerUid !== 'string' || !ownerUid.trim() || ownerUid.length > 160 ||
+      !Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+    throw new Error('Memory-key owner or version is invalid.');
+  }
+  return hasNativeInstalledDeviceMemoryKey(ownerUid, getOrCreateJerryDeviceId(), keyVersion);
 }
 
 /** Initializes a local memory key after an explicit native owner confirmation. */
