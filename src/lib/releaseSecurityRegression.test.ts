@@ -81,6 +81,21 @@ test('outgoing Bitcoin transfer staging is blocked while the emergency stop is e
 });
 
 
+test('Bitcoin transfer staging is crash-recoverable and cannot broadcast funds', () => {
+  const start = server.indexOf("app.post('/api/wallet/commands/submit-transfer'");
+  const end = server.indexOf('// Real Live Bitcoin Market Price', start);
+  const route = server.slice(start, end);
+  assert.match(route, /runIdempotentWorkspaceCommand/);
+  assert.match(route, /reserveApproval\\(approvalId, 'bitcoin_transfer'/);
+  assert.match(route, /finalizeApprovalReservation\\(approvalId, uid, reservationId\\)/);
+  assert.match(route, /pending_approval/);
+  assert.match(route, /Idempotency-Key/);
+  assert.doesNotMatch(route, /broadcast|sendRawTransaction|sendTransaction|submitTransaction/i,
+    'approval and staging must never initiate an external Bitcoin transfer');
+  assert.match(route, /retry the same idempotency key/i,
+    'a committed reservation must be reconciled using its original operation key');
+});
+
 test('security backup restore consumes its scoped approval and commits the replacement atomically', () => {
   const start = server.indexOf("app.post('/api/security/restore'");
   const end = server.indexOf("app.get('/api/health'", start);
