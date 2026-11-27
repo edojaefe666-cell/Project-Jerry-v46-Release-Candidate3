@@ -177,6 +177,17 @@ test('shared execution leases serialize owner stop with active ledger side effec
   assert.match(outbox, /ensureWalletTransactionJournaled/);
 });
 
+test('isolated self-upgrade runner holds a shared lease until verification exits', () => {
+  const start = server.indexOf('const runIsolatedTestsWithStop =');
+  const end = server.indexOf('// Provider calls consume quota', start);
+  const helper = server.slice(start, end);
+  assert.match(helper, /withSharedExecutionLease\(async \(\) =>/);
+  assert.ok(helper.indexOf('withSharedExecutionLease') < helper.indexOf('runIsolatedSelfUpgradeTests(input'),
+    'the runner must execute before the shared lease is released');
+  assert.match(helper, /execution\.signal\.aborted/);
+  assert.match(helper, /execution\.release\(\)/);
+});
+
 test('owner emergency stop uses the shared execution registry for in-flight verification', () => {
   assert.match(server, /new ExecutionRegistry\(isEmergencyStopActive\(\)\)/);
   assert.match(server, /executionRegistry\.setStopped\([\s\S]*body\.action === 'stop'/);
