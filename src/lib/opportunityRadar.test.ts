@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { runOpportunityRadar, OpportunityRadarError } from './opportunityRadar';
 import type { ProviderConfiguration } from './modelRouter';
 
+// Research and model calls in this suite are injected test doubles.
+process.env.JERRY_PAID_SERVICES_ENABLED = '1';
+
 const configuration = {} as ProviderConfiguration;
 const source = {
   title: 'Nigeria SME market report',
