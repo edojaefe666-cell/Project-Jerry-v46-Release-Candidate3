@@ -44,3 +44,21 @@ test('ignores malformed source records and caps content length', async () => {
   assert.equal(result.sources.length, 1);
   assert.equal(result.sources[0].content.length, 6000);
 });
+
+test('owner cancellation aborts an active Tavily request', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const pending = searchLiveResearch({
+    query: 'Nigeria SME market', apiKey: 'key', signal: controller.signal,
+    fetchImpl: async (_input, init) => {
+      calls++;
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort(new Error('owner stop'));
+  await assert.rejects(pending, /owner stop/);
+  assert.equal(calls, 1);
+});
