@@ -29,6 +29,7 @@ import androidx.webkit.JavaScriptReplyProxy
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.projectjerry.android.security.DeviceSigningKeyStore
+import com.projectjerry.android.security.DeviceMemoryExchangeKeyStore
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -41,6 +42,7 @@ class MainActivity : AppCompatActivity() {
     private val credentialManager by lazy { CredentialManager.create(this) }
     private val authRequestInProgress = AtomicBoolean(false)
     private val deviceSigningKeyStore by lazy { DeviceSigningKeyStore() }
+    private val deviceMemoryExchangeKeyStore by lazy { DeviceMemoryExchangeKeyStore(applicationContext) }
     private var pendingAudioPermission: PermissionRequest? = null
 
     // Ask for microphone access only when Jerry's trusted local UI requests audio.
@@ -125,6 +127,21 @@ class MainActivity : AppCompatActivity() {
                             JSONObject().put("kty", key.kty).put("crv", key.crv).put("x", key.x).put("y", key.y)
                         ).toString()
                     )
+                    true
+                }
+                "getDeviceMemoryExchangePublicKey" -> {
+                    val key = deviceMemoryExchangeKeyStore.createOrGetPublicKey()
+                    replyProxy.postMessage(
+                        JSONObject().put("ok", true).put("requestId", requestId).put(
+                            "publicKey",
+                            JSONObject().put("kty", key.kty).put("crv", key.crv).put("x", key.x).put("y", key.y)
+                        ).toString()
+                    )
+                    true
+                }
+                "deleteDeviceMemoryExchangeKey" -> {
+                    deviceMemoryExchangeKeyStore.deleteKey()
+                    replyProxy.postMessage(JSONObject().put("ok", true).put("requestId", requestId).toString())
                     true
                 }
                 "signDeviceApprovalChallenge" -> {
