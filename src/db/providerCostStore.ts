@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { createPool } from './index.ts';
 
@@ -17,11 +18,24 @@ async function ensureSchema(client: Queryable = pool): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY(owner_uid, usage_day)
     );
+    CREATE TABLE IF NOT EXISTS jerry_provider_cost_reservations (
+      reservation_id text PRIMARY KEY,
+      owner_uid text NOT NULL,
+      usage_day date NOT NULL,
+      daily_limit_micro_usd bigint NOT NULL CHECK (daily_limit_micro_usd > 0),
+      reserved_micro_usd bigint NOT NULL CHECK (reserved_micro_usd > 0),
+      status text NOT NULL CHECK (status IN ('reserved','settled')),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      settled_at timestamptz
+    );
+    CREATE INDEX IF NOT EXISTS jerry_provider_cost_reservations_owner_day
+      ON jerry_provider_cost_reservations(owner_uid, usage_day);
   `);
   if (client === pool) schemaReady = true;
 }
 
 export interface ProviderCostReservation {
+  reservationId: string;
   ownerUid: string;
   day: string;
   reservedMicroUsd: number;
@@ -42,18 +56,14 @@ function costMicroUsd(tokens: number, rate: number): number {
   return Number(value);
 }
 
-export function estimateProviderCostMicroUsd(
-  inputTokens: number,
-  outputTokens: number,
-  pricing: ProviderModelPricing,
-): number {
+export function estimateProviderCostMicroUsd(inputTokens: number, outputTokens: number, pricing: ProviderModelPricing): number {
   const total = BigInt(costMicroUsd(inputTokens, pricing.inputMicroUsdPerMillionTokens)) +
     BigInt(costMicroUsd(outputTokens, pricing.outputMicroUsdPerMillionTokens));
   if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Provider cost estimate exceeds the supported accounting range.');
   return Number(total);
 }
 
-/** Reserve the maximum configured cost before each provider attempt. */
+/** Atomically reserve budget and create a unique, single-settlement reservation. */
 export async function reserveProviderCost(input: {
   ownerUid: string;
   reserveMicroUsd: number;
@@ -66,24 +76,33 @@ export async function reserveProviderCost(input: {
     throw new Error('Provider USD cost reservation is invalid or exceeds the configured daily ceiling.');
   }
   await ensureSchema(queryable);
+  const reservationId = randomUUID();
   const result = await queryable.query(
-    `INSERT INTO jerry_provider_daily_cost(owner_uid,usage_day,daily_limit_micro_usd,reserved_micro_usd,actual_micro_usd)
-     VALUES($1,(now() AT TIME ZONE 'UTC')::date,$2,$3,0)
-     ON CONFLICT(owner_uid,usage_day) DO UPDATE SET
-       reserved_micro_usd=jerry_provider_daily_cost.reserved_micro_usd + EXCLUDED.reserved_micro_usd,
-       updated_at=now()
-     WHERE jerry_provider_daily_cost.daily_limit_micro_usd=EXCLUDED.daily_limit_micro_usd
-       AND jerry_provider_daily_cost.reserved_micro_usd + jerry_provider_daily_cost.actual_micro_usd
-           + EXCLUDED.reserved_micro_usd <= jerry_provider_daily_cost.daily_limit_micro_usd
-     RETURNING usage_day::text AS day`,
-    [ownerUid,input.dailyLimitMicroUsd,input.reserveMicroUsd],
+    `WITH budget AS (
+       INSERT INTO jerry_provider_daily_cost(owner_uid,usage_day,daily_limit_micro_usd,reserved_micro_usd,actual_micro_usd)
+       VALUES($1,(now() AT TIME ZONE 'UTC')::date,$2,$3,0)
+       ON CONFLICT(owner_uid,usage_day) DO UPDATE SET
+         reserved_micro_usd=jerry_provider_daily_cost.reserved_micro_usd + EXCLUDED.reserved_micro_usd,
+         updated_at=now()
+       WHERE jerry_provider_daily_cost.daily_limit_micro_usd=EXCLUDED.daily_limit_micro_usd
+         AND jerry_provider_daily_cost.reserved_micro_usd + jerry_provider_daily_cost.actual_micro_usd
+             + EXCLUDED.reserved_micro_usd <= jerry_provider_daily_cost.daily_limit_micro_usd
+       RETURNING usage_day
+     ), recorded AS (
+       INSERT INTO jerry_provider_cost_reservations
+         (reservation_id,owner_uid,usage_day,daily_limit_micro_usd,reserved_micro_usd,status)
+       SELECT $4,$1,usage_day,$2,$3,'reserved' FROM budget
+       RETURNING reservation_id,usage_day
+     )
+     SELECT reservation_id,usage_day::text AS day FROM recorded`,
+    [ownerUid,input.dailyLimitMicroUsd,input.reserveMicroUsd,reservationId],
   );
-  const row = result.rows[0] as {day:string}|undefined;
+  const row = result.rows[0] as {reservation_id:string;day:string}|undefined;
   if (!row) throw new Error('Jerry daily provider USD cost ceiling reached or its configured limit changed during the UTC day. Provider execution is blocked.');
-  return {ownerUid,day:row.day,reservedMicroUsd:input.reserveMicroUsd,dailyLimitMicroUsd:input.dailyLimitMicroUsd};
+  return {reservationId:row.reservation_id,ownerUid,day:row.day,reservedMicroUsd:input.reserveMicroUsd,dailyLimitMicroUsd:input.dailyLimitMicroUsd};
 }
 
-/** Replace a successful attempt's reservation with provider-reported actual cost. */
+/** Settle once only; duplicate, stale, or over-reservation settlements cannot release budget. */
 export async function settleProviderCost(
   reservation: ProviderCostReservation,
   actualMicroUsd: number,
@@ -92,13 +111,23 @@ export async function settleProviderCost(
   if (!Number.isSafeInteger(actualMicroUsd) || actualMicroUsd < 0 || actualMicroUsd > reservation.reservedMicroUsd) return;
   await ensureSchema(queryable);
   const result = await queryable.query(
-    `UPDATE jerry_provider_daily_cost
-       SET reserved_micro_usd=GREATEST(0,reserved_micro_usd-$4),
-           actual_micro_usd=actual_micro_usd+$5,
-           updated_at=now()
-     WHERE owner_uid=$1 AND usage_day=$2::date AND daily_limit_micro_usd=$3
-       AND reserved_micro_usd >= $4`,
-    [reservation.ownerUid,reservation.day,reservation.dailyLimitMicroUsd,reservation.reservedMicroUsd,actualMicroUsd],
+    `WITH claimed AS (
+       UPDATE jerry_provider_cost_reservations
+       SET status='settled', settled_at=now()
+       WHERE reservation_id=$1 AND owner_uid=$2 AND usage_day=$3::date
+         AND daily_limit_micro_usd=$4 AND reserved_micro_usd=$5 AND status='reserved'
+       RETURNING owner_uid,usage_day,daily_limit_micro_usd,reserved_micro_usd
+     )
+     UPDATE jerry_provider_daily_cost AS daily
+     SET reserved_micro_usd=daily.reserved_micro_usd-claimed.reserved_micro_usd,
+         actual_micro_usd=daily.actual_micro_usd+$6,
+         updated_at=now()
+     FROM claimed
+     WHERE daily.owner_uid=claimed.owner_uid AND daily.usage_day=claimed.usage_day
+       AND daily.daily_limit_micro_usd=claimed.daily_limit_micro_usd
+       AND daily.reserved_micro_usd >= claimed.reserved_micro_usd
+     RETURNING daily.owner_uid`,
+    [reservation.reservationId,reservation.ownerUid,reservation.day,reservation.dailyLimitMicroUsd,reservation.reservedMicroUsd,actualMicroUsd],
   );
-  if (result.rowCount !== 1) throw new Error('Provider USD cost reconciliation failed; reservation remains charged.');
+  if (result.rowCount !== 1) throw new Error('Provider USD cost settlement was already applied or its reservation could not be verified; budget remains fail-closed.');
 }
