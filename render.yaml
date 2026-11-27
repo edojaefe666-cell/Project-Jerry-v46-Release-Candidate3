@@ -18,6 +18,16 @@ services:
         sync: false
       - key: MIGRATION_DATABASE_URL
         sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: AWS_REGION
+        value: eu-central-1
+      - key: JERRY_STORAGE_BUCKET
+        value: jerry-private-storage
       - key: JERRY_OWNER_UID
         sync: false
       - key: GOOGLE_APPLICATION_CREDENTIALS
