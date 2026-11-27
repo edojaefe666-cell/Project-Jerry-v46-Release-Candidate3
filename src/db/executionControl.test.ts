@@ -272,3 +272,70 @@ test('PostgreSQL emergency stop denies leases from an independent application in
     await instanceBPool.end();
   }
 });
+
+test('PostgreSQL stop committed after claim but before lease acquisition blocks the side effect', {
+  skip: process.env.JERRY_JOURNAL_TEST_DATABASE !== '1'
+    ? 'Set JERRY_JOURNAL_TEST_DATABASE=1 for a disposable PostgreSQL database.'
+    : false,
+}, async () => {
+  assert.notEqual(process.env.NODE_ENV, 'production');
+  assert.ok(process.env.SQL_HOST && process.env.SQL_USER && /test|tenant/i.test(process.env.SQL_DB_NAME ?? ''),
+    'Execution-control integration requires a disposable PostgreSQL database name containing test/tenant.');
+
+  const { createPool } = await import('./index.ts');
+  const { withSharedExecutionLease, updateSharedExecutionControl } = await import('./executionControl.ts');
+  const instanceBPool = createPool();
+  const fixturePool = createPool();
+  const actorUid = 'outbox-claim-stop-race-integration';
+  const reason = 'outbox claim stop race fixture';
+  let prior: { stopped: boolean; reason: string | null; updated_by: string | null } | undefined;
+
+  try {
+    const snapshot = await fixturePool.query(
+      'SELECT stopped, reason, updated_by FROM jerry_execution_control WHERE id = 1',
+    );
+    assert.equal(snapshot.rowCount, 1, 'shared execution-control singleton must exist');
+    prior = snapshot.rows[0];
+
+    await updateSharedExecutionControl({
+      stopped: false,
+      actorUid,
+      reason: 'outbox claim stop race fixture enabled',
+    });
+
+    // Model the queue worker having claimed its durable row. Before it enters
+    // the protected ledger section, the owner commits the emergency stop.
+    await updateSharedExecutionControl({
+      stopped: true,
+      actorUid,
+      reason,
+    });
+
+    let sideEffectStarted = false;
+    await assert.rejects(
+      withSharedExecutionLease(async () => {
+        sideEffectStarted = true;
+        return 'must not execute';
+      }, async () => instanceBPool.connect()),
+      /emergency stop is engaged/i,
+    );
+    assert.equal(sideEffectStarted, false,
+      'A claimed queue item must not begin its protected side effect after stop commits.');
+  } finally {
+    try {
+      // Restore only if this fixture still owns the shared control row.
+      // Keep epoch monotonic and preserve a concurrent owner transition.
+      if (prior) {
+        await fixturePool.query(
+          `UPDATE jerry_execution_control
+              SET stopped = $1, epoch = epoch + 1, reason = $2,
+                  updated_by = $3, updated_at = now()
+            WHERE id = 1 AND updated_by = $4 AND reason = $5`,
+          [prior.stopped, prior.reason, prior.updated_by, actorUid, reason],
+        );
+      }
+    } finally {
+      await Promise.all([instanceBPool.end(), fixturePool.end()]);
+    }
+  }
+});
