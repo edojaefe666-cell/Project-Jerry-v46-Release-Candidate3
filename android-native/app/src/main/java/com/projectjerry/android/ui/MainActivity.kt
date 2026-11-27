@@ -154,6 +154,37 @@ class MainActivity : AppCompatActivity() {
                     )
                     true
                 }
+                "encryptMemoryRecordPayload" -> {
+                    val result = deviceMemoryExchangeKeyStore.encryptMemoryRecordPayload(
+                        message.optString("ownerUid"),
+                        message.optString("deviceId"),
+                        message.optInt("keyVersion", -1),
+                        message.optString("recordId"),
+                        message.optInt("revision", -1),
+                        message.optString("plaintextJson"),
+                    )
+                    replyProxy.postMessage(
+                        JSONObject().put("ok", true).put("requestId", requestId)
+                            .put("iv", result.iv).put("ciphertext", result.ciphertext).toString()
+                    )
+                    true
+                }
+                "decryptMemoryRecordPayload" -> {
+                    val plaintext = deviceMemoryExchangeKeyStore.decryptMemoryRecordPayload(
+                        message.optString("ownerUid"),
+                        message.optString("deviceId"),
+                        message.optInt("keyVersion", -1),
+                        message.optString("recordId"),
+                        message.optInt("revision", -1),
+                        message.optString("iv"),
+                        message.optString("ciphertext"),
+                    )
+                    replyProxy.postMessage(
+                        JSONObject().put("ok", true).put("requestId", requestId)
+                            .put("plaintextJson", plaintext).toString()
+                    )
+                    true
+                }
                 "deleteDeviceMemoryExchangeKey" -> {
                     AlertDialog.Builder(this)
                         .setTitle("Delete this device's memory key?")
