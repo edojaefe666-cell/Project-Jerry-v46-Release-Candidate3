@@ -115,13 +115,13 @@ async function startServer() {
   });
   app.use(express.json({ limit: '12mb' }));
 
-  // Approval decisions, reservations and their audit chain still live in a
-  // process-local SQLite store. Until they are migrated to one PostgreSQL
-  // authority, production must explicitly declare a single-instance topology.
-  // A multi-instance deployment without this gate could accept conflicting
-  // approvals on separate SQLite databases, so it is unsupported and fails closed.
+  // Owner approvals, decisions, reservations and their audit events now use
+  // the shared PostgreSQL approval authority. Security backup snapshots,
+  // approved contacts and the local security/audit mirror still use SQLite.
+  // Until those remaining security records and backup restore are migrated,
+  // production must explicitly declare a single durable server instance.
   if (process.env.NODE_ENV === 'production' && process.env.JERRY_SECURITY_STORE_TOPOLOGY !== 'single_instance') {
-    throw new Error('Production startup blocked: Jerry approval authority is SQLite-local. Set JERRY_SECURITY_STORE_TOPOLOGY=single_instance only for a single durable server instance; multi-instance production is not yet supported.');
+    throw new Error('Production startup blocked: Jerry security metadata and backup restore still use instance-local SQLite. Set JERRY_SECURITY_STORE_TOPOLOGY=single_instance only for one durable server instance; multi-instance production remains unsupported.');
   }
 
   const securityStore = new SecurityStore();
