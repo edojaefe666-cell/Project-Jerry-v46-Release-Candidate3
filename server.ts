@@ -667,12 +667,12 @@ async function startServer() {
   // and challenge evidence, but atomically blocks the target device and its
   // key envelopes. The last active device and the authorizing device cannot
   // revoke themselves through this path.
-  app.post('/api/devices/revoke', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
-    const body = req.body as { registrationId?: unknown };
-    if (!body || Object.keys(body).length !== 1 ||
-        typeof body.registrationId !== 'string' ||
-        !/^[A-Za-z0-9_-]{16,128}$/.test(body.registrationId)) {
-      res.status(400).json({ error: 'A single valid device registration ID is required.' });
+  app.post('/api/devices/:registrationId/revoke', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    const body = req.body as Record<string, unknown> | undefined;
+    const targetRegistrationId = req.params.registrationId;
+    if (!body || Object.keys(body).length !== 0 ||
+        !/^[A-Za-z0-9_-]{16,128}$/.test(targetRegistrationId)) {
+      res.status(400).json({ error: 'A valid device registration target and empty command body are required.' });
       return;
     }
     const ownerUid = req.user!.uid;
@@ -680,7 +680,7 @@ async function startServer() {
     const challengeId = req.header('x-jerry-challenge-id') ?? '';
     const proofChallenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
     if (!proofChallenge || proofChallenge.method !== 'POST' ||
-        proofChallenge.path !== '/api/devices/revoke' ||
+        proofChallenge.path !== `/api/devices/${targetRegistrationId}/revoke` ||
         proofChallenge.deviceId.length < 16) {
       res.status(403).json({ error: 'An active trusted-device signature is required.' });
       return;
@@ -694,7 +694,7 @@ async function startServer() {
       const [target] = await tx.select().from(deviceRegistrations)
         .where(and(
           eq(deviceRegistrations.userId, ownerId),
-          eq(deviceRegistrations.id, body.registrationId as string),
+          eq(deviceRegistrations.id, targetRegistrationId),
           eq(deviceRegistrations.status, 'active'),
         )).limit(1).for('update');
       if (!target) throw new Error('The selected device is not active or does not belong to this owner.');
