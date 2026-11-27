@@ -1,3 +1,4 @@
+import type { DeviceKeyEnvelope } from './memoryKeyEnvelope.ts';
 import type {
   DeviceApprovalChallenge,
   DeviceApprovalProof,
@@ -25,6 +26,7 @@ type NativeBridgeReply = {
   error?: string;
   publicKey?: DeviceSigningPublicKey;
   proof?: DeviceApprovalProof;
+  installed?: boolean;
 };
 
 type NativeBridge = {
