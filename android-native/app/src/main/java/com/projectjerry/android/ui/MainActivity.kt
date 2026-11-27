@@ -57,7 +57,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun beginNativeGoogleSignIn() {
+    private fun beginNativeGoogleSignIn(isReauthentication: Boolean = false) {
         if (isFinishing || isDestroyed || !authRequestInProgress.compareAndSet(false, true)) return
 
         val googleIdOption = GetGoogleIdOption.Builder()
@@ -84,24 +84,24 @@ class MainActivity : AppCompatActivity() {
                         ) {
                             try {
                                 val idToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                                dispatchNativeAuthResult(idToken)
+                                dispatchNativeAuthResult(idToken, isReauthentication)
                             } catch (_: Exception) {
-                                dispatchNativeAuthError()
+                                dispatchNativeAuthError(isReauthentication)
                             }
                         } else {
-                            dispatchNativeAuthError()
+                            dispatchNativeAuthError(isReauthentication)
                         }
                     }
 
                     override fun onError(e: GetCredentialException) {
                         authRequestInProgress.set(false)
-                        dispatchNativeAuthError()
+                        dispatchNativeAuthError(isReauthentication)
                     }
                 }
             )
         } catch (_: Exception) {
             authRequestInProgress.set(false)
-            dispatchNativeAuthError()
+            dispatchNativeAuthError(isReauthentication)
         }
     }
 
@@ -606,22 +606,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun dispatchNativeAuthResult(idToken: String) {
+    private fun dispatchNativeAuthResult(idToken: String, isReauthentication: Boolean) {
         if (!::webView.isInitialized || isFinishing || isDestroyed) return
         val quotedToken = JSONObject.quote(idToken)
         webView.post {
             webView.evaluateJavascript(
-                "window.dispatchEvent(new CustomEvent('jerry-native-auth-result',{detail:{idToken:$quotedToken}}))",
+                "window.dispatchEvent(new CustomEvent('jerry-native-auth-result',{detail:{idToken:$quotedToken,mode:'${if (isReauthentication) "reauthenticate" else "sign-in"}'}}))",
                 null
             )
         }
     }
 
-    private fun dispatchNativeAuthError() {
+    private fun dispatchNativeAuthError(isReauthentication) {
         if (!::webView.isInitialized || isFinishing || isDestroyed) return
         webView.post {
             webView.evaluateJavascript(
-                "window.dispatchEvent(new CustomEvent('jerry-native-auth-error',{detail:{message:'Google sign-in was cancelled or unavailable.'}}))",
+                "window.dispatchEvent(new CustomEvent('jerry-native-auth-error',{detail:{message:'Google authentication was cancelled or unavailable.',mode:'${if (isReauthentication) "reauthenticate" else "sign-in"}'}}))",
                 null
             )
         }
@@ -729,7 +729,9 @@ class MainActivity : AppCompatActivity() {
                         return
                     }
                     if (data == "signInWithGoogle") {
-                        runOnUiThread { beginNativeGoogleSignIn() }
+                        runOnUiThread { beginNativeGoogleSignIn(false) }
+                    } else if (data == "reauthenticateWithGoogle") {
+                        runOnUiThread { beginNativeGoogleSignIn(true) }
                     } else {
                         handleNativeDeviceSigningMessage(data, replyProxy)
                     }

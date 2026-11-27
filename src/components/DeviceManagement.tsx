@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, KeyRound, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 import { apiJson } from '../lib/apiClient';
 import { useAuth } from '../lib/AuthContext';
-import { fetchAndInstallDeviceMemoryKeyEnvelope, isAndroidMemoryKeyInstalled, revokeApprovedJerryDevice, shareAndroidMemoryKeyWithApprovedDevice } from '../lib/encryptedMemoryApi';
+import { fetchAndInstallDeviceMemoryKeyEnvelope, isAndroidMemoryKeyInstalled, revokeApprovedJerryDevice, shareAndroidMemoryKeyWithApprovedDevice, storeOwnerMemoryRecoveryEnvelope, getOwnerMemoryRecoveryEnvelope } from '../lib/encryptedMemoryApi';
 import { bootstrapFirstJerryOwnerDevice, requestAndroidDeviceEnrollment, approvePendingJerryDevice } from '../lib/deviceEnrollmentApi';
 import { getOrCreateJerryDeviceId } from '../lib/deviceIdentity';
+import { createNativeOwnerMemoryRecoveryEnvelope, restoreNativeOwnerMemoryRecoveryEnvelope } from '../lib/nativeDeviceSigning';
 
 interface DeviceRecord {
   id: string;
@@ -31,7 +32,12 @@ export function DeviceManagement() {
   const [message, setMessage] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState('Jerry Android phone');
   const [confirmRevokeDeviceId, setConfirmRevokeDeviceId] = useState<string | null>(null);
-  const { user } = useAuth();
+  const [recoverySecret, setRecoverySecret] = useState('');
+  const [recoveryEnvelope, setRecoveryEnvelope] = useState<Awaited<ReturnType<typeof createNativeOwnerMemoryRecoveryEnvelope>>['envelope'] | null>(null);
+  const [recoveryBackupAcknowledged, setRecoveryBackupAcknowledged] = useState(false);
+  const [recoveryInput, setRecoveryInput] = useState('');
+  const [recoveryConfigured, setRecoveryConfigured] = useState(false);
+  const { user, reauthenticateWithGoogle } = useAuth();
 
   const currentDeviceId = useMemo(() => {
     try { return getOrCreateJerryDeviceId(); } catch { return null; }
@@ -130,6 +136,53 @@ export function DeviceManagement() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Memory-key sharing failed.'); }
     finally { setBusy(false); }
   };
+  const createRecoveryBackup = async () => {
+    if (!user?.uid || !currentRecord || currentRecord.status !== 'active' || !nativeAvailable) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      await reauthenticateWithGoogle();
+      try {
+        await getOwnerMemoryRecoveryEnvelope(user.uid, 1);
+        setRecoveryConfigured(true);
+        setMessage('An owner recovery envelope already exists for key version 1. Jerry will not overwrite it; use your existing offline recovery key.');
+        return;
+      } catch (cause) {
+        if (!(cause instanceof Error) || !/not found|404/i.test(cause.message)) throw cause;
+      }
+      if (!(await isAndroidMemoryKeyInstalled(user.uid, 1))) throw new Error('This phone does not have the protected memory key. Restore it before creating a recovery backup.');
+      const created = await createNativeOwnerMemoryRecoveryEnvelope(user.uid, currentDeviceId || getOrCreateJerryDeviceId(), 1);
+      setRecoverySecret(created.recoveryKey); setRecoveryEnvelope(created.envelope); setRecoveryBackupAcknowledged(false);
+      setMessage('Your one-time recovery key is ready. Store it offline before Jerry uploads the encrypted envelope.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Owner recovery setup failed.'); }
+    finally { setBusy(false); }
+  };
+
+  const storeRecoveryBackup = async () => {
+    if (!user?.uid || !recoverySecret || !recoveryEnvelope || !recoveryBackupAcknowledged) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      await storeOwnerMemoryRecoveryEnvelope(recoveryEnvelope, user.uid, 1);
+      setRecoverySecret(''); setRecoveryEnvelope(null); setRecoveryBackupAcknowledged(false); setRecoveryConfigured(true);
+      setMessage('Encrypted recovery envelope stored. Jerry did not receive or store your recovery secret. Keep your offline copy safe.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Encrypted recovery backup could not be stored.'); }
+    finally { setBusy(false); }
+  };
+
+  const restoreFromOwnerRecovery = async () => {
+    if (!user?.uid || !nativeAvailable) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      await reauthenticateWithGoogle();
+      const envelope = await getOwnerMemoryRecoveryEnvelope(user.uid, 1);
+      const deviceId = getOrCreateJerryDeviceId();
+      await restoreNativeOwnerMemoryRecoveryEnvelope(envelope, recoveryInput.trim(), user.uid, deviceId, 1);
+      if (!(await isAndroidMemoryKeyInstalled(user.uid, 1))) throw new Error('Android did not confirm that the recovered memory key was installed.');
+      setRecoveryInput('');
+      setMessage('Owner-held recovery succeeded. The memory key is protected locally on this phone; encrypted records were not changed.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Owner-held memory recovery failed.'); }
+    finally { setBusy(false); }
+  };
+
   const revokeDevice = async (target: DeviceRecord) => {
     if (!currentRecord || currentRecord.status !== 'active' || target.status !== 'active' ||
         target.deviceId === currentDeviceId || !nativeAvailable) return;
@@ -169,6 +222,25 @@ export function DeviceManagement() {
         </div>}
         <p className="mt-3 text-[11px] text-slate-500">Enrollment stores only public keys on Jerry’s server. Android signing keys remain in Android Keystore; the Android 10 exchange private key is locally encrypted using an Android Keystore-protected AES key.</p>
       </div>
+
+      <section className="rounded-xl border border-cyan-900/60 bg-slate-950/60 p-5 space-y-4">
+        <div><h2 className="text-sm font-semibold text-white">Owner-held encrypted memory recovery</h2><p className="mt-1 text-xs text-slate-400">Your recovery secret stays with you. Jerry stores only the encrypted envelope and cannot unlock it.</p></div>
+        {currentRecord?.status === 'active' && !recoverySecret && !recoveryConfigured && <button type="button" onClick={() => void createRecoveryBackup()} disabled={busy || !nativeAvailable || !user?.uid} className="rounded-lg border border-cyan-500/40 px-3 py-2 text-xs font-semibold text-cyan-200 disabled:opacity-40">{busy ? 'Working…' : 'Create one-time recovery key'}</button>}
+        {recoveryConfigured && <p className="rounded-lg border border-emerald-500/30 p-3 text-xs text-emerald-200">An encrypted recovery envelope is already stored for key version 1. Jerry cannot replace it automatically.</p>}
+        {recoverySecret && recoveryEnvelope && <div className="space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
+          <p className="text-xs font-semibold text-amber-100">Your recovery secret — shown once</p>
+          <p className="text-xs text-amber-200">Write this down or store it in a secure offline password manager. Do not send it to anyone or paste it into a chat. Jerry will not upload or save this secret.</p>
+          <div className="break-all rounded-lg bg-slate-900 p-3 font-mono text-sm tracking-wider text-white select-all">{recoverySecret}</div>
+          <label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" checked={recoveryBackupAcknowledged} onChange={(event) => setRecoveryBackupAcknowledged(event.target.checked)} />I have safely stored this recovery secret offline and understand that losing it together with all trusted devices makes encrypted memory unrecoverable.</label>
+          <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void storeRecoveryBackup()} disabled={busy || !recoveryBackupAcknowledged} className="rounded-lg bg-cyan-500 px-3 py-2 text-xs font-semibold text-slate-950 disabled:opacity-40">Store encrypted envelope</button><button type="button" onClick={() => { setRecoverySecret(''); setRecoveryEnvelope(null); setRecoveryBackupAcknowledged(false); }} disabled={busy} className="rounded-lg border border-slate-600 px-3 py-2 text-xs text-slate-200">Discard secret</button></div>
+        </div>}
+        <div className="space-y-2 border-t border-slate-800 pt-4">
+          <h3 className="text-xs font-semibold text-white">Recover on a replacement phone</h3>
+          <p className="text-xs text-slate-400">Sign in to the same Jerry owner account, enter your offline recovery secret, and restore locally. This does not require an existing trusted device.</p>
+          <input type="password" autoComplete="off" spellCheck={false} maxLength={43} value={recoveryInput} onChange={(event) => setRecoveryInput(event.target.value)} placeholder="43-character offline recovery secret" aria-label="Owner memory recovery secret" className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-xs text-white" />
+          <button type="button" onClick={() => void restoreFromOwnerRecovery()} disabled={busy || !nativeAvailable || !user?.uid || !/^[A-Za-z0-9_-]{43}$/.test(recoveryInput.trim())} className="rounded-lg border border-cyan-500/40 px-3 py-2 text-xs font-semibold text-cyan-200 disabled:opacity-40">{busy ? 'Working…' : 'Reauthenticate and restore memory'}</button>
+        </div>
+      </section>
 
       {error && <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">{error}</p>}
       {message && <p role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">{message}</p>}
