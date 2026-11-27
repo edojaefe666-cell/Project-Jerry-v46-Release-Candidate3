@@ -47,6 +47,33 @@ jobs:
       - name: Install web dependencies
         run: bun install --frozen-lockfile
 
+      - name: Test connected Android release configuration guard
+        run: node --test scripts/verify-android-connected-release.test.mjs
+
+      # Connected signed releases are opt-in and require owner-managed GitHub
+      # Variables/Secrets. Diagnostic debug and unsigned APK builds stay free.
+      - name: Verify connected release configuration and prepare signing keystore
+        if: vars.JERRY_CONNECTED_RELEASE == 'true'
+        env:
+          JERRY_BACKEND_ORIGIN: ${{ vars.JERRY_BACKEND_ORIGIN }}
+          JERRY_FIREBASE_PROJECT_ID: ${{ vars.JERRY_FIREBASE_PROJECT_ID }}
+          JERRY_GOOGLE_WEB_CLIENT_ID: ${{ vars.JERRY_GOOGLE_WEB_CLIENT_ID }}
+          JERRY_ANDROID_KEYSTORE_BASE64: ${{ secrets.JERRY_ANDROID_KEYSTORE_BASE64 }}
+          JERRY_ANDROID_KEY_ALIAS: ${{ secrets.JERRY_ANDROID_KEY_ALIAS }}
+          JERRY_ANDROID_STORE_PASSWORD: ${{ secrets.JERRY_ANDROID_STORE_PASSWORD }}
+          JERRY_ANDROID_KEY_PASSWORD: ${{ secrets.JERRY_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$JERRY_ANDROID_KEYSTORE_BASE64" || { echo "Missing JERRY_ANDROID_KEYSTORE_BASE64 secret."; exit 1; }
+          echo "::add-mask::$JERRY_ANDROID_KEY_ALIAS"
+          echo "::add-mask::$JERRY_ANDROID_STORE_PASSWORD"
+          echo "::add-mask::$JERRY_ANDROID_KEY_PASSWORD"
+          export JERRY_ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/jerry-release.jks"
+          printf '%s' "$JERRY_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$JERRY_ANDROID_KEYSTORE_FILE"
+          test -s "$JERRY_ANDROID_KEYSTORE_FILE"
+          echo "JERRY_ANDROID_KEYSTORE_FILE=$JERRY_ANDROID_KEYSTORE_FILE" >> "$GITHUB_ENV"
+          node scripts/verify-android-connected-release.mjs
+
       - name: Build Jerry web UI for Android asset origin
         env:
           VITE_BASE_PATH: "/public/"
@@ -82,12 +109,16 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build debug and unsigned release APKs, run unit tests and lint
+      - name: Build debug and release APKs, run unit tests and lint
         working-directory: android-native
+        env:
+          JERRY_ANDROID_KEY_ALIAS: ${{ secrets.JERRY_ANDROID_KEY_ALIAS }}
+          JERRY_ANDROID_STORE_PASSWORD: ${{ secrets.JERRY_ANDROID_STORE_PASSWORD }}
+          JERRY_ANDROID_KEY_PASSWORD: ${{ secrets.JERRY_ANDROID_KEY_PASSWORD }}
         run: |
           gradle --no-daemon :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:lintDebug :app:lintRelease
           sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/app-debug.apk.sha256
-          sha256sum app/build/outputs/apk/release/app-release-unsigned.apk > app/build/outputs/apk/release/app-release-unsigned.apk.sha256
+          sha256sum app/build/outputs/apk/release/app-release.apk > app/build/outputs/apk/release/app-release.apk.sha256
 
       # Publish compiled candidates even if the emulator smoke test fails, so
       # a device-installable diagnostic build is not lost with the test result.
@@ -99,7 +130,7 @@ jobs:
           path: |
             android-native/app/build/outputs/apk/debug/app-debug.apk
             android-native/app/build/outputs/apk/debug/app-debug.apk.sha256
-            android-native/app/build/outputs/apk/release/app-release-unsigned.apk
+            android-native/app/build/outputs/apk/release/*.apk
             android-native/app/build/outputs/apk/release/app-release-unsigned.apk.sha256
           if-no-files-found: warn
           retention-days: 14
