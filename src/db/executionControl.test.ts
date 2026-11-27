@@ -410,8 +410,9 @@ test('PostgreSQL stop then resume advances epoch and invalidates an earlier inst
           `UPDATE jerry_execution_control
               SET stopped = $1, epoch = epoch + 1, reason = $2,
                   updated_by = $3, updated_at = now()
-            WHERE id = 1 AND updated_by = $4 AND reason = $5`,
-          [prior.stopped, prior.reason, prior.updated_by, actorUid, 'cross-instance epoch fixture owner resume'],
+            WHERE id = 1 AND updated_by = $4 AND reason IN ($5, $6)`,
+          [prior.stopped, prior.reason, prior.updated_by, actorUid,
+            'cross-instance epoch fixture owner stop', 'cross-instance epoch fixture owner resume'],
         );
       }
     } finally {
