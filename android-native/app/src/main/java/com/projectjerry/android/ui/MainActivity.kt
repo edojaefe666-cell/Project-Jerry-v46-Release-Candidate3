@@ -436,12 +436,13 @@ class MainActivity : AppCompatActivity() {
                     val keyEnvelopeRead = method == "GET" &&
                         targetPath.matches(Regex("/api/memory/key-envelopes/[1-9][0-9]{0,8}"))
                     val isWrite = method == "POST" || method == "PUT"
+                    val deviceRevocation = method == "POST" && targetPath == "/api/devices/revoke"
                     val allowedWrite = (method == "POST" &&
-                        (targetPath == "/api/memory/encrypted" || targetPath == "/api/memory/key-envelopes")) ||
+                        (targetPath == "/api/memory/encrypted" || targetPath == "/api/memory/key-envelopes" || deviceRevocation)) ||
                         (method == "PUT" &&
                             targetPath.matches(Regex("/api/memory/encrypted/[A-Za-z0-9_-]{16,128}")))
                     require(collectionRead || recordRead || keyEnvelopeRead || allowedWrite) {
-                        "Only encrypted-memory and device key-envelope requests can be signed."
+                        "Only approved encrypted-memory and device-security requests can be signed."
                     }
                     val signAndReply = {
                         try {
@@ -459,11 +460,15 @@ class MainActivity : AppCompatActivity() {
                     }
                     if (isWrite) {
                         AlertDialog.Builder(this)
-                            .setTitle("Authorize Jerry memory change?")
+                            .setTitle(if (deviceRevocation) "Confirm Jerry device revocation?" else "Authorize Jerry memory change?")
                             .setMessage(
-                                "Jerry is requesting to " + method + " encrypted memory.\\n\\n" +
-                                    "Target: " + targetPath + "\\n\\n" +
-                                    "Only approve if you initiated this memory change."
+                                if (deviceRevocation) {
+                                    "Jerry is requesting to revoke a trusted device. Its future signed requests and key-envelope access will be blocked. Encrypted memory records will be preserved. Only continue if you initiated this action."
+                                } else {
+                                    "Jerry is requesting to " + method + " encrypted memory.\\n\\n" +
+                                        "Target: " + targetPath + "\\n\\n" +
+                                        "Only approve if you initiated this memory change."
+                                }
                             )
                             .setNegativeButton("Cancel") { dialog, _ ->
                                 dialog.dismiss()
