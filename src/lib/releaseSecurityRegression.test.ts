@@ -588,3 +588,16 @@ test('self-upgrade verification holds the shared stop lease through proposal per
   assert.ok(lease >= 0 && mutation > lease && response > mutation,
     'verification and persisted proposal update must remain inside the shared execution lease');
 });
+
+test('standalone upgrade verification holds the shared stop lease during the external runner call', () => {
+  const start = server.indexOf("app.post('/api/jerry/verify-upgrade'");
+  const end = server.indexOf("app.post('/api/jerry/execute-task'", start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  const lease = route.indexOf('withSharedExecutionLease(() =>');
+  const runner = route.indexOf('runIsolatedTestsWithStop', lease);
+  assert.ok(lease >= 0 && runner > lease,
+    'external isolated runner must execute while the shared stop lease is held');
+  assert.match(route, /res\.status\(423\)/);
+  assert.match(route, /Upgrade verification was not started/);
+});
