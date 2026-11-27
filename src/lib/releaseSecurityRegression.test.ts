@@ -16,6 +16,8 @@ const opportunityRadar = fs.readFileSync(path.join(root, 'src/lib/opportunityRad
 const providerUsageStore = fs.readFileSync(path.join(root, 'src/db/providerUsageStore.ts'), 'utf8');
 const providerCostStore = fs.readFileSync(path.join(root, 'src/db/providerCostStore.ts'), 'utf8');
 const apiClient = fs.readFileSync(path.join(root, 'src/lib/apiClient.ts'), 'utf8');
+const androidManifest = fs.readFileSync(path.join(root, 'android-native/app/src/main/AndroidManifest.xml'), 'utf8');
+const androidPermissionManager = fs.readFileSync(path.join(root, 'android-native/app/src/main/java/com/projectjerry/android/permissions/JerryPermissionManager.kt'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -69,6 +71,14 @@ test('container liveness and readiness probes are public, bounded, and non-discl
   assert.match(readiness[0], /readSharedExecutionControl/);
   assert.match(readiness[0], /status\(503\)\.json\(\{ status: 'not_ready' \}\)/);
   assert.doesNotMatch(readiness[0], /error\.message|SQL_HOST|JERRY_OWNER_UID.*json/);
+});
+
+test('Android requests only currently justified runtime permissions', () => {
+  assert.doesNotMatch(androidManifest, /android\.permission\.(READ_CONTACTS|READ_PHONE_STATE)/);
+  assert.doesNotMatch(androidPermissionManager, /Manifest\.permission\.(READ_CONTACTS|READ_PHONE_STATE)/);
+  assert.match(androidManifest, /android\.permission\.RECORD_AUDIO/);
+  assert.match(androidPermissionManager, /Manifest\.permission\.RECORD_AUDIO/);
+  assert.match(androidPermissionManager, /Build\.VERSION\.SDK_INT <= 30/);
 });
 
 test('Android API client refuses the placeholder backend instead of silently targeting an invalid host', () => {
