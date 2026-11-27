@@ -1845,10 +1845,23 @@ async function startServer() {
       return;
     }
 
+    const execution = executionRegistry.register();
+    const cancelOnDisconnect = () => {
+      if (!res.writableEnded && !execution.signal.aborted) {
+        execution.cancel('Self-programming client disconnected');
+      }
+    };
+    res.once('close', cancelOnDisconnect);
+
     try {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry emergency stop interrupted self-programming.', status: 'cancelled' });
+        return;
+      }
       const generated = await generateWithModelFallback({
         task: 'coding',
         configuration,
+        signal: execution.signal,
         systemInstruction:
           'You are Jerry’s code-proposal engine. Produce a safe, self-contained code proposal and a concise test snippet. ' +
           'Never bypass owner approval, change authorization policies, access secrets, deploy code, or claim tests were run. ' +
@@ -1857,6 +1870,10 @@ async function startServer() {
           `Draft a ${chosenLang} capability module for target module "${targetModule}" to address: "${cleanPrompt}". ` +
           'Include code and a concise unit test snippet. Treat the output as an untrusted proposal requiring independent review.',
       });
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry emergency stop interrupted self-programming.', status: 'cancelled' });
+        return;
+      }
       const cleaned = generated.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
       const parsed = JSON.parse(cleaned) as {
         title?: unknown;
@@ -1897,10 +1914,19 @@ async function startServer() {
         evidenceStatus: 'model_generated_unverified_proposal',
       });
     } catch (error) {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.writableEnded && !res.destroyed) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted self-programming.', status: 'cancelled' });
+        }
+        return;
+      }
       res.status(502).json({
         error: `Self-Programming could not produce a valid proposal: ${formatCleanError(error, 'Model generation failed')}`,
         proposalCreated: false,
       });
+    } finally {
+      res.off('close', cancelOnDisconnect);
+      execution.release();
     }
   });
 
