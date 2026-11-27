@@ -499,7 +499,8 @@ async function startServer() {
       // but before this security-state mutation begins.
       await withSharedExecutionLease(async () => {
         const snapshot = decryptSecurityBackup(String(body.backup ?? ''), String(body.passphrase));
-        securityStore.validateSnapshot(snapshot);\n         await restoreSharedSecuritySnapshot(snapshot, req.user!.uid, String(body.approvalId ?? '').trim());
+        securityStore.validateSnapshot(snapshot);
+         await restoreSharedSecuritySnapshot(snapshot, req.user!.uid, String(body.approvalId ?? '').trim());
       });
       res.json({ restored: true, message: 'Jerry security records restored successfully.' });
     } catch (error) {
