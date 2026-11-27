@@ -396,6 +396,10 @@ test('SQLite emergency-stop mirror rejects delayed older shared epochs atomicall
     const delayed = store.synchronizeEmergencyStop(false, 'owner-1', 'delayed older recovery', 4);
     assert.equal(delayed.stopped, true);
     assert.equal(delayed.sharedEpoch, 5);
+    assert.throws(
+      () => store.setEmergencyStop(false, 'owner-1', 'delayed owner recovery write', 4),
+      /Stale emergency-stop update rejected/,
+    );
 
     assert.throws(
       () => store.synchronizeEmergencyStop(false, 'owner-1', 'conflicting same epoch', 5),
