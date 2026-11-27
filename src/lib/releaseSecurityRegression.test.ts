@@ -9,6 +9,7 @@ const securityUi = fs.readFileSync(path.join(root, 'src/components/SecurityAppro
 const jerryEngine = fs.readFileSync(path.join(root, 'src/lib/jerryEngine.ts'), 'utf8');
 const walletOutbox = fs.readFileSync(path.join(root, 'src/db/walletJournalOutbox.ts'), 'utf8');
 const sharedApprovalStore = fs.readFileSync(path.join(root, 'src/db/approvalStore.ts'), 'utf8');
+const sharedRateLimitStore = fs.readFileSync(path.join(root, 'src/db/rateLimitStore.ts'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -1033,3 +1034,16 @@ test('shared backup restore never revives historical spending approvals and arch
   assert.match(sharedApprovalStore, /consumed_at=CASE WHEN status='approved' THEN COALESCE\(consumed_at,now\(\)\)/);
   assert.match(sharedApprovalStore, /ON CONFLICT\(id\) DO NOTHING/);
 });
+test('expensive provider routes use shared PostgreSQL owner quotas and fail closed on storage outage', () => {
+  assert.match(server, /import \{ createSharedOwnerRateLimiter \} from '\.\/src\/db\/rateLimitStore\.ts'/);
+  assert.doesNotMatch(server, /createOwnerRateLimiter/);
+  for (const bucket of ['brain','chat','goal-plan','opportunity','voice']) {
+    assert.match(server, new RegExp(`createSharedOwnerRateLimiter\\('${bucket}'`));
+  }
+  assert.match(sharedRateLimitStore, /INSERT INTO jerry_owner_rate_limits/);
+  assert.match(sharedRateLimitStore, /ON CONFLICT\(owner_uid,bucket_key\) DO UPDATE/);
+  assert.match(sharedRateLimitStore, /request_count=jerry_owner_rate_limits\.request_count \+ 1/);
+  assert.match(sharedRateLimitStore, /Shared rate-limit storage is unavailable/);
+  assert.match(sharedRateLimitStore, /status\(503\)/);
+});
+
