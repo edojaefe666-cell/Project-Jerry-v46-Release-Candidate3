@@ -1351,11 +1351,11 @@ async function startServer() {
         configuration: providerConfigurationFromEnvironment(process.env),
         signal: execution.signal,
       });
-if (execution.signal.aborted || isEmergencyStopActive()) {
-        res.status(423).json({ error: 'Jerry emergency stop interrupted jerry chat.', status: 'cancelled' });
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry emergency stop interrupted Jerry chat.', status: 'cancelled' });
         return;
       }
-            res.json({
+      res.json({
         reply: result.text,
         modelUsed: `${result.provider}:${result.model}`,
       });
@@ -1414,11 +1414,11 @@ if (execution.signal.aborted || isEmergencyStopActive()) {
         configuration: providerConfigurationFromEnvironment(process.env),
         signal: execution.signal,
       });
-if (execution.signal.aborted || isEmergencyStopActive()) {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted goal planning.', status: 'cancelled' });
         return;
       }
-            const raw = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      const raw = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
       const parsed = JSON.parse(raw) as {
         title?: string; strategy?: string; category?: string; requiredSkills?: string;
         technologyStack?: string; marketDemandSummary?: string; profitabilityPotential?: string;
@@ -1528,7 +1528,7 @@ if (execution.signal.aborted || isEmergencyStopActive()) {
         configuration: providerConfigurationFromEnvironment(process.env),
         signal: execution.signal,
       });
-if (execution.signal.aborted || isEmergencyStopActive()) {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted business opportunity assessment.', status: 'cancelled' });
         return;
       }
