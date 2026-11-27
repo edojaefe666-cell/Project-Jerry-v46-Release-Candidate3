@@ -2363,6 +2363,17 @@ async function startServer() {
 
     const ai = getGeminiClient();
     if (!ai) {
+      try {
+        const sharedControl = await readSharedExecutionControl();
+        if (sharedControl.stopped || isEmergencyStopActive()) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
+          return;
+        }
+      } catch {
+        executionRegistry.setStopped(true, 'Shared execution-control read failed during human insight fallback');
+        res.status(503).json({ error: 'Jerry execution control is unavailable; no insight was returned.', status: 'unavailable' });
+        return;
+      }
       res.json({
         insight: buildOfflineInsight(),
         modelUsed: 'Jerry Empathy & Learning Engine (Heuristic)',
@@ -2499,6 +2510,17 @@ async function startServer() {
 
     const ai = getGeminiClient();
     if (!ai) {
+      try {
+        const sharedControl = await readSharedExecutionControl();
+        if (sharedControl.stopped || isEmergencyStopActive()) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
+          return;
+        }
+      } catch {
+        executionRegistry.setStopped(true, 'Shared execution-control read failed during internet growth fallback');
+        res.status(503).json({ error: 'Jerry execution control is unavailable; no playbook was returned.', status: 'unavailable' });
+        return;
+      }
       res.json({
         playbook: buildOfflinePlaybook(),
         modelUsed: 'Jerry Internet Mastery Engine (Heuristic)',
