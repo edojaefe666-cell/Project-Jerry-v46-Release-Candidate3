@@ -5,6 +5,11 @@ on:
     branches: ["**"]
   pull_request:
 
+# Keep only the newest verification run per workflow and branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
