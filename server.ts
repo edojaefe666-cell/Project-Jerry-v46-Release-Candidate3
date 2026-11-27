@@ -36,6 +36,7 @@ import { reserveConfiguredProviderOperation } from './src/db/providerOperationSt
 import { reserveProviderTokens, settleProviderTokens, getProviderUsageAudit, type ProviderUsageReservation } from './src/db/providerUsageStore.ts';
 import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, getProviderCostAudit, type ProviderCostReservation } from './src/db/providerCostStore.ts';
 import { parseProviderPricingFromEnvironment } from './src/lib/providerAdapters.ts';
+import { assertHostedProviderSpendEnabled } from './src/lib/providerSpendPolicy.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
 import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
@@ -154,6 +155,7 @@ async function generateDirectGeminiWithBudget<T extends {
   signal: AbortSignal,
   generate: () => Promise<T>,
 ): Promise<T> {
+  assertHostedProviderSpendEnabled('Google Gemini direct SDK');
   const model = 'gemini-4-hydrogen';
   const pricing = parseProviderPricingFromEnvironment(process.env.JERRY_PROVIDER_MODEL_PRICING_JSON);
   const modelPricing = pricing[`google/${model}`];
