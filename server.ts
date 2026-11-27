@@ -144,6 +144,19 @@ async function startServer() {
 
   // Track in-flight requests and synchronize stop state across instances.
   const executionRegistry = new ExecutionRegistry(isEmergencyStopActive());
+  // Refresh the durable cross-instance latch at provider acceptance boundaries;
+  // the periodic poll alone leaves a window in which a late result could escape.
+  const sharedStopBlocksAcceptance = async (): Promise<boolean> => {
+    try {
+      const sharedControl = await readSharedExecutionControl();
+      const stopped = sharedControl.stopped || isEmergencyStopActive();
+      if (stopped) executionRegistry.setStopped(true, 'Shared emergency stop observed before accepting provider output');
+      return stopped;
+    } catch {
+      executionRegistry.setStopped(true, 'Shared execution-control read failed before accepting provider output');
+      return true;
+    }
+  };
   let executionControlSyncInFlight = false;
   const synchronizeSharedExecutionControl = async (): Promise<void> => {
     if (executionControlSyncInFlight) return;
@@ -2206,7 +2219,7 @@ async function startServer() {
         config: { tools: [{ googleSearch: {} }], abortSignal: execution.signal },
       });
 
-      if (execution.signal.aborted || isEmergencyStopActive()) {
+      if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({
           error: 'Jerry emergency stop interrupted daily opportunity discovery. No result was accepted.',
           status: 'cancelled',
@@ -2417,7 +2430,7 @@ async function startServer() {
         },
       });
 
-      if (execution.signal.aborted || isEmergencyStopActive()) {
+      if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
         return;
       }
@@ -2444,6 +2457,12 @@ async function startServer() {
       res.json({ insight, modelUsed: 'gemini-4-hydrogen' });
     } catch {
       if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.writableEnded) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
+        }
+        return;
+      }
+      if (await sharedStopBlocksAcceptance()) {
         if (!res.headersSent && !res.writableEnded) {
           res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
         }
@@ -2564,7 +2583,7 @@ async function startServer() {
         },
       });
 
-      if (execution.signal.aborted || isEmergencyStopActive()) {
+      if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
         return;
       }
@@ -2590,6 +2609,12 @@ async function startServer() {
       res.json({ playbook, modelUsed: 'gemini-4-hydrogen' });
     } catch {
       if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.writableEnded) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
+        }
+        return;
+      }
+      if (await sharedStopBlocksAcceptance()) {
         if (!res.headersSent && !res.writableEnded) {
           res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
         }
