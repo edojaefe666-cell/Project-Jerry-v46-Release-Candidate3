@@ -126,7 +126,7 @@ class MainActivity : AppCompatActivity() {
 
         val assetLoader = WebViewAssetLoader.Builder()
             .setDomain("localhost")
-            .addPathHandler("/public/", WebViewAssetLoader.AssetsPathHandler(this))
+            .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
 
         webView = WebView(this).apply {
