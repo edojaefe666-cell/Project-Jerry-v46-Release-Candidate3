@@ -208,10 +208,10 @@ test('Vision, TTS, and transcription provider calls are cancellable on stop and 
     const end=server.indexOf('  // Jerry Proactive Opportunity Radar.',start);
     const route=server.slice(start,end);
     assert.ok(start>=0,`missing route ${routePath}`);
-    assert.match(route,/executionRegistry\\.register\\(\\)/);
-    assert.match(route,/signal:execution\\.signal/);
-    assert.match(route,/res\\.once\\('close',cancelOnDisconnect\\)/);
-    assert.match(route,/execution\\.cancel\\(/);
-    assert.match(route,/execution\\.release\\(\\)/);
+    assert.match(route,/executionRegistry\.register\(\)/);
+    assert.match(route,/signal:execution\.signal/);
+    assert.match(route,/res\.once\('close',cancelOnDisconnect\)/);
+    assert.match(route,/execution\.cancel\(/);
+    assert.match(route,/execution\.release\(\)/);
   }
 });
