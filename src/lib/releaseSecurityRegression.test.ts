@@ -380,10 +380,16 @@ test('approved destructive workspace reset cannot race the shared emergency stop
   const route = server.slice(start, end);
   assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
   const lease = route.indexOf('withSharedExecutionLease(async () =>');
-  const reset = route.indexOf('updateWorkspaceForUserAtomic', lease);
+  const reset = route.indexOf('runIdempotentWorkspaceCommand', lease);
   const finalize = route.indexOf('securityStore.finalizeApprovalReservation', lease);
   assert.ok(lease >= 0 && reset > lease && finalize > reset,
-    'workspace reset and approval finalization must stay inside the shared lease');
+    'workspace reset intent and approval finalization must stay inside the shared lease');
+  assert.match(route, /workspace-reset:\$\{approvalId\}/,
+    'the durable reset receipt must be bound to the exact owner approval');
+  assert.match(route, /'workspace-reset:v1'/,
+    'the reset idempotency record must bind a versioned command');
+  assert.match(route, /resetCommitted = true/,
+    'a committed workspace reset must never release its reserved approval on recovery');
 });
 
   const start = server.indexOf('const runIsolatedTestsWithStop =');
