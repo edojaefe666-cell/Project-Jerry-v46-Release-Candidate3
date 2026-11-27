@@ -4,8 +4,9 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.net.Uri
 import android.view.ViewGroup
-import android.webkit.JavascriptInterface
+import android.webkit.WebMessage
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -21,6 +22,9 @@ import androidx.credentials.GetCredentialResponse
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebMessageCompat
+import androidx.webkit.JavaScriptReplyProxy
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import org.json.JSONObject
@@ -45,13 +49,6 @@ class MainActivity : AppCompatActivity() {
         if (request != null) {
             if (granted) request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
             else request.deny()
-        }
-    }
-
-    private inner class JerryNativeAuthBridge {
-        @JavascriptInterface
-        fun signInWithGoogle() {
-            runOnUiThread { beginNativeGoogleSignIn() }
         }
     }
 
@@ -146,7 +143,6 @@ class MainActivity : AppCompatActivity() {
             settings.javaScriptCanOpenWindowsAutomatically = false
             settings.setSupportMultipleWindows(false)
             settings.safeBrowsingEnabled = true
-            addJavascriptInterface(JerryNativeAuthBridge(), "JerryNativeAuth")
             webChromeClient = object : WebChromeClient() {
                 override fun onPermissionRequest(request: PermissionRequest) {
                     val origin = request.origin
@@ -200,6 +196,29 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // WebMessageListener enforces both the trusted origin and main-frame caller.
+        // Unlike addJavascriptInterface, it does not expose a callable object to every frame.
+        WebViewCompat.addWebMessageListener(
+            webView,
+            "JerryNativeAuth",
+            setOf("https://localhost"),
+            object : WebViewCompat.WebMessageListener {
+                override fun onPostMessage(
+                    view: WebView,
+                    message: WebMessageCompat,
+                    sourceOrigin: Uri,
+                    isMainFrame: Boolean,
+                    replyProxy: JavaScriptReplyProxy
+                ) {
+                    val trustedOrigin = sourceOrigin.scheme == "https" &&
+                        sourceOrigin.host == "localhost" &&
+                        (sourceOrigin.port == -1 || sourceOrigin.port == 443)
+                    if (!isMainFrame || !trustedOrigin || message.data != "signInWithGoogle") return
+                    runOnUiThread { beginNativeGoogleSignIn() }
+                }
+            }
+        )
+
         setContentView(webView)
         webView.loadUrl("https://localhost/public/index.html")
     }
@@ -208,7 +227,6 @@ class MainActivity : AppCompatActivity() {
         pendingAudioPermission?.deny()
         pendingAudioPermission = null
         if (::webView.isInitialized) {
-            webView.removeJavascriptInterface("JerryNativeAuth")
             webView.stopLoading()
             webView.destroy()
         }
