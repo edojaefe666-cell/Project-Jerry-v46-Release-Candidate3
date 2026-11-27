@@ -1335,18 +1335,37 @@ async function startServer() {
       'Never claim an action was executed unless a connected tool confirms it. Respect the owner-controlled emergency stop and all authorization boundaries. ' +
       'Protect private workspace information and keep responses clear, concise, and useful.';
 
+    const execution = executionRegistry.register();
+    const cancelOnDisconnect = () => {
+      if (!res.writableEnded && !execution.signal.aborted) {
+        execution.cancel('Jerry chat client disconnected');
+      }
+    };
+    res.once('close', cancelOnDisconnect);
+
     try {
       const result = await generateWithModelFallback({
         task: 'chat',
         systemInstruction,
         prompt: `Workspace Context:\n${contextSummary}\n\nRecent Conversation:\n${formattedHistory}\n\nOwner Message:\n${message.trim()}`,
         configuration: providerConfigurationFromEnvironment(process.env),
+        signal: execution.signal,
       });
-      res.json({
+if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry emergency stop interrupted jerry chat.', status: 'cancelled' });
+        return;
+      }
+            res.json({
         reply: result.text,
         modelUsed: `${result.provider}:${result.model}`,
       });
     } catch (error) {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.writableEnded) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted jerry chat.', status: 'cancelled' });
+        }
+        return;
+      }
       const messageText = error instanceof Error ? error.message : 'Jerry Brain provider request failed.';
       const unconfigured = messageText.includes('No model provider is configured');
       res.status(unconfigured ? 503 : 502).json({
@@ -1354,6 +1373,9 @@ async function startServer() {
           ? 'Jerry Brain has no configured model provider. Configure a server-side provider key.'
           : 'Jerry Brain could not reach an available model provider. Please retry shortly.',
       });
+    } finally {
+      res.off('close', cancelOnDisconnect);
+      execution.release();
     }
   });
 
@@ -1376,14 +1398,27 @@ async function startServer() {
       return;
     }
 
+    const execution = executionRegistry.register();
+    const cancelOnDisconnect = () => {
+      if (!res.writableEnded && !execution.signal.aborted) {
+        execution.cancel('Goal planning client disconnected');
+      }
+    };
+    res.once('close', cancelOnDisconnect);
+
     try {
       const result = await generateWithModelFallback({
         task: 'planning',
         systemInstruction: 'You are Jerry Goal Engine. Return only valid JSON. Build a complete eight-level plan: Level 1 Goal; Level 2 Strategy; Level 3 Project Phases (at least two); Level 4 Milestones; Level 5 Tasks; Level 6 Subtasks; Level 7 Action Steps; Level 8 Execution Details (tools, resources, instructions, dependencies, deadline, completionCheck). Be commercially realistic. Treat available capital as a hard planning ceiling, not permission to spend. Never claim market research was performed unless evidence is supplied. Label all projections as estimates, never guarantees. Do not authorize or execute purchases, outreach, contracts or financial commitments.',
         prompt: `Objective: ${objective.trim()}\nAvailable capital ceiling (USD): ${capital}\nOwner time available (hours/week): ${hours}\nReturn a JSON object with title, strategy, category (Revenue, Product, Automation, or Investment), requiredSkills, technologyStack, marketDemandSummary, profitabilityPotential, and phases. Each phase must contain milestones; milestones contain tasks; tasks contain subtasks; subtasks contain actionSteps; each action step contains title, tools, resources, instructions, dependencies, deadline (YYYY-MM-DD), and completionCheck.`,
         configuration: providerConfigurationFromEnvironment(process.env),
+        signal: execution.signal,
       });
-      const raw = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry emergency stop interrupted goal planning.', status: 'cancelled' });
+        return;
+      }
+            const raw = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
       const parsed = JSON.parse(raw) as {
         title?: string; strategy?: string; category?: string; requiredSkills?: string;
         technologyStack?: string; marketDemandSummary?: string; profitabilityPotential?: string;
@@ -1453,11 +1488,20 @@ async function startServer() {
       };
       res.json({ goal, modelUsed: `${result.provider}:${result.model}`, evidenceStatus: 'model_generated_not_independently_verified' });
     } catch (error) {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.writableEnded) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted goal planning.', status: 'cancelled' });
+        }
+        return;
+      }
       const message = error instanceof Error ? error.message : '';
       const unconfigured = message.includes('No model provider is configured');
       res.status(unconfigured ? 503 : 502).json({
         error: unconfigured ? 'Jerry Goal Engine has no configured model provider.' : 'Jerry Goal Engine could not produce a valid plan. Please retry.',
       });
+    } finally {
+      res.off('close', cancelOnDisconnect);
+      execution.release();
     }
   });
 
@@ -1468,14 +1512,27 @@ async function startServer() {
       res.status(400).json({ error: 'Business idea or market topic must contain 1–4,000 characters.' });
       return;
     }
+    const execution = executionRegistry.register();
+    const cancelOnDisconnect = () => {
+      if (!res.writableEnded && !execution.signal.aborted) {
+        execution.cancel('Business opportunity assessment client disconnected');
+      }
+    };
+    res.once('close', cancelOnDisconnect);
+
     try {
       const result = await generateWithModelFallback({
         task: 'research',
         systemInstruction: 'You are Jerry, a cautious commercial analyst. Return only valid JSON. You have not browsed the web and must not claim current market facts, verified sources, or performed research. Put all market statements, numbers, costs, and revenue projections in estimatesAndAssumptions. Leave verifiedFacts empty. Clearly state unknowns, risks, local legal checks and a low-cost validation step. Never guarantee profit or recommend committing funds.',
         prompt: `Assess this business idea for an owner in Nigeria unless the idea specifies another market: ${idea.trim()}\nReturn JSON fields: title, sector, startupCostUsd (numeric estimate or 0 if unknown), marketDemand, competition, estimatedMonthlyReturn (explicitly labelled estimate or "Not estimated"), riskLevel, estimatesAndAssumptions (array), legalAndEthicalNotes, saferAlternative. Do not invent sources or verified facts.`,
         configuration: providerConfigurationFromEnvironment(process.env),
+        signal: execution.signal,
       });
-      const raw = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry emergency stop interrupted business opportunity assessment.', status: 'cancelled' });
+        return;
+      }
+            const raw = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
       const parsed = JSON.parse(raw) as Partial<BusinessOpportunity>;
       const cost = Number(parsed.startupCostUsd ?? 0);
       const opportunity: BusinessOpportunity = {
@@ -1498,11 +1555,20 @@ async function startServer() {
       };
       res.json({ opportunity, modelUsed: `${result.provider}:${result.model}`, evidenceStatus: 'model_estimate_no_live_sources' });
     } catch (error) {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.writableEnded) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted business opportunity assessment.', status: 'cancelled' });
+        }
+        return;
+      }
       const message = error instanceof Error ? error.message : '';
       const unconfigured = message.includes('No model provider is configured');
       res.status(unconfigured ? 503 : 502).json({
         error: unconfigured ? 'Jerry Business has no configured model provider.' : 'Jerry Business could not produce a valid assessment. Please retry.',
       });
+    } finally {
+      res.off('close', cancelOnDisconnect);
+      execution.release();
     }
   });
 
