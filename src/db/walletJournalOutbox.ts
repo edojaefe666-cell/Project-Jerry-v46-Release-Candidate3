@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { createPool } from './index.ts';
+import { withSharedExecutionLease } from './executionControl.ts';
 import { ensureWalletTransactionJournaled } from './walletJournal.ts';
 import type { WalletTransaction } from '../lib/types.ts';
 import { getWalletJournalEventKey, isEligibleWalletJournalEvent } from '../lib/walletJournalPolicy.ts';
@@ -124,10 +125,18 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
           throw new Error('Outbox owner no longer exists.');
         }
 
-        await ensureWalletTransactionJournaled(
-          user.rows[0].uid,
-          row.payload_json,
-        );
+        await withSharedExecutionLease(async () => {
+          // The PostgreSQL row lock is held through the ledger operation.
+          // A committed owner stop therefore serializes after this operation,
+          // and later worker attempts cannot enter the side-effect section.
+          if (signal?.aborted) {
+            throw new Error('Jerry emergency stop interrupted the outbox before ledger posting.');
+          }
+          await ensureWalletTransactionJournaled(
+            user.rows[0].uid,
+            row.payload_json,
+          );
+        });
 
         // The journal operation may have completed while stop was engaged.
         // Keep the outbox retryable; journal idempotency makes replay safe.
