@@ -243,7 +243,9 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
         // Delete only this test's rows. The user fixture is unique per run;
         // remove dependent journal/outbox/ledger rows before the owner row.
         await pool.query('DELETE FROM wallet_journal_outbox WHERE user_id = $1', [fixtureUserId]);
+        await pool.query('DELETE FROM journal_lines WHERE user_id = $1', [fixtureUserId]);
         await pool.query('DELETE FROM journal_entries WHERE user_id = $1', [fixtureUserId]);
+        await pool.query('DELETE FROM journal_accounts WHERE user_id = $1', [fixtureUserId]);
         await pool.query('DELETE FROM ledger_transactions WHERE user_id = $1', [fixtureUserId]);
         await pool.query('DELETE FROM users WHERE id = $1 AND uid = $2', [fixtureUserId, uid]);
       }
