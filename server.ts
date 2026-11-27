@@ -34,13 +34,24 @@ import { generateWithModelFallback, providerConfigurationFromEnvironment } from 
 import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
-import { requestDeviceRegistrationForUser, listDeviceRegistrationsForUser } from './src/db/deviceRegistrationStore.ts';
+import { requestDeviceRegistrationForUser, listDeviceRegistrationsForUser, isActiveDeviceForUser } from './src/db/deviceRegistrationStore.ts';
+import { users, encryptedMemoryRecords, deviceRegistrations, deviceMemoryKeyEnvelopes } from './src/db/schema.ts';
+import {
+  createDeviceHttpRequestChallengeForUser,
+  getDeviceHttpRequestChallengeForUser,
+  withConsumedDeviceHttpRequestChallenge,
+} from './src/db/deviceHttpRequestChallengeStore.ts';
+import { verifyDeviceHttpRequestProof, isAllowedEncryptedMemoryTarget } from './src/lib/deviceHttpRequestProof.ts';
+import { validateEncryptedMemoryRecord } from './src/db/encryptedMemoryStore.ts';
+import { validateDeviceMemoryKeyEnvelope } from './src/db/deviceMemoryKeyEnvelopeStore.ts';
 import {
   createDeviceApprovalChallengeForUser,
   getDeviceApprovalChallengeForUser,
   consumeDeviceApprovalChallengeAndApproveForUser,
 } from './src/db/deviceApprovalChallengeStore.ts';
 import { verifyDeviceApprovalProof } from './src/lib/deviceApprovalSigningProof.ts';
+import { createFirstDeviceBootstrapChallenge, getFirstDeviceBootstrapChallenge, consumeFirstDeviceBootstrapChallenge } from './src/db/deviceFirstBootstrapStore.ts';
+import { hasRecentOwnerAuthentication } from './src/lib/deviceFirstBootstrap.ts';
 import { reserveConfiguredProviderOperation } from './src/db/providerOperationStore.ts';
 import { reserveProviderTokens, settleProviderTokens, getProviderUsageAudit, type ProviderUsageReservation } from './src/db/providerUsageStore.ts';
 import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, getProviderCostAudit, type ProviderCostReservation } from './src/db/providerCostStore.ts';
@@ -51,7 +62,7 @@ import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts
 import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
 import { applyLearningEnhancement, createOwnerLearningEntry } from './src/lib/learningMemory.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
-import { sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   getWorkspaceForUser,
   saveDailySummaryForUser,
@@ -261,7 +272,7 @@ async function startServer() {
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     next();
   });
-  app.use(express.json({ limit: '12mb' }));
+  app.use(express.json({ limit: '12mb', verify: (req, _res, buffer) => { (req as AuthRequest & { rawBody?: Buffer }).rawBody = Buffer.from(buffer); } }));
 
   // Shared owner approvals, approved contacts, security audit history and
   // backup restore now use PostgreSQL. SQLite remains only a per-instance
@@ -454,6 +465,275 @@ async function startServer() {
     },
   );
 
+
+  const encryptedMemoryRateLimit = createSharedOwnerRateLimiter('encrypted-memory', 60, 60_000);
+  type RawBodyAuthRequest = AuthRequest & { rawBody?: Buffer };
+
+  app.post('/api/memory/encrypted/challenge', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: AuthRequest, res) => {
+    try {
+      const body = req.body as { deviceId?: unknown; method?: unknown; path?: unknown; bodySha256?: unknown };
+      if (typeof body.deviceId !== 'string' || typeof body.method !== 'string' ||
+          typeof body.path !== 'string' || typeof body.bodySha256 !== 'string' ||
+          !isAllowedEncryptedMemoryTarget(body.method, body.path)) {
+        res.status(400).json({ error: 'A valid device and exact encrypted-memory request target are required.' });
+        return;
+      }
+      const challenge = await withSharedExecutionLease(() => createDeviceHttpRequestChallengeForUser(
+        req.user!.uid, req.user!.email ?? 'owner@jerry.local',
+        body.deviceId as string, body.method as string, body.path as string, body.bodySha256 as string,
+      ));
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(201).json({ challenge });
+    } catch {
+      res.status(403).json({ error: 'A device request challenge could not be issued.' });
+    }
+  });
+
+  const executeEncryptedMemoryRequest = async (
+    req: RawBodyAuthRequest,
+    res: express.Response,
+    operation: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0], ownerId: number) => Promise<unknown>,
+  ): Promise<void> => {
+    const challengeId = req.header('x-jerry-challenge-id') ?? '';
+    const signature = req.header('x-jerry-device-signature') ?? '';
+    const ownerUid = req.user!.uid;
+    const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+    const challenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
+    const rawBody = req.rawBody;
+    const hasTransferEncoding = Boolean(req.headers['transfer-encoding']);
+    const declaredBodyLength = Number(req.headers['content-length'] ?? 0);
+    const isRead = req.method.toUpperCase() === 'GET';
+    if ((isRead && (hasTransferEncoding || (Number.isFinite(declaredBodyLength) && declaredBodyLength > 0) || (rawBody?.byteLength ?? 0) > 0)) ||
+        (!isRead && (!rawBody || hasTransferEncoding && !Number.isFinite(declaredBodyLength))) ||
+        !challenge || challenge.method !== req.method.toUpperCase() ||
+        challenge.path !== req.originalUrl || !challenge.signingPublicKey) {
+      res.status(403).json({ error: 'Device request challenge is invalid or no longer active.' });
+      return;
+    }
+    if (!isRead && !rawBody) {
+      res.status(403).json({ error: 'Signed write request body is missing.' });
+      return;
+    }
+    const verified = await verifyDeviceHttpRequestProof(
+      challenge, { challengeId, signature }, challenge.signingPublicKey, rawBody ?? Buffer.alloc(0),
+    );
+    if (!verified) {
+      res.status(403).json({ error: 'Device request signature or body binding is invalid.' });
+      return;
+    }
+    try {
+      const result = await withSharedExecutionLease(() =>
+        withConsumedDeviceHttpRequestChallenge(ownerUid, ownerEmail, challengeId, challenge.signingPublicKey, async (tx) => {
+          const [owner] = await tx.select({ id: users.id }).from(users).where(eq(users.uid, ownerUid)).limit(1);
+          if (!owner) throw new Error('Owner account is unavailable.');
+          return operation(tx, owner.id);
+        }),
+      );
+      if (result === null) {
+        res.status(409).json({ error: 'Device request challenge was already used, expired, or revoked.' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Pragma', 'no-cache');
+      res.json(result);
+    } catch {
+      res.status(503).json({ error: 'Encrypted memory operation could not be completed safely.' });
+    }
+  };
+
+  // Device key envelopes are owner-scoped and delivered only to the active
+  // device whose signing key created the one-use request challenge.
+  app.post('/api/memory/key-envelopes', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    const ownerUid = req.user!.uid;
+    const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+    const challengeId = req.header('x-jerry-challenge-id') ?? '';
+    const proofChallenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
+    if (!proofChallenge || proofChallenge.method !== 'POST' ||
+        proofChallenge.path !== '/api/memory/key-envelopes') {
+      res.status(403).json({ error: 'An active owner-device authorization is required.' });
+      return;
+    }
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const body = req.body as { recipientDeviceId?: unknown; envelope?: unknown };
+      if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).some((key) => key !== 'recipientDeviceId' && key !== 'envelope') ||
+          typeof body.recipientDeviceId !== 'string' ||
+          !/^[A-Za-z0-9_-]{16,128}$/.test(body.recipientDeviceId)) {
+        throw new Error('Recipient device or envelope is invalid.');
+      }
+      const envelope = body.envelope as Record<string, unknown>;
+      const validationError = validateDeviceMemoryKeyEnvelope(envelope);
+      if (validationError) throw new Error(validationError);
+      const context = envelope.context as { ownerUid: string; deviceId: string; keyVersion: number };
+      if (context.ownerUid !== ownerUid || context.deviceId !== body.recipientDeviceId) {
+        throw new Error('Envelope context does not match its owner and recipient.');
+      }
+      const [recipient] = await tx.select().from(deviceRegistrations).where(and(
+        eq(deviceRegistrations.userId, ownerId),
+        eq(deviceRegistrations.deviceId, body.recipientDeviceId),
+        eq(deviceRegistrations.status, 'active'),
+      )).limit(1).for('update');
+      const [authorizer] = await tx.select().from(deviceRegistrations).where(and(
+        eq(deviceRegistrations.userId, ownerId),
+        eq(deviceRegistrations.deviceId, proofChallenge.deviceId),
+        eq(deviceRegistrations.status, 'active'),
+      )).limit(1).for('share');
+      if (!recipient || !authorizer) throw new Error('Recipient and authorizing devices must both be active and owner-approved.');
+      const [row] = await tx.insert(deviceMemoryKeyEnvelopes).values({
+        id: randomUUID(),
+        userId: ownerId,
+        deviceRegistrationId: recipient.id,
+        createdByDeviceRegistrationId: authorizer.id,
+        keyVersion: context.keyVersion,
+        envelopeVersion: 1,
+        algorithm: 'ECDH-P256-HKDF-SHA256-AES-256-GCM',
+        ephemeralPublicKey: envelope.ephemeralPublicKey as Record<string, string>,
+        salt: envelope.salt as string,
+        iv: envelope.iv as string,
+        ciphertext: envelope.ciphertext as string,
+        status: 'active',
+      }).returning();
+      if (!row) throw new Error('Device key envelope was not stored.');
+      return { envelope: {
+        id: row.id,
+        keyVersion: row.keyVersion,
+        envelopeVersion: 1,
+        algorithm: row.algorithm,
+        context: { ownerUid, deviceId: body.recipientDeviceId, keyVersion: row.keyVersion },
+        ephemeralPublicKey: row.ephemeralPublicKey,
+        salt: row.salt,
+        iv: row.iv,
+        ciphertext: row.ciphertext,
+        createdAt: row.createdAt.toISOString(),
+      } };
+    });
+  });
+
+  app.get('/api/memory/key-envelopes/:keyVersion', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    const ownerUid = req.user!.uid;
+    const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+    const challengeId = req.header('x-jerry-challenge-id') ?? '';
+    const proofChallenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
+    const keyVersion = Number(req.params.keyVersion);
+    if (!proofChallenge || proofChallenge.method !== 'GET' ||
+        proofChallenge.path !== req.originalUrl || !Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+      res.status(403).json({ error: 'An active recipient-device authorization is required.' });
+      return;
+    }
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const [row] = await tx.select({ envelope: deviceMemoryKeyEnvelopes, device: deviceRegistrations })
+        .from(deviceMemoryKeyEnvelopes)
+        .innerJoin(deviceRegistrations, eq(deviceMemoryKeyEnvelopes.deviceRegistrationId, deviceRegistrations.id))
+        .where(and(
+          eq(deviceMemoryKeyEnvelopes.userId, ownerId),
+          eq(deviceMemoryKeyEnvelopes.keyVersion, keyVersion),
+          eq(deviceMemoryKeyEnvelopes.status, 'active'),
+          eq(deviceRegistrations.userId, ownerId),
+          eq(deviceRegistrations.deviceId, proofChallenge.deviceId),
+          eq(deviceRegistrations.status, 'active'),
+        )).limit(1);
+      if (!row) throw new Error('No active key envelope exists for this approved device.');
+      return { envelope: {
+        id: row.envelope.id,
+        keyVersion: row.envelope.keyVersion,
+        version: 1,
+        envelopeVersion: 1,
+        algorithm: row.envelope.algorithm,
+        context: { ownerUid, deviceId: proofChallenge.deviceId, keyVersion: row.envelope.keyVersion },
+        ephemeralPublicKey: row.envelope.ephemeralPublicKey,
+        salt: row.envelope.salt,
+        iv: row.envelope.iv,
+        ciphertext: row.envelope.ciphertext,
+        createdAt: row.envelope.createdAt.toISOString(),
+      } };
+    });
+  });
+
+  app.get('/api/memory/encrypted', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const rows = await tx.select().from(encryptedMemoryRecords)
+        .where(eq(encryptedMemoryRecords.userId, ownerId))
+        .orderBy(desc(encryptedMemoryRecords.updatedAt), desc(encryptedMemoryRecords.id))
+        .limit(100);
+      return { records: rows.map((row) => ({
+        schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+        revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+        createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+      })) };
+    });
+  });
+
+  app.post('/api/memory/encrypted', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const record = req.body as Record<string, unknown>;
+      const validationError = validateEncryptedMemoryRecord(record);
+      if (validationError || record.revision !== 1) throw new Error('Encrypted memory envelope is invalid.');
+      const [row] = await tx.insert(encryptedMemoryRecords).values({
+        id: record.recordId as string, userId: ownerId,
+        keyVersion: record.keyVersion as number, revision: 1,
+        iv: record.iv as string, ciphertext: record.ciphertext as string,
+      }).returning();
+      if (!row) throw new Error('Encrypted memory record was not stored.');
+      return { record: {
+        schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+        revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+        createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+      } };
+    });
+  });
+
+  app.get('/api/memory/encrypted/:recordId', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const [row] = await tx.select().from(encryptedMemoryRecords).where(and(
+        eq(encryptedMemoryRecords.userId, ownerId),
+        eq(encryptedMemoryRecords.id, req.params.recordId),
+      )).limit(1);
+      if (!row) throw new Error('Encrypted memory record was not found.');
+      return { record: {
+        schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+        revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+        createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+      } };
+    });
+  });
+
+  app.put('/api/memory/encrypted/:recordId', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const body = req.body as { record?: Record<string, unknown>; expectedRevision?: unknown };
+      if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).some((key) => key !== 'record' && key !== 'expectedRevision') ||
+          !Object.prototype.hasOwnProperty.call(body, 'record') ||
+          !Object.prototype.hasOwnProperty.call(body, 'expectedRevision')) {
+        throw new Error('Encrypted memory update contains unexpected fields.');
+      }
+      const record = body.record;
+      const expectedRevision = body?.expectedRevision;
+      const validationError = validateEncryptedMemoryRecord(record);
+      if (validationError || !record || record.recordId !== req.params.recordId ||
+          !Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 1 ||
+          record.revision !== (expectedRevision as number) + 1) {
+        throw new Error('Encrypted memory revision transition is invalid.');
+      }
+      const [row] = await tx.update(encryptedMemoryRecords).set({
+        keyVersion: record.keyVersion as number,
+        revision: record.revision as number,
+        iv: record.iv as string,
+        ciphertext: record.ciphertext as string,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(encryptedMemoryRecords.userId, ownerId),
+        eq(encryptedMemoryRecords.id, req.params.recordId),
+        eq(encryptedMemoryRecords.revision, expectedRevision as number),
+      )).returning();
+      if (!row) throw new Error('Encrypted memory record changed on another device; reload and retry.');
+      return { record: {
+        schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+        revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+        createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+      } };
+    });
+  });
+
   const deviceApprovalRateLimit = createSharedOwnerRateLimiter('device-approval', 8, 60_000);
 
   // Device enrollment is owner-scoped. New devices always remain pending until
@@ -534,6 +814,68 @@ async function startServer() {
       res.json({ approved: true });
     } catch {
       res.status(503).json({ error: 'Secure device approval is unavailable; no device was activated.' });
+    }
+  });
+
+  // First-device bootstrap is a one-time owner recovery boundary, not ordinary
+  // self-approval. It requires fresh Firebase authentication, a pending device,
+  // zero active devices, native confirmation, and an atomic owner-row lock.
+  app.post('/api/devices/bootstrap/first/challenge', requireAuth, requireExecutionEnabled, deviceApprovalRateLimit, async (req: AuthRequest, res) => {
+    try {
+      if (!hasRecentOwnerAuthentication(req.user?.auth_time)) {
+        res.status(401).json({ error: 'Recent owner sign-in is required before first-device trust can be established.' });
+        return;
+      }
+      const registrationId = (req.body as { registrationId?: unknown })?.registrationId;
+      if (typeof registrationId !== 'string') {
+        res.status(400).json({ error: 'A pending device registration ID is required.' });
+        return;
+      }
+      const challenge = await withSharedExecutionLease(() => createFirstDeviceBootstrapChallenge(
+        req.user!.uid, req.user!.email ?? 'owner@jerry.local', registrationId,
+      ));
+      res.status(201).json({ challenge });
+    } catch (error) {
+      res.status(409).json({ error: error instanceof Error ? error.message : 'First-device bootstrap could not be started.' });
+    }
+  });
+
+  app.post('/api/devices/bootstrap/first/complete', requireAuth, requireExecutionEnabled, deviceApprovalRateLimit, async (req: AuthRequest, res) => {
+    try {
+      if (!hasRecentOwnerAuthentication(req.user?.auth_time)) {
+        res.status(401).json({ error: 'Recent owner sign-in is required to complete first-device trust.' });
+        return;
+      }
+      const body = req.body as { challengeId?: unknown; signature?: unknown };
+      if (typeof body?.challengeId !== 'string' || typeof body.signature !== 'string') {
+        res.status(400).json({ error: 'A bootstrap challenge ID and native ECDSA signature are required.' });
+        return;
+      }
+      const ownerUid = req.user!.uid;
+      const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+      const challenge = await getFirstDeviceBootstrapChallenge(ownerUid, ownerEmail, body.challengeId);
+      if (!challenge?.approverSigningPublicKey) {
+        res.status(409).json({ error: 'First-device challenge is missing, expired, consumed, or bootstrap is no longer available.' });
+        return;
+      }
+      const verified = await verifyDeviceApprovalProof(
+        challenge, { challengeId: body.challengeId, signature: body.signature },
+        challenge.approverSigningPublicKey,
+      );
+      if (!verified) {
+        res.status(403).json({ error: 'The pending device native confirmation proof is invalid.' });
+        return;
+      }
+      const activated = await withSharedExecutionLease(() =>
+        consumeFirstDeviceBootstrapChallenge(ownerUid, ownerEmail, body.challengeId as string),
+      );
+      if (!activated) {
+        res.status(409).json({ error: 'First-device bootstrap lost its one-time race or device state changed.' });
+        return;
+      }
+      res.json({ activated: true });
+    } catch {
+      res.status(503).json({ error: 'First-device trust could not be confirmed; no device was activated.' });
     }
   });
 

@@ -158,3 +158,20 @@ export async function revokeDeviceRegistrationForUser(
     .returning();
   return rows[0] ? toRecord(rows[0]) : null;
 }
+
+/** Confirms a caller's local device identity is already owner-approved. */
+export async function isActiveDeviceForUser(
+  uid: string,
+  email: string,
+  deviceId: string,
+): Promise<boolean> {
+  if (typeof deviceId !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(deviceId)) return false;
+  const user = await getOrCreateUser(uid, email);
+  const [row] = await db.select({ id: deviceRegistrations.id }).from(deviceRegistrations)
+    .where(and(
+      eq(deviceRegistrations.userId, user.id),
+      eq(deviceRegistrations.deviceId, deviceId),
+      eq(deviceRegistrations.status, 'active'),
+    )).limit(1);
+  return !!row;
+}

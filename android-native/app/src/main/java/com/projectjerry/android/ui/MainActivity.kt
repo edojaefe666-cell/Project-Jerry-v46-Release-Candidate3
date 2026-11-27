@@ -29,6 +29,7 @@ import androidx.webkit.JavaScriptReplyProxy
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.projectjerry.android.security.DeviceSigningKeyStore
+import com.projectjerry.android.security.DeviceMemoryExchangeKeyStore
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -41,6 +42,7 @@ class MainActivity : AppCompatActivity() {
     private val credentialManager by lazy { CredentialManager.create(this) }
     private val authRequestInProgress = AtomicBoolean(false)
     private val deviceSigningKeyStore by lazy { DeviceSigningKeyStore() }
+    private val deviceMemoryExchangeKeyStore by lazy { DeviceMemoryExchangeKeyStore(applicationContext) }
     private var pendingAudioPermission: PermissionRequest? = null
 
     // Ask for microphone access only when Jerry's trusted local UI requests audio.
@@ -127,6 +129,244 @@ class MainActivity : AppCompatActivity() {
                     )
                     true
                 }
+                "getDeviceMemoryExchangePublicKey" -> {
+                    val key = deviceMemoryExchangeKeyStore.createOrGetPublicKey()
+                    replyProxy.postMessage(
+                        JSONObject().put("ok", true).put("requestId", requestId).put(
+                            "publicKey",
+                            JSONObject().put("kty", key.kty).put("crv", key.crv).put("x", key.x).put("y", key.y)
+                        ).toString()
+                    )
+                    true
+                }
+                "createInitialDeviceMemoryKey" -> {
+                    val ownerUid = message.optString("ownerUid")
+                    val deviceId = message.optString("deviceId")
+                    val keyVersion = message.optInt("keyVersion", -1)
+                    AlertDialog.Builder(this)
+                        .setTitle("Create Jerry's encrypted memory key?")
+                        .setMessage(
+                            "This creates a new encryption key for Jerry memory on this device. " +
+                                "The key stays inside Android's protected storage. It is not uploaded or shared. " +
+                                "Only continue if you initiated this setup."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Initial memory-key creation was cancelled by the owner.").toString()
+                            )
+                        }
+                        .setPositiveButton("Create key") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                val created = deviceMemoryExchangeKeyStore.createInitialMemoryDataKey(
+                                    ownerUid, deviceId, keyVersion
+                                )
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId)
+                                        .put("created", created).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "Initial memory-key creation failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Initial memory-key creation was cancelled by the owner.").toString()
+                            )
+                        }
+                        .show()
+                    true
+                }
+                "wrapMemoryKeyForApprovedDevice" -> {
+                    val recipient = message.optJSONObject("recipientPublicKey")
+                        ?: throw IllegalArgumentException("Recipient public exchange key is required.")
+                    val recipientKey = DeviceMemoryExchangeKeyStore.PublicJwk(
+                        kty = recipient.optString("kty"),
+                        crv = recipient.optString("crv"),
+                        x = recipient.optString("x"),
+                        y = recipient.optString("y"),
+                    )
+                    val ownerUid = message.optString("ownerUid")
+                    val senderDeviceId = message.optString("senderDeviceId")
+                    val recipientDeviceId = message.optString("recipientDeviceId")
+                    val keyVersion = message.optInt("keyVersion", -1)
+                    AlertDialog.Builder(this)
+                        .setTitle("Share Jerry's memory key?")
+                        .setMessage(
+                            "This will create an encrypted key envelope for approved device " +
+                                recipientDeviceId + ". The server checks that both devices are owner-approved. " +
+                                "The memory key itself is never sent to the server. Continue only if you recognize this device."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Memory-key sharing was cancelled by the owner.").toString()
+                            )
+                        }
+                        .setPositiveButton("Share key") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                val envelope = deviceMemoryExchangeKeyStore.wrapInstalledMemoryKeyForDevice(
+                                    ownerUid, senderDeviceId, recipientDeviceId, keyVersion, recipientKey
+                                )
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId)
+                                        .put("envelope", envelope).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "Memory-key envelope creation failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Memory-key sharing was cancelled by the owner.").toString()
+                            )
+                        }
+                        .show()
+                    true
+                }
+                "unwrapDeviceMemoryKeyEnvelope" -> {
+                    val envelope = message.optJSONObject("envelope")
+                        ?: throw IllegalArgumentException("Memory key envelope is required.")
+                    val ownerUid = message.optString("ownerUid")
+                    val deviceId = message.optString("deviceId")
+                    val keyVersion = message.optInt("keyVersion", -1)
+                    val installed = deviceMemoryExchangeKeyStore.unwrapAndStoreMemoryKey(
+                        envelope.toString(), ownerUid, deviceId, keyVersion
+                    )
+                    replyProxy.postMessage(
+                        JSONObject().put("ok", true).put("requestId", requestId)
+                            .put("installed", installed).toString()
+                    )
+                    true
+                }
+                "encryptMemoryRecordPayload" -> {
+                    val result = deviceMemoryExchangeKeyStore.encryptMemoryRecordPayload(
+                        message.optString("ownerUid"),
+                        message.optString("deviceId"),
+                        message.optInt("keyVersion", -1),
+                        message.optString("recordId"),
+                        message.optInt("revision", -1),
+                        message.optString("plaintextJson"),
+                    )
+                    replyProxy.postMessage(
+                        JSONObject().put("ok", true).put("requestId", requestId)
+                            .put("iv", result.iv).put("ciphertext", result.ciphertext).toString()
+                    )
+                    true
+                }
+                "decryptMemoryRecordPayload" -> {
+                    val plaintext = deviceMemoryExchangeKeyStore.decryptMemoryRecordPayload(
+                        message.optString("ownerUid"),
+                        message.optString("deviceId"),
+                        message.optInt("keyVersion", -1),
+                        message.optString("recordId"),
+                        message.optInt("revision", -1),
+                        message.optString("iv"),
+                        message.optString("ciphertext"),
+                    )
+                    replyProxy.postMessage(
+                        JSONObject().put("ok", true).put("requestId", requestId)
+                            .put("plaintextJson", plaintext).toString()
+                    )
+                    true
+                }
+                "deleteDeviceMemoryExchangeKey" -> {
+                    AlertDialog.Builder(this)
+                        .setTitle("Delete this device's memory key?")
+                        .setMessage(
+                            "This permanently removes this device's protected memory exchange key. " +
+                                "Existing Jerry memory-key envelopes for this device may become unreadable. " +
+                                "Continue only if you understand that this device may lose access to encrypted memory."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Memory exchange key deletion was cancelled by the owner.").toString()
+                            )
+                        }
+                        .setPositiveButton("Delete key") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                deviceMemoryExchangeKeyStore.deleteKey()
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "Memory exchange key deletion failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Memory exchange key deletion was cancelled by the owner.").toString()
+                            )
+                        }
+                        .show()
+                    true
+                }
+                "signFirstDeviceBootstrapChallenge" -> {
+                    val challenge = message.optJSONObject("challenge")
+                        ?: throw IllegalArgumentException("First-device bootstrap challenge is required.")
+                    val registrationId = challenge.optString("targetRegistrationId")
+                    val deviceId = challenge.optString("approverDeviceId")
+                    require(registrationId.matches(Regex("[A-Za-z0-9_-]{16,128}")) &&
+                        deviceId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) {
+                        "First-device identity is invalid."
+                    }
+                    AlertDialog.Builder(this)
+                        .setTitle("Trust this as Jerry's first owner device?")
+                        .setMessage(
+                            "No other Jerry owner device is currently trusted. This will make this Android installation the first trusted owner device. " +
+                                "Device ID: " + deviceId + ". Registration: " + registrationId + ". " +
+                                "Only continue if you personally initiated this setup."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "First-device trust was cancelled by the owner.").toString()
+                            )
+                        }
+                        .setPositiveButton("Trust this device") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                val result = deviceSigningKeyStore.signApprovalChallenge(challenge.toString())
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId)
+                                        .put("proof", result).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "First-device bootstrap signing failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "First-device trust was cancelled by the owner.").toString()
+                            )
+                        }
+                        .show()
+                    true
+                }
                 "signDeviceApprovalChallenge" -> {
                     val challenge = message.optJSONObject("challenge")
                         ?: throw IllegalArgumentException("Approval challenge is required.")
@@ -170,6 +410,69 @@ class MainActivity : AppCompatActivity() {
                             )
                         }
                         .show()
+                    true
+                }
+                "signDeviceMemoryRequestChallenge" -> {
+                    val challenge = message.optJSONObject("challenge")
+                        ?: throw IllegalArgumentException("Memory request challenge is required.")
+                    val method = challenge.optString("method")
+                    val targetPath = challenge.optString("path")
+                    val collectionRead = method == "GET" && targetPath == "/api/memory/encrypted"
+                    val recordRead = method == "GET" &&
+                        targetPath.matches(Regex("/api/memory/encrypted/[A-Za-z0-9_-]{16,128}"))
+                    val keyEnvelopeRead = method == "GET" &&
+                        targetPath.matches(Regex("/api/memory/key-envelopes/[1-9][0-9]{0,8}"))
+                    val isWrite = method == "POST" || method == "PUT"
+                    val allowedWrite = (method == "POST" &&
+                        (targetPath == "/api/memory/encrypted" || targetPath == "/api/memory/key-envelopes")) ||
+                        (method == "PUT" &&
+                            targetPath.matches(Regex("/api/memory/encrypted/[A-Za-z0-9_-]{16,128}")))
+                    require(collectionRead || recordRead || keyEnvelopeRead || allowedWrite) {
+                        "Only encrypted-memory and device key-envelope requests can be signed."
+                    }
+                    val signAndReply = {
+                        try {
+                            val proof = deviceSigningKeyStore.signMemoryRequestChallenge(challenge.toString())
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", true).put("requestId", requestId)
+                                    .put("proof", proof).toString()
+                            )
+                        } catch (error: Exception) {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", error.message ?: "Memory request signing failed.").toString()
+                            )
+                        }
+                    }
+                    if (isWrite) {
+                        AlertDialog.Builder(this)
+                            .setTitle("Authorize Jerry memory change?")
+                            .setMessage(
+                                "Jerry is requesting to " + method + " encrypted memory.\\n\\n" +
+                                    "Target: " + targetPath + "\\n\\n" +
+                                    "Only approve if you initiated this memory change."
+                            )
+                            .setNegativeButton("Cancel") { dialog, _ ->
+                                dialog.dismiss()
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", "Memory request signing was cancelled by the owner.").toString()
+                                )
+                            }
+                            .setPositiveButton("Authorize") { dialog, _ ->
+                                dialog.dismiss()
+                                signAndReply()
+                            }
+                            .setOnCancelListener {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", "Memory request signing was cancelled by the owner.").toString()
+                                )
+                            }
+                            .show()
+                    } else {
+                        signAndReply()
+                    }
                     true
                 }
                 "deleteDeviceSigningKey" -> {
@@ -306,9 +609,9 @@ class MainActivity : AppCompatActivity() {
                         (sourceOrigin.port == -1 || sourceOrigin.port == 443)
                     if (!isMainFrame || !trustedOrigin) return
                     val data = message.data ?: return
-                    if (data.length > 16 * 1024) {
+                    if (data.length > 96 * 1024) {
                         replyProxy.postMessage(
-                            JSONObject().put("ok", false).put("error", "Native request is too large.").toString()
+                            JSONObject().put("ok", false).put("error", "Native request exceeds the 96 KiB safety limit.").toString()
                         )
                         return
                     }

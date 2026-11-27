@@ -1,8 +1,25 @@
+import type { DeviceKeyEnvelope, DevicePublicKey } from './memoryKeyEnvelope.ts';
+import type { MemoryRecordContext, EncryptedMemoryRecord } from './encryptedMemoryRecord.ts';
 import type {
   DeviceApprovalChallenge,
   DeviceApprovalProof,
   DeviceSigningPublicKey,
 } from './deviceApprovalSigningProof.ts';
+
+export interface NativeDeviceHttpChallenge {
+  challengeId: string;
+  nonce: string;
+  ownerUid: string;
+  deviceId: string;
+  method: 'GET' | 'POST' | 'PUT';
+  path: string;
+  bodySha256: string;
+  expiresAt: string;
+}
+export interface NativeDeviceHttpProof {
+  challengeId: string;
+  signature: string;
+}
 
 type NativeBridgeReply = {
   requestId?: string;
@@ -10,6 +27,12 @@ type NativeBridgeReply = {
   error?: string;
   publicKey?: DeviceSigningPublicKey;
   proof?: DeviceApprovalProof;
+  installed?: boolean;
+  iv?: string;
+  ciphertext?: string;
+  plaintextJson?: string;
+  created?: boolean;
+  envelope?: DeviceKeyEnvelope;
 };
 
 type NativeBridge = {
@@ -100,7 +123,172 @@ export async function signNativeDeviceApprovalChallenge(
   return reply.proof;
 }
 
+/** Signs a one-time first-owner-device challenge only after a dedicated native trust confirmation dialog. */
+export async function signNativeFirstDeviceBootstrapChallenge(
+  challenge: DeviceApprovalChallenge,
+): Promise<DeviceApprovalProof> {
+  const reply = await requestNative<NativeBridgeReply>('signFirstDeviceBootstrapChallenge', { challenge });
+  if (!reply.proof || typeof reply.proof !== 'object' ||
+      (reply.proof as DeviceApprovalProof).challengeId !== challenge.challengeId ||
+      typeof (reply.proof as DeviceApprovalProof).signature !== 'string') {
+    throw new Error('Android did not return a valid first-device trust proof.');
+  }
+  return reply.proof as DeviceApprovalProof;
+}
+
 /** Deletes the local private signing key; call only as part of an explicit owner recovery/revocation flow. */
 export async function deleteNativeDeviceSigningKey(): Promise<void> {
   await requestNative<NativeBridgeReply>('deleteDeviceSigningKey');
+}
+/** Signs one server-issued encrypted-memory request challenge in Android Keystore. */
+export async function signNativeDeviceMemoryRequestChallenge(
+  challenge: NativeDeviceHttpChallenge,
+): Promise<NativeDeviceHttpProof> {
+  const reply = await requestNative<NativeBridgeReply>('signDeviceMemoryRequestChallenge', { challenge });
+  if (!reply.proof || typeof reply.proof !== 'object' ||
+      typeof (reply.proof as NativeDeviceHttpProof).challengeId !== 'string' ||
+      typeof (reply.proof as NativeDeviceHttpProof).signature !== 'string') {
+    throw new Error('Android Keystore did not return a memory request proof.');
+  }
+  return reply.proof as NativeDeviceHttpProof;
+}
+
+/** Public P-256 ECDH identity used only to receive owner-authorized memory-key envelopes. */
+export async function getNativeDeviceMemoryExchangePublicKey(): Promise<DeviceSigningPublicKey> {
+  const reply = await requestNative<NativeBridgeReply>('getDeviceMemoryExchangePublicKey');
+  if (!reply.publicKey || reply.publicKey.kty !== 'EC' || reply.publicKey.crv !== 'P-256' ||
+      !/^[A-Za-z0-9_-]{43}$/.test(reply.publicKey.x) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(reply.publicKey.y) ||
+      'd' in (reply.publicKey as unknown as Record<string, unknown>)) {
+    throw new Error('Android Keystore did not return a valid public memory-exchange key.');
+  }
+  return reply.publicKey;
+}
+
+/** Deletes the local ECDH identity; existing device envelopes will no longer be decryptable. */
+export async function deleteNativeDeviceMemoryExchangeKey(): Promise<void> {
+  await requestNative<NativeBridgeReply>('deleteDeviceMemoryExchangeKey');
+}
+
+/**
+ * Installs a server-delivered owner/device/key-version-bound envelope.
+ * Android performs ECDH, HKDF and AES-GCM natively; raw data-key bytes never
+ * cross the WebView bridge. The caller must obtain the envelope through the
+ * authenticated owner/device key-envelope API first.
+ */
+export async function unwrapNativeDeviceMemoryKeyEnvelope(
+  envelope: DeviceKeyEnvelope,
+  expectedContext: { ownerUid: string; deviceId: string; keyVersion: number },
+): Promise<void> {
+  const reply = await requestNative<NativeBridgeReply>('unwrapDeviceMemoryKeyEnvelope', {
+    envelope,
+    ownerUid: expectedContext.ownerUid,
+    deviceId: expectedContext.deviceId,
+    keyVersion: expectedContext.keyVersion,
+  });
+  if (reply.installed !== true) {
+    throw new Error('Android did not confirm protected memory-key installation.');
+  }
+}
+
+/** Encrypts one serialized memory payload using the locally installed native data key. */
+export async function encryptNativeMemoryRecordPayload(
+  plaintextJson: string,
+  context: MemoryRecordContext,
+  deviceId: string,
+): Promise<EncryptedMemoryRecord> {
+  if (typeof plaintextJson !== 'string' || !plaintextJson.trim() ||
+      new TextEncoder().encode(plaintextJson).byteLength > 24_000) {
+    throw new Error('Memory record plaintext is invalid or too large.');
+  }
+  const reply = await requestNative<NativeBridgeReply>('encryptMemoryRecordPayload', {
+    ownerUid: context.ownerUid,
+    deviceId,
+    keyVersion: context.keyVersion,
+    recordId: context.recordId,
+    revision: context.revision,
+    plaintextJson,
+  });
+  if (!reply.iv || !reply.ciphertext) {
+    throw new Error('Android did not return an encrypted memory record.');
+  }
+  return {
+    schemaVersion: 1,
+    recordId: context.recordId,
+    keyVersion: context.keyVersion,
+    revision: context.revision,
+    iv: reply.iv,
+    ciphertext: reply.ciphertext,
+  };
+}
+
+/** Decrypts one authenticated memory record; the raw AES key never leaves native code. */
+export async function decryptNativeMemoryRecordPayload(
+  record: EncryptedMemoryRecord,
+  context: MemoryRecordContext,
+  deviceId: string,
+): Promise<unknown> {
+  const reply = await requestNative<NativeBridgeReply>('decryptMemoryRecordPayload', {
+    ownerUid: context.ownerUid,
+    deviceId,
+    keyVersion: context.keyVersion,
+    recordId: context.recordId,
+    revision: context.revision,
+    iv: record.iv,
+    ciphertext: record.ciphertext,
+  });
+  if (typeof reply.plaintextJson !== 'string') {
+    throw new Error('Android did not return decrypted memory content.');
+  }
+  return JSON.parse(reply.plaintextJson) as unknown;
+}
+
+/** Creates the first local memory data key after native owner confirmation. */
+export async function createNativeInitialDeviceMemoryKey(
+  ownerUid: string,
+  deviceId: string,
+  keyVersion: number,
+): Promise<void> {
+  const reply = await requestNative<NativeBridgeReply>('createInitialDeviceMemoryKey', {
+    ownerUid,
+    deviceId,
+    keyVersion,
+  });
+  if (reply.created !== true && reply.created !== false) {
+    throw new Error('Android did not confirm the initial memory-key setup.');
+  }
+}
+
+/**
+ * Creates an ECDH envelope for an approved recipient. Android asks the owner
+ * to confirm the recipient and never returns the raw memory key.
+ */
+export async function wrapNativeMemoryKeyForApprovedDevice(
+  ownerUid: string,
+  senderDeviceId: string,
+  recipientDeviceId: string,
+  keyVersion: number,
+  recipientPublicKey: DevicePublicKey,
+): Promise<DeviceKeyEnvelope> {
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(recipientDeviceId) ||
+      recipientPublicKey?.kty !== 'EC' || recipientPublicKey.crv !== 'P-256' ||
+      !/^[A-Za-z0-9_-]{43}$/.test(recipientPublicKey.x) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(recipientPublicKey.y) ||
+      'd' in (recipientPublicKey as unknown as Record<string, unknown>)) {
+    throw new Error('Approved recipient device key is invalid.');
+  }
+  const reply = await requestNative<NativeBridgeReply>('wrapMemoryKeyForApprovedDevice', {
+    ownerUid,
+    senderDeviceId,
+    recipientDeviceId,
+    keyVersion,
+    recipientPublicKey,
+  });
+  if (!reply.envelope || reply.envelope.version !== 1 ||
+      reply.envelope.context.ownerUid !== ownerUid ||
+      reply.envelope.context.deviceId !== recipientDeviceId ||
+      reply.envelope.context.keyVersion !== keyVersion) {
+    throw new Error('Android did not return a correctly scoped memory-key envelope.');
+  }
+  return reply.envelope;
 }

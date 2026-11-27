@@ -89,6 +89,51 @@ class DeviceSigningKeyStore(
             .put("publicKey", JSONObject().put("kty", publicKey.kty).put("crv", publicKey.crv).put("x", publicKey.x).put("y", publicKey.y))
     }
 
+    /**
+     * Signs a server-issued challenge for one encrypted-memory HTTP operation.
+     * JavaScript cannot supply arbitrary bytes: fields, route, method and expiry
+     * are validated and canonicalized here before the Keystore operation.
+     */
+    fun signMemoryRequestChallenge(challengeJson: String): JSONObject {
+        require(challengeJson.length in 2..4096) { "Memory request challenge is invalid." }
+        val challenge = JSONObject(challengeJson)
+        val challengeId = challenge.optString("challengeId")
+        val nonce = challenge.optString("nonce")
+        val ownerUid = challenge.optString("ownerUid")
+        val deviceId = challenge.optString("deviceId")
+        val method = challenge.optString("method")
+        val path = challenge.optString("path")
+        val bodySha256 = challenge.optString("bodySha256")
+        val expiresAt = challenge.optString("expiresAt")
+        require(challengeId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) { "Challenge ID is invalid." }
+        require(nonce.matches(Regex("[A-Za-z0-9_-]{32,256}"))) { "Challenge nonce is invalid." }
+        require(ownerUid.isNotBlank() && ownerUid.length <= 160) { "Challenge owner is invalid." }
+        require(deviceId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) { "Challenge device is invalid." }
+        require(bodySha256.matches(Regex("[A-Za-z0-9_-]{43}"))) { "Request body digest is invalid." }
+        val allowedCollection = path == "/api/memory/encrypted" && (method == "GET" || method == "POST")
+        val allowedRecord = path.matches(Regex("/api/memory/encrypted/[A-Za-z0-9_-]{16,128}")) &&
+            (method == "GET" || method == "PUT")
+        val allowedKeyEnvelopeCollection = path == "/api/memory/key-envelopes" && method == "POST"
+        val allowedKeyEnvelopeRead = path.matches(Regex("/api/memory/key-envelopes/[1-9][0-9]{0,8}")) &&
+            method == "GET"
+        require(allowedCollection || allowedRecord || allowedKeyEnvelopeCollection || allowedKeyEnvelopeRead) {
+            "Memory request target is not allowed."
+        }
+        require(!path.contains("?") && !path.contains("#") && !path.contains("%") && !path.contains("//")) {
+            "Memory request path is not canonical."
+        }
+        val expiry = Instant.parse(expiresAt)
+        val now = Instant.now()
+        require(expiry.isAfter(now) && !expiry.isAfter(now.plusSeconds(65))) {
+            "Memory request challenge is expired or exceeds its allowed lifetime."
+        }
+        val normalizedExpiry = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'")
+            .withZone(ZoneOffset.UTC).format(expiry)
+        val canonical = """{"purpose":"jerry-device-http-v1","challengeId":${JSONObject.quote(challengeId)},"nonce":${JSONObject.quote(nonce)},"ownerUid":${JSONObject.quote(ownerUid)},"deviceId":${JSONObject.quote(deviceId)},"method":${JSONObject.quote(method)},"path":${JSONObject.quote(path)},"bodySha256":${JSONObject.quote(bodySha256)},"expiresAt":${JSONObject.quote(normalizedExpiry)}}"""
+        val signature = signCanonicalChallenge(canonical.toByteArray(Charsets.UTF_8))
+        return JSONObject().put("challengeId", challengeId).put("signature", signature)
+    }
+
     /** Signs the exact UTF-8 canonical challenge bytes; returns WebCrypto-compatible r||s. */
     fun signCanonicalChallenge(payload: ByteArray): String {
         require(payload.isNotEmpty() && payload.size <= 4096) { "Approval challenge payload is invalid." }
