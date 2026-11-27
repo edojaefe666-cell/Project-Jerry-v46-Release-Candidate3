@@ -129,6 +129,8 @@ async function ensureSchema(client: Pool | PoolClient = pool): Promise<void> {
       entry_hash text NOT NULL UNIQUE
     );
     CREATE INDEX IF NOT EXISTS jerry_security_audit_owner_seq ON jerry_security_audit(owner_uid,seq);
+    CREATE TABLE IF NOT EXISTS jerry_security_legacy_audit_archive (id bigserial PRIMARY KEY, owner_uid text NOT NULL, source_entry jsonb NOT NULL, archived_at timestamptz NOT NULL DEFAULT now());
+    CREATE INDEX IF NOT EXISTS jerry_security_legacy_audit_owner_id ON jerry_security_legacy_audit_archive(owner_uid,id);
   `);
 }
 
@@ -321,9 +323,8 @@ export async function restoreSharedSecuritySnapshot(
           contact.status === 'active' ? 'active' : 'revoked',contact.createdAt,contact.updatedAt]);
     }
     for (const entry of snapshot.audit) {
-      await appendSharedSecurityAudit(client, ownerUid, String(entry.actorUid ?? 'system'),
-        String(entry.event), entry.details ?? {}, new Date(String(entry.createdAt)),
-        String(entry.previousHash ?? ''), String(entry.entryHash ?? ''));
+      await client.query('INSERT INTO jerry_security_legacy_audit_archive(owner_uid,source_entry) VALUES($1,$2::jsonb)',
+        [ownerUid, JSON.stringify(entry)]);
     }
     for (const item of snapshot.approvals) {
       const originalStatus = item.status;
@@ -387,4 +388,27 @@ export async function verifySharedSecurityAudit(ownerUid: string): Promise<{vali
 }
 export async function auditSharedSecurityEvent(ownerUid: string, event: string, details: unknown): Promise<void> {
   await transaction(async client => appendSharedSecurityAudit(client,ownerUid,ownerUid,event,details));
+}
+
+export interface SharedApprovedContact { id:string; name:string; email:string; purpose:string; status:'active'|'revoked'; createdAt:string; updatedAt:string; }
+export async function createSharedContact(input:{name:string;email:string;purpose:string;ownerUid:string}):Promise<SharedApprovedContact>{
+  return transaction(async client=>{
+    const id=randomUUID(), createdAt=new Date();
+    const result=await client.query("INSERT INTO jerry_security_approved_contacts(id,owner_uid,name,email,purpose,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,'active',$6,$6) RETURNING id,name,email,purpose,status,created_at AS \"createdAt\",updated_at AS \"updatedAt\"",[id,input.ownerUid,input.name.trim().slice(0,120),input.email.trim().toLowerCase().slice(0,254),input.purpose.trim().slice(0,500),createdAt]);
+    await appendSharedSecurityAudit(client,input.ownerUid,input.ownerUid,'approved_contact.created',{id,email:input.email.trim().toLowerCase()});
+    return result.rows[0];
+  });
+}
+export async function listSharedContacts(ownerUid:string):Promise<SharedApprovedContact[]>{
+  await ensureSchema();
+  const r=await pool.query('SELECT id,name,email,purpose,status,created_at AS "createdAt",updated_at AS "updatedAt" FROM jerry_security_approved_contacts WHERE owner_uid=$1 ORDER BY created_at DESC',[ownerUid]);
+  return r.rows;
+}
+export async function setSharedContactStatus(id:string,status:'active'|'revoked',ownerUid:string):Promise<SharedApprovedContact|null>{
+  return transaction(async client=>{
+    const r=await client.query('UPDATE jerry_security_approved_contacts SET status=$1,updated_at=now() WHERE id=$2 AND owner_uid=$3 RETURNING id,name,email,purpose,status,created_at AS "createdAt",updated_at AS "updatedAt"',[status,id,ownerUid]);
+    if(!r.rows[0])return null;
+    await appendSharedSecurityAudit(client,ownerUid,ownerUid,'approved_contact.status_changed',{id,status});
+    return r.rows[0];
+  });
 }
