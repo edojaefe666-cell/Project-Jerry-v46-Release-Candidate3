@@ -33,7 +33,7 @@ function createRequestAbort(signal: AbortSignal | undefined, timeoutMs: number) 
 }
 async function postJson(url:string,headers:Record<string,string>,body:unknown,timeoutMs:number,fetchImpl:typeof fetch,parentSignal?:AbortSignal,ownerUid?:string) {
  throwIfAborted(parentSignal);const request=createRequestAbort(parentSignal,timeoutMs);
- try {const response=await fetchUnderOwnerLease(undefined, () => fetchImpl(url,{method:'POST',headers,body:JSON.stringify(body),signal:request.signal}));
+ try {const response=await fetchUnderOwnerLease(ownerUid, () => fetchImpl(url,{method:'POST',headers,body:JSON.stringify(body),signal:request.signal}));
     if (request.signal.aborted) {
       try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
       throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
@@ -175,7 +175,7 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
         const body = await postJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
           { 'content-type': 'application/json', 'x-goog-api-key': key },
           { contents: [{ parts: [{ text: `Speak in this style: ${options.style || 'calm, warm, confident'}. Text: ${text}` }] }], generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: options.voice || 'Charon' } } } } },
-          timeoutMs, fetchImpl, options.signal);
+          timeoutMs, fetchImpl, options.signal, options.ownerUid);
         const part = body.candidates?.[0]?.content?.parts?.find((p: any) => typeof p.inlineData?.data === 'string');
         if (!part?.inlineData?.data || !validAudioPayload(part.inlineData.data)) throw new Error('Provider returned no valid audio.');
         return { audioBase64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'audio/wav', provider: 'google', model };
