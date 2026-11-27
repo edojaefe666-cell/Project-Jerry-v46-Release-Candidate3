@@ -96,6 +96,7 @@ export async function withConsumedDeviceHttpRequestChallenge<T>(
   uid: string,
   email: string,
   challengeId: string,
+  expectedSigningPublicKey: StoredDeviceHttpRequestChallenge['signingPublicKey'],
   operation: (tx: DatabaseTransaction) => Promise<T>,
 ): Promise<T | null> {
   const user = await getOrCreateUser(uid, email);
@@ -113,7 +114,11 @@ export async function withConsumedDeviceHttpRequestChallenge<T>(
         eq(deviceRegistrations.userId, user.id),
         eq(deviceRegistrations.status, 'active'),
       )).limit(1).for('update');
-    if (!row) return null;
+    if (!row || !row.device.signingPublicKey ||
+        row.device.signingPublicKey.kty !== expectedSigningPublicKey.kty ||
+        row.device.signingPublicKey.crv !== expectedSigningPublicKey.crv ||
+        row.device.signingPublicKey.x !== expectedSigningPublicKey.x ||
+        row.device.signingPublicKey.y !== expectedSigningPublicKey.y) return null;
     const consumed = await tx.update(deviceHttpRequestChallenges)
       .set({ consumedAt: new Date() })
       .where(and(
