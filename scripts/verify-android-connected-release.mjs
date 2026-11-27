@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const PLACEHOLDER = /(?:\\.invalid$|localhost$|example\\.(?:com|net|org)$|changeme|placeholder|your[-_])/i;
+const PLACEHOLDER = /(?:\.invalid$|localhost$|example\.(?:com|net|org)$|changeme|placeholder|your[-_])/i;
 
 export function validateConnectedRelease({ env, firebaseConfig, nativeResources, keystoreExists }) {
   const errors = [];
@@ -22,14 +22,14 @@ export function validateConnectedRelease({ env, firebaseConfig, nativeResources,
   if (!expectedProject || PLACEHOLDER.test(expectedProject) ||
       firebaseConfig?.projectId !== expectedProject ||
       firebaseConfig?.authDomain !== `${expectedProject}.firebaseapp.com` ||
-      !/^1:\\d+:web:[a-f0-9]+$/i.test(firebaseConfig?.appId ?? '') ||
-      !/^AIza[\\w-]{30,}$/.test(firebaseConfig?.apiKey ?? '')) {
+      !/^1:\d+:web:[a-f0-9]+$/i.test(firebaseConfig?.appId ?? '') ||
+      !/^AIza[\w-]{30,}$/.test(firebaseConfig?.apiKey ?? '')) {
     errors.push('Firebase project ID must explicitly match the checked-in web client configuration, including its project domain and valid web app/API-key fields.');
   }
 
   const expectedClient = env.JERRY_GOOGLE_WEB_CLIENT_ID;
   if (!expectedClient || PLACEHOLDER.test(expectedClient) ||
-      !/^[0-9]+-[a-z0-9-]+\\.apps\\.googleusercontent\\.com$/.test(expectedClient) ||
+      !/^[0-9]+-[a-z0-9-]+\.apps\.googleusercontent\.com$/.test(expectedClient) ||
       firebaseConfig?.oAuthClientId !== expectedClient ||
       !nativeResources.includes(expectedClient)) {
     errors.push('JERRY_GOOGLE_WEB_CLIENT_ID must match both the Firebase client configuration and Android default_web_client_id resource.');
