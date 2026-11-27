@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeImageWithModelFallback, synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './multimodalAdapters';
 
+// Provider requests in this suite use mocked fetch implementations only.
+process.env.JERRY_PAID_SERVICES_ENABLED = '1';
+
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 const image = { prompt: 'Read this image', mimeType: 'image/png', base64Data: 'aGVsbG8=', configuration: { google: { apiKey: 'g-key', model: 'gemini-test' } } };
 
