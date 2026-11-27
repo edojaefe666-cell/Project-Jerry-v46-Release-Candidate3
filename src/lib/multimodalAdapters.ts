@@ -1,6 +1,7 @@
 import { resolveModelRoute, type ModelProvider, type ProviderConfiguration } from './modelRouter';
 import { reserveConfiguredProviderOperation } from '../db/providerOperationStore.ts';
 import { withSharedExecutionLease } from '../db/executionControl.ts';
+import { assertHostedProviderSpendEnabled } from './providerSpendPolicy.ts';
 
 async function fetchUnderOwnerLease<T>(ownerUid: string | undefined, work: () => Promise<T>): Promise<T> {
   if (!ownerUid) {
@@ -76,6 +77,7 @@ export async function analyzeImageWithModelFallback(options: VisionAnalysisOptio
   throwIfAborted(options.signal);
   for (const route of routes) {
     throwIfAborted(options.signal);
+    assertHostedProviderSpendEnabled(`${route.provider}/${route.model}`);
     try {
       let body: Record<string, any>;
       if (route.provider === 'google') {
@@ -136,6 +138,7 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
   throwIfAborted(options.signal);
   for (const route of routes) {
     throwIfAborted(options.signal);
+    assertHostedProviderSpendEnabled(`${route.provider}/${route.model}`);
     try {
       if (route.provider === 'openai') {
         const key = options.configuration.openai?.apiKey;
@@ -196,6 +199,7 @@ export async function transcribeAudioWithModelFallback(options: AudioTranscripti
   throwIfAborted(options.signal);
   for (const route of routes) {
     throwIfAborted(options.signal);
+    assertHostedProviderSpendEnabled(`${route.provider}/${route.model}`);
     try {
       if (route.provider === 'google') {
         const key = options.configuration.google?.apiKey;
