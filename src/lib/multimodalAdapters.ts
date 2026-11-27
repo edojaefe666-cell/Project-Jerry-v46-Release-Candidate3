@@ -149,7 +149,7 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
             method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
             body: JSON.stringify({ model, input: text, voice: ['alloy','ash','ballad','coral','echo','fable','onyx','nova','sage','shimmer','verse','marin','cedar'].includes(options.voice || '') ? options.voice : 'onyx', instructions: options.style || 'Speak clearly in a calm, warm, confident tone.', response_format: 'mp3' }),
             signal: request.signal,
-          });
+          }));
           if (request.signal.aborted) {
             try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
             throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
