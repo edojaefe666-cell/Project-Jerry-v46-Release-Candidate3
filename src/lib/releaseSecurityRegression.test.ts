@@ -1064,6 +1064,8 @@ test('multimodal and direct SDK provider attempts consume a shared daily owner o
   }
   assert.equal((server.match(/await reserveConfiguredProviderOperation\(req\.user!\.uid\)/g) ?? []).length, 3,
     'all direct Gemini SDK routes must reserve before execution');
+  assert.equal((server.match(/maxOutputTokens: 2048/g) ?? []).length, 3,
+    'all direct Gemini SDK responses must have a hard output token cap');
   assert.equal((multimodalAdapters.match(/await reserveConfiguredProviderOperation\(options\.ownerUid\)/g) ?? []).length, 6,
     'each Google/OpenAI vision, speech and transcription attempt must reserve a slot');
   assert.match(sharedProviderOperationStore, /ON CONFLICT\(owner_uid,usage_day\) DO UPDATE/);
