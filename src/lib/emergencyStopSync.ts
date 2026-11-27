@@ -1,31 +1,37 @@
 export interface SharedStopSnapshot {
   stopped: boolean;
+  epoch: number;
   reason: string;
   updatedBy: string;
 }
 
 export interface LocalStopStore {
-  getEmergencyStop(): { stopped: boolean; reason: string; updatedAt: string; ownerUid: string };
-  setEmergencyStop(stopped: boolean, ownerUid: string, reason: string): {
-    stopped: boolean; reason: string; updatedAt: string; ownerUid: string;
+  getEmergencyStop(): {
+    stopped: boolean; reason: string; updatedAt: string; ownerUid: string; sharedEpoch: number;
   };
+  synchronizeEmergencyStop(
+    stopped: boolean, ownerUid: string, reason: string, sharedEpoch: number,
+  ): ReturnType<LocalStopStore['getEmergencyStop']>;
 }
 
 /**
- * The shared PostgreSQL latch is authoritative across application instances.
- * SQLite is a durable local mirror/audit record. Reconcile it before deriving
- * this instance's execution latch; a failed local write must fail closed.
+ * PostgreSQL is authoritative across instances. SQLite applies only strictly
+ * newer shared epochs inside its own transaction, so delayed poll results
+ * cannot roll a newer local stop or recovery backwards.
  */
 export function synchronizeLocalEmergencyControl(
   shared: SharedStopSnapshot,
   localStore: LocalStopStore,
 ): ReturnType<LocalStopStore['getEmergencyStop']> {
-  const local = localStore.getEmergencyStop();
-  if (local.stopped === shared.stopped) return local;
   const reason = shared.reason.trim().length >= 5
     ? shared.reason.trim()
     : shared.stopped
       ? 'Shared owner emergency stop synchronized'
       : 'Shared owner emergency stop recovery synchronized';
-  return localStore.setEmergencyStop(shared.stopped, shared.updatedBy.trim() || 'system', reason);
+  return localStore.synchronizeEmergencyStop(
+    shared.stopped,
+    shared.updatedBy.trim() || 'system',
+    reason,
+    shared.epoch,
+  );
 }
