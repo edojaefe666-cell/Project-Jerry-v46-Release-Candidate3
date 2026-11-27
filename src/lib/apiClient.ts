@@ -1,4 +1,5 @@
 import { auth } from './firebase';
+import { mergeRequestHeaders } from './apiRequestHeaders';
 
 const API_BASE = (() => {
   const configured = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
@@ -38,7 +39,7 @@ function createIdempotencyKey(): string {
 }
 
 export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  const headers = new Headers(init.headers);
+  const headers = mergeRequestHeaders(input, init.headers);
   const method = (init.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
   const user = auth.currentUser;
   if (user && !headers.has('Authorization')) {
