@@ -157,6 +157,33 @@ async function startServer() {
       return true;
     }
   };
+  // Linearize provider-result delivery against the durable owner stop.
+  // The shared row lock remains held until the response is handed to Express,
+  // so an owner stop cannot commit between the final check and result delivery.
+  const deliverWithSharedExecutionLease = async (
+    execution: { signal: AbortSignal },
+    res: express.Response,
+    deliver: () => void,
+  ): Promise<boolean> => {
+    try {
+      await withSharedExecutionLease(async () => {
+        if (execution.signal.aborted || isEmergencyStopActive() || res.destroyed || res.writableEnded) return;
+        deliver();
+      });
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.destroyed) res.status(423).json({ error: 'Jerry emergency stop blocked result delivery.', status: 'cancelled' });
+        return false;
+      }
+      return res.headersSent || res.writableEnded;
+    } catch (error) {
+      if (!res.headersSent && !res.destroyed) {
+        const stopped = error instanceof Error && /emergency stop is engaged/i.test(error.message);
+        res.status(stopped ? 423 : 503).json({ error: stopped ? 'Jerry emergency stop blocked result delivery.' : 'Jerry execution control is unavailable; result delivery was blocked.', status: stopped ? 'cancelled' : 'unavailable' });
+      }
+      return false;
+    }
+  };
+
   let executionControlSyncInFlight = false;
   const synchronizeSharedExecutionControl = async (): Promise<void> => {
     if (executionControlSyncInFlight) return;
@@ -1424,10 +1451,10 @@ async function startServer() {
         res.status(423).json({ error: 'Jerry emergency stop interrupted Jerry chat.', status: 'cancelled' });
         return;
       }
-      res.json({
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({
         reply: result.text,
         modelUsed: `${result.provider}:${result.model}`,
-      });
+      }));
     } catch (error) {
       if (execution.signal.aborted || isEmergencyStopActive()) {
         if (!res.headersSent && !res.writableEnded && !res.destroyed) {
@@ -1555,7 +1582,7 @@ async function startServer() {
         },
         phases,
       };
-      res.json({ goal, modelUsed: `${result.provider}:${result.model}`, evidenceStatus: 'model_generated_not_independently_verified' });
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({ goal, modelUsed: `${result.provider}:${result.model}`, evidenceStatus: 'model_generated_not_independently_verified' }));
     } catch (error) {
       if (execution.signal.aborted || isEmergencyStopActive()) {
         if (!res.headersSent && !res.writableEnded && !res.destroyed) {
@@ -1622,7 +1649,7 @@ async function startServer() {
         saferAlternative: typeof parsed.saferAlternative === 'string' ? parsed.saferAlternative.slice(0, 1_000) : 'Validate demand with interviews and a no-cost prototype before spending.',
         status: 'investigating',
       };
-      res.json({ opportunity, modelUsed: `${result.provider}:${result.model}`, evidenceStatus: 'model_estimate_no_live_sources' });
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({ opportunity, modelUsed: `${result.provider}:${result.model}`, evidenceStatus: 'model_estimate_no_live_sources' }));
     } catch (error) {
       if (execution.signal.aborted || isEmergencyStopActive()) {
         if (!res.headersSent && !res.writableEnded && !res.destroyed) {
