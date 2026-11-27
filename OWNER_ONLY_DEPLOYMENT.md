@@ -23,7 +23,7 @@ With `NODE_ENV=production`, requests fail closed with HTTP 503 if the owner UID 
 
 ## Android release artifacts and signing
 
-- CI builds the debug APK and an unsigned release APK candidate, runs Android unit tests and lint, and publishes SHA-256 checksums with both artifacts.
+- CI builds the debug APK and an unsigned release APK candidate, runs Android unit tests and lint, launches the bundled UI on an Android 10 (API 29) emulator, and publishes SHA-256 checksums with both artifacts. Physical testing on the owner's Infinix device remains a separate release check.
 - The unsigned release candidate is a verification artifact, not an installable final release. Do not distribute it.
 - Production signing requires an owner-controlled Android upload/release key. Never generate or store the production signing key in source control, the Android app, or chat. Configure signing only after the owner has safely created and backed up the key and explicitly authorized its use.
 - The connected release APK additionally requires a verified HTTPS backend origin. The CI placeholder origin is intentionally blocked by the Android API client and does not constitute a connected build.
