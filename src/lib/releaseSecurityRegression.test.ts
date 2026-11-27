@@ -87,7 +87,7 @@ test('Bitcoin transfer staging is crash-recoverable and cannot broadcast funds',
   const route = server.slice(start, end);
   assert.match(route, /runIdempotentWorkspaceCommand/);
   assert.match(route, /reserveApproval\(approvalId, 'bitcoin_transfer'/);
-  assert.match(route, /finalizeApprovalReservation\\(approvalId, uid, reservationId\)/);
+  assert.match(route, /finalizeApprovalReservation\(approvalId, uid, reservationId\)/);
   assert.match(route, /pending_approval/);
   assert.match(route, /Idempotency-Key/);
   assert.doesNotMatch(route, /broadcast|sendRawTransaction|sendTransaction|submitTransaction/i,
