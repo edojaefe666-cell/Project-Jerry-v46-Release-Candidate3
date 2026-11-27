@@ -178,7 +178,7 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
         }
         // Count every actual provider attempt, including each fallback, against
         // the same owner-scoped daily operation ceiling before network execution.
-        if (options.ownerUid) {
+        if (options.ownerUid && route.provider !== 'local') {
           await (options.reserveOperation ?? reserveConfiguredProviderOperation)(options.ownerUid);
         }
         const generated = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl, options.signal);
