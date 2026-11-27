@@ -405,16 +405,27 @@ async function startServer() {
     }
   });
 
-  app.post('/api/security/restore', requireAuth, requireExecutionEnabled, (req: AuthRequest, res) => {
+  app.post('/api/security/restore', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const body = req.body as { backup?: string; passphrase?: string; confirm?: string; approvalId?: string };
       if (body.confirm !== 'RESTORE_JERRY') { res.status(400).json({ error: 'Restore confirmation is required.' }); return; }
-      if (String(body.passphrase ?? '').length < 12) { res.status(400).json({ error: 'Restore passphrase must be at least 12 characters.' }); return; }
-      const snapshot = decryptSecurityBackup(String(body.backup ?? ''), String(body.passphrase));
-      securityStore.restoreSnapshotWithApproval(snapshot, req.user!.uid, String(body.approvalId ?? '').trim());
+      if (String(body.passphrase ?? '').length < 12) { res.status(400).json({ error: 'Backup passphrase must be at least 12 characters.' }); return; }
+
+      // The preflight middleware gives a fast, clear response. The shared
+      // lease closes the race where an owner stop commits after that check
+      // but before this security-state mutation begins.
+      await withSharedExecutionLease(async () => {
+        const snapshot = decryptSecurityBackup(String(body.backup ?? ''), String(body.passphrase));
+        securityStore.restoreSnapshotWithApproval(snapshot, req.user!.uid, String(body.approvalId ?? '').trim());
+      });
       res.json({ restored: true, message: 'Jerry security records restored successfully.' });
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to restore Jerry security backup.' });
+      const message = error instanceof Error ? error.message : 'Unable to restore Jerry security backup.';
+      if (/emergency stop is engaged/i.test(message)) {
+        res.status(423).json({ error: 'Jerry emergency stop is engaged. Security restore was not started.' });
+        return;
+      }
+      res.status(400).json({ error: message });
     }
   });
 
