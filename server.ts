@@ -1,7 +1,7 @@
 import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createHash, randomBytes, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
@@ -12,6 +12,8 @@ import { btcToSatoshis } from './src/lib/btcUnits.ts';
 import { validateIncomingBitcoinPayment } from './src/lib/bitcoinSettlement.ts';
 import { resolveSettlementApprovalStatus } from './src/lib/settlementApproval.ts';
 import { requireAuth, type AuthRequest } from './src/middleware/auth.ts';
+import { createNeonStoragePresignedUrl } from './src/lib/neonStorageSigning.ts';
+import { getStorageObjectForUser, listStorageObjectsForUser, recordStorageObjectForUser } from './src/db/storageStore.ts';
 import { adminAuth } from './src/lib/firebase-admin.ts';
 import { SecurityStore } from './src/lib/securityStore.ts';
 import {
@@ -373,6 +375,104 @@ async function startServer() {
   }, 250);
   executionControlPoller.unref();
   void synchronizeSharedExecutionControl();
+  // Private Neon object storage: owner-scoped keys, short-lived URLs and bounded uploads.
+  // Permanent S3 credentials remain server-side; Android/web clients never receive them.
+  const storageBucket = process.env.JERRY_STORAGE_BUCKET?.trim() || 'jerry-private-storage';
+  const storageOwnerPrefix = (ownerUid: string): string =>
+    `owners/${createHash('sha256').update(ownerUid, 'utf8').digest('hex')}/uploads/`;
+  const allowedStorageContentTypes = new Set([
+    'image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain',
+  ]);
+
+  app.post(
+    '/api/storage/upload',
+    requireAuth,
+    requireExecutionEnabled,
+    express.raw({ type: 'application/octet-stream', limit: '8mb' }),
+    async (req: AuthRequest, res) => {
+      try {
+        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+          res.status(400).json({ error: 'A non-empty file body is required.' });
+          return;
+        }
+        const contentType = String(req.header('x-jerry-file-type') ?? '').trim().toLowerCase();
+        if (!allowedStorageContentTypes.has(contentType)) {
+          res.status(415).json({ error: 'This file type is not supported.' });
+          return;
+        }
+        const objectId = randomUUID();
+        const objectKey = `${storageOwnerPrefix(req.user!.uid)}${objectId}`;
+        const signed = createNeonStoragePresignedUrl({
+          method: 'PUT',
+          bucket: storageBucket,
+          objectKey,
+          contentType,
+          expiresInSeconds: 120,
+        });
+        const uploaded = await fetch(signed.url, {
+          method: 'PUT',
+          headers: signed.headers,
+          body: new Uint8Array(req.body),
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!uploaded.ok) {
+          res.status(502).json({ error: 'Private file storage rejected the upload.' });
+          return;
+        }
+        const metadata = await recordStorageObjectForUser(
+          req.user!.uid,
+          req.user!.email ?? 'owner@jerry.local',
+          { id: objectId, objectKey, contentType, byteSize: req.body.length },
+        );
+        res.status(201).json({ ...metadata, stored: true });
+      } catch {
+        res.status(503).json({ error: 'Private file storage is unavailable; the upload was not confirmed.' });
+      }
+    },
+  );
+
+  app.get('/api/storage/files', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const limitValue = Number(req.query.limit ?? 50);
+      const files = await listStorageObjectsForUser(
+        req.user!.uid,
+        req.user!.email ?? 'owner@jerry.local',
+        Number.isFinite(limitValue) ? limitValue : 50,
+      );
+      res.json({ files });
+    } catch {
+      res.status(503).json({ error: 'Private file metadata is unavailable.' });
+    }
+  });
+
+  app.post('/api/storage/download-url', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const objectKey = (req.body as { objectKey?: unknown }).objectKey;
+      if (typeof objectKey !== 'string' || !objectKey.startsWith(storageOwnerPrefix(req.user!.uid))) {
+        res.status(404).json({ error: 'File not found.' });
+        return;
+      }
+      const metadata = await getStorageObjectForUser(
+        req.user!.uid,
+        req.user!.email ?? 'owner@jerry.local',
+        objectKey,
+      );
+      if (!metadata) {
+        res.status(404).json({ error: 'File not found.' });
+        return;
+      }
+      const signed = createNeonStoragePresignedUrl({
+        method: 'GET',
+        bucket: storageBucket,
+        objectKey: metadata.objectKey,
+        expiresInSeconds: 120,
+      });
+      res.json({ url: signed.url, expiresAt: signed.expiresAt });
+    } catch {
+      res.status(503).json({ error: 'Private file access is unavailable.' });
+    }
+  });
+
   const runIsolatedTestsWithStop = async (input: { language: string; source: string; testCode: string }) => {
     if (isEmergencyStopActive()) {
       return { status: 'unavailable' as const, report: 'Emergency stop is active. Isolated verification was not started.' };

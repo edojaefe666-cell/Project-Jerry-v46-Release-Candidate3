@@ -3,6 +3,7 @@ import {
   boolean,
   doublePrecision,
   integer,
+  index,
   jsonb,
   pgTable,
   serial,
@@ -102,6 +103,17 @@ export const dailySummaryReports = pgTable('daily_summary_reports', {
 });
 
 
+export const storageObjects = pgTable('storage_objects', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  objectKey: text('object_key').notNull().unique(),
+  contentType: text('content_type').notNull(),
+  byteSize: integer('byte_size').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  ownerCreatedIndex: index('storage_objects_user_created_idx').on(table.userId, table.createdAt),
+}));
+
 export const memoryEntries = pgTable('memory_entries', {
   id: text('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
@@ -129,6 +141,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   idempotencyKeys: many(idempotencyKeys),
   taskExecutions: many(taskExecutions),
   memoryEntries: many(memoryEntries),
+  storageObjects: many(storageObjects),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ one }) => ({
@@ -158,4 +171,8 @@ export const dailySummaryReportsRelations = relations(dailySummaryReports, ({ on
     fields: [dailySummaryReports.userId],
     references: [users.id],
   }),
+}));
+
+export const storageObjectsRelations = relations(storageObjects, ({ one }) => ({
+  owner: one(users, { fields: [storageObjects.userId], references: [users.id] }),
 }));
