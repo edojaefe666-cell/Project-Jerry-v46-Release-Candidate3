@@ -35,7 +35,7 @@ export type DeviceRegistrationRecord = {
   lastSeenAt: string | null;
 };
 
-function validateInput(input: DeviceRegistrationInput): void {
+export function assertValidDeviceRegistrationInput(input: DeviceRegistrationInput): void {
   if (!input || typeof input.deviceId !== 'string' ||
       !/^[A-Za-z0-9_-]{16,128}$/.test(input.deviceId)) {
     throw new Error('Device identifier is invalid.');
@@ -80,7 +80,7 @@ export async function requestDeviceRegistrationForUser(
   email: string,
   input: DeviceRegistrationInput,
 ): Promise<DeviceRegistrationRecord> {
-  validateInput(input);
+  assertValidDeviceRegistrationInput(input);
   const user = await getOrCreateUser(uid, email);
   const rows = await db.insert(deviceRegistrations).values({
     id: randomUUID(),
