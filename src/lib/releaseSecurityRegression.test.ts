@@ -65,6 +65,7 @@ test('container liveness and readiness probes are public, bounded, and non-discl
   assert.match(readiness[0], /JERRY_OWNER_UID/);
   assert.match(readiness[0], /db\.execute\(sql\`SELECT 1\`\)/);
   assert.match(readiness[0], /to_regclass\('public\.app_sql_migrations'\)/);
+  assert.match(readiness[0], /0017_provider_token_reservations\.sql/);
   assert.match(readiness[0], /readSharedExecutionControl/);
   assert.match(readiness[0], /status\(503\)\.json\(\{ status: 'not_ready' \}\)/);
   assert.doesNotMatch(readiness[0], /error\.message|SQL_HOST|JERRY_OWNER_UID.*json/);
