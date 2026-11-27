@@ -1,7 +1,6 @@
 package com.projectjerry.android.security
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import java.math.BigInteger
 import java.security.AlgorithmParameters
 import java.security.KeyFactory
@@ -22,7 +21,6 @@ import org.junit.runner.RunWith
 class DeviceSigningKeyStoreTest {
     @Test
     fun signingKeyIsPersistentNonExportableAndProducesWebCryptoCompatibleProofs() {
-        InstrumentationRegistry.getInstrumentation().targetContext
         val store = DeviceSigningKeyStore()
         val firstJwk = store.getOrCreatePublicJwk()
         assertEquals("EC", firstJwk.kty)
