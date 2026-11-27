@@ -1,4 +1,5 @@
 import { resolveModelRoute, type ModelProvider, type ProviderConfiguration } from './modelRouter';
+import { reserveConfiguredProviderOperation } from '../db/providerOperationStore.ts';
 
 export interface VisionAnalysisOptions {
   prompt: string;
@@ -8,6 +9,7 @@ export interface VisionAnalysisOptions {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
+  ownerUid?: string;
 }
 export interface VisionAnalysisResult { text: string; provider: ModelProvider; model: string }
 
@@ -70,6 +72,8 @@ export async function analyzeImageWithModelFallback(options: VisionAnalysisOptio
       if (route.provider === 'google') {
         const key = options.configuration.google?.apiKey;
         if (!key) continue;
+        if (options.ownerUid) await reserveConfiguredProviderOperation(options.ownerUid);
+        else if (process.env.NODE_ENV === 'production') throw new Error('Authenticated owner identity is required for provider operation budgeting.');
         body = await postJson(
           `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(route.model)}:generateContent`,
           { 'content-type': 'application/json', 'x-goog-api-key': key },
@@ -79,6 +83,8 @@ export async function analyzeImageWithModelFallback(options: VisionAnalysisOptio
       } else if (route.provider === 'openai') {
         const key = options.configuration.openai?.apiKey;
         if (!key) continue;
+        if (options.ownerUid) await reserveConfiguredProviderOperation(options.ownerUid);
+        else if (process.env.NODE_ENV === 'production') throw new Error('Authenticated owner identity is required for provider operation budgeting.');
         body = await postJson('https://api.openai.com/v1/chat/completions',
           { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
           { model: route.model, messages: [{ role: 'user', content: [
@@ -97,7 +103,7 @@ export async function analyzeImageWithModelFallback(options: VisionAnalysisOptio
 
 export interface SpeechSynthesisOptions {
   text: string; voice?: string; style?: string; configuration: ProviderConfiguration;
-  googleModel?: string; openaiModel?: string; timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal;
+  googleModel?: string; openaiModel?: string; timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal; ownerUid?: string;
 }
 export interface AudioTranscriptionOptions {
   audioBase64: string; mimeType: string; configuration: ProviderConfiguration;
@@ -125,6 +131,8 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
       if (route.provider === 'openai') {
         const key = options.configuration.openai?.apiKey;
         if (!key) continue;
+        if (options.ownerUid) await reserveConfiguredProviderOperation(options.ownerUid);
+        else if (process.env.NODE_ENV === 'production') throw new Error('Authenticated owner identity is required for provider operation budgeting.');
         const model = options.openaiModel || 'gpt-4o-mini-tts';
         const request = createRequestAbort(options.signal, timeoutMs);
         try {
@@ -152,6 +160,8 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
       if (route.provider === 'google') {
         const key = options.configuration.google?.apiKey;
         if (!key) continue;
+        if (options.ownerUid) await reserveConfiguredProviderOperation(options.ownerUid);
+        else if (process.env.NODE_ENV === 'production') throw new Error('Authenticated owner identity is required for provider operation budgeting.');
         const model = options.googleModel || 'gemini-2.5-flash-preview-tts';
         const body = await postJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
           { 'content-type': 'application/json', 'x-goog-api-key': key },
@@ -181,6 +191,8 @@ export async function transcribeAudioWithModelFallback(options: AudioTranscripti
       if (route.provider === 'google') {
         const key = options.configuration.google?.apiKey;
         if (!key) continue;
+        if (options.ownerUid) await reserveConfiguredProviderOperation(options.ownerUid);
+        else if (process.env.NODE_ENV === 'production') throw new Error('Authenticated owner identity is required for provider operation budgeting.');
         const model = options.googleModel || route.model;
         const body = await postJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
           { 'content-type': 'application/json', 'x-goog-api-key': key },
@@ -193,6 +205,8 @@ export async function transcribeAudioWithModelFallback(options: AudioTranscripti
       if (route.provider === 'openai') {
         const key = options.configuration.openai?.apiKey;
         if (!key) continue;
+        if (options.ownerUid) await reserveConfiguredProviderOperation(options.ownerUid);
+        else if (process.env.NODE_ENV === 'production') throw new Error('Authenticated owner identity is required for provider operation budgeting.');
         const model = options.openaiModel || 'gpt-4o-mini-transcribe';
         const bytes = Uint8Array.from(atob(options.audioBase64), c => c.charCodeAt(0));
         const extension = options.mimeType.includes('webm') ? 'webm' : options.mimeType.includes('wav') ? 'wav' : options.mimeType.includes('ogg') ? 'ogg' : options.mimeType.includes('mp4') || options.mimeType.includes('m4a') ? 'm4a' : 'mp3';
