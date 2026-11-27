@@ -308,15 +308,14 @@ export class SecurityStore {
     const reservedAt = now();
     const expectedHash = hashScope(expectedScope);
     const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
-    const leaseCutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
 
     // Reservation and its audit evidence are one SQLite commit. A crash or
     // audit-write failure must never leave an unaudited live reservation.
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const result = this.db.prepare(
-        "UPDATE approvals SET reservation_id=?, reserved_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND created_at>=? AND (? IS NULL OR scope_hash=?) AND (reservation_id IS NULL OR reserved_at IS NULL OR reserved_at<? OR reservation_id=?) AND EXISTS (SELECT 1 FROM emergency_control WHERE id=1 AND stopped=0)"
-      ).run(reservationId, reservedAt, id, actorUid, action, cutoff, expectedHash ?? null, expectedHash ?? null, leaseCutoff, reservationId);
+        "UPDATE approvals SET reservation_id=?, reserved_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND (created_at>=? OR reservation_id=?) AND (? IS NULL OR scope_hash=?) AND (reservation_id IS NULL OR reservation_id=?) AND EXISTS (SELECT 1 FROM emergency_control WHERE id=1 AND stopped=0)"
+      ).run(reservationId, reservedAt, id, actorUid, action, cutoff, reservationId, expectedHash ?? null, expectedHash ?? null, reservationId);
       if (Number(result.changes ?? 0) !== 1) {
         this.db.exec('COMMIT');
         return null;
