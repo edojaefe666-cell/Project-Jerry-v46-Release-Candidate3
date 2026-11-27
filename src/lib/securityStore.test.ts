@@ -379,3 +379,33 @@ test('emergency-stop state and audit event roll back together when audit persist
     store.close();
   }
 });
+
+
+test('SQLite emergency-stop mirror rejects delayed older shared epochs atomically', () => {
+  const filename = tempDb('stop-epoch-order');
+  const store = new SecurityStore(filename);
+  try {
+    const resumed = store.synchronizeEmergencyStop(false, 'owner-1', 'owner approved recovery', 4);
+    assert.equal(resumed.stopped, false);
+    assert.equal(resumed.sharedEpoch, 4);
+
+    const stopped = store.synchronizeEmergencyStop(true, 'owner-1', 'owner engaged emergency stop', 5);
+    assert.equal(stopped.stopped, true);
+    assert.equal(stopped.sharedEpoch, 5);
+
+    const delayed = store.synchronizeEmergencyStop(false, 'owner-1', 'delayed older recovery', 4);
+    assert.equal(delayed.stopped, true);
+    assert.equal(delayed.sharedEpoch, 5);
+
+    assert.throws(
+      () => store.synchronizeEmergencyStop(false, 'owner-1', 'conflicting same epoch', 5),
+      /Conflicting emergency-stop state/,
+    );
+    assert.equal(store.getEmergencyStop().stopped, true);
+    assert.equal(store.getEmergencyStop().sharedEpoch, 5);
+    assert.equal(store.verifyAuditChain('owner-1').ok, true);
+  } finally {
+    store.close();
+    rmSync(path.dirname(filename), { recursive: true, force: true });
+  }
+});
