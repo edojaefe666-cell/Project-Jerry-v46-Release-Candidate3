@@ -301,6 +301,118 @@ class DeviceMemoryExchangeKeyStore(
         }
     }
 
+    /**
+     * Creates an owner-held offline recovery envelope for the installed memory
+     * key. The random 256-bit recovery secret is returned once to the trusted
+     * UI for owner display; only the encrypted envelope belongs in cloud storage.
+     * This method never sends the secret or plaintext data key to the server.
+     */
+    @Synchronized
+    fun createOwnerRecoveryEnvelope(
+        ownerUid: String,
+        deviceId: String,
+        keyVersion: Int,
+    ): JSONObject {
+        val deviceContext = canonicalContextJson(ownerUid, deviceId, keyVersion)
+        val recoveryContext = canonicalRecoveryContextJson(ownerUid, keyVersion)
+        val rawMemoryKey = loadMemoryDataKey(deviceContext)
+        val recoveryKey = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val salt = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val iv = ByteArray(GCM_IV_BYTES).also { java.security.SecureRandom().nextBytes(it) }
+        val contextBytes = recoveryContext.toByteArray(Charsets.UTF_8)
+        val info = ("Jerry owner memory recovery v1\\u0000" + recoveryContext).toByteArray(Charsets.UTF_8)
+        var wrappingKey: ByteArray? = null
+        var ciphertext: ByteArray? = null
+        try {
+            wrappingKey = hkdfSha256(recoveryKey, salt, info, 32)
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(wrappingKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.updateAAD(contextBytes)
+            ciphertext = cipher.doFinal(rawMemoryKey)
+            val envelope = JSONObject()
+                .put("version", 1)
+                .put("algorithm", "HKDF-SHA256-AES-256-GCM")
+                .put("context", JSONObject().put("ownerUid", ownerUid).put("keyVersion", keyVersion))
+                .put("salt", encode(salt))
+                .put("iv", encode(iv))
+                .put("ciphertext", encode(ciphertext))
+            return JSONObject()
+                .put("recoveryKey", encode(recoveryKey))
+                .put("envelope", envelope)
+        } finally {
+            rawMemoryKey.fill(0)
+            recoveryKey.fill(0)
+            salt.fill(0)
+            iv.fill(0)
+            contextBytes.fill(0)
+            info.fill(0)
+            wrappingKey?.fill(0)
+            ciphertext?.fill(0)
+        }
+    }
+
+    /**
+     * Restores a memory data key from an owner-held recovery secret. The
+     * envelope is bound to owner + key version, then the recovered key is
+     * re-wrapped under this installation's Android Keystore protection.
+     */
+    @Synchronized
+    fun restoreMemoryKeyFromOwnerRecoveryEnvelope(
+        envelopeJson: String,
+        recoveryKeyEncoded: String,
+        expectedOwnerUid: String,
+        targetDeviceId: String,
+        expectedKeyVersion: Int,
+    ): Boolean {
+        require(envelopeJson.length in 2..8_192) { "Owner recovery envelope is invalid." }
+        val targetContext = canonicalContextJson(expectedOwnerUid, targetDeviceId, expectedKeyVersion)
+        val expectedRecoveryContext = canonicalRecoveryContextJson(expectedOwnerUid, expectedKeyVersion)
+        val recoveryKey = decodeBase64Url(recoveryKeyEncoded, 32, "recovery key")
+        val envelope = JSONObject(envelopeJson)
+        require(envelope.optInt("version", -1) == 1) { "Owner recovery envelope version is unsupported." }
+        require(envelope.optString("algorithm") == "HKDF-SHA256-AES-256-GCM") {
+            "Owner recovery envelope algorithm is unsupported."
+        }
+        val context = envelope.getJSONObject("context")
+        val ownerUid = context.getString("ownerUid")
+        val keyVersion = context.getInt("keyVersion")
+        require(canonicalRecoveryContextJson(ownerUid, keyVersion) == expectedRecoveryContext) {
+            "Owner recovery envelope does not match this owner and key version."
+        }
+        val salt = decodeBase64Url(envelope.getString("salt"), 32, "recovery salt")
+        val iv = decodeBase64Url(envelope.getString("iv"), GCM_IV_BYTES, "recovery IV")
+        val ciphertext = decodeBase64Url(envelope.getString("ciphertext"), 48, "recovery ciphertext")
+        val contextBytes = expectedRecoveryContext.toByteArray(Charsets.UTF_8)
+        val info = ("Jerry owner memory recovery v1\\u0000" + expectedRecoveryContext).toByteArray(Charsets.UTF_8)
+        var wrappingKey: ByteArray? = null
+        var rawMemoryKey: ByteArray? = null
+        try {
+            wrappingKey = hkdfSha256(recoveryKey, salt, info, 32)
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(wrappingKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.updateAAD(contextBytes)
+            rawMemoryKey = cipher.doFinal(ciphertext)
+            require(rawMemoryKey.size == 32) { "Recovered memory data key has an invalid length." }
+            persistMemoryDataKey(rawMemoryKey, targetContext)
+            return true
+        } finally {
+            recoveryKey.fill(0)
+            salt.fill(0)
+            iv.fill(0)
+            ciphertext.fill(0)
+            contextBytes.fill(0)
+            info.fill(0)
+            wrappingKey?.fill(0)
+            rawMemoryKey?.fill(0)
+        }
+    }
+
+    private fun canonicalRecoveryContextJson(ownerUid: String, keyVersion: Int): String {
+        require(ownerUid.isNotBlank() && ownerUid.length <= 160) { "Memory recovery owner is invalid." }
+        require(keyVersion in 1..999_999_999) { "Memory recovery key version is invalid." }
+        return "{\\"ownerUid\\":${JSONObject.quote(ownerUid)},\\"keyVersion\\":$keyVersion}"
+    }
+
     data class EncryptedPayload(val iv: String, val ciphertext: String)
 
     /**
