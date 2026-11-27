@@ -1,12 +1,17 @@
 package com.projectjerry.android.ui
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.ViewGroup
+import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 
@@ -16,6 +21,19 @@ import androidx.webkit.WebViewClientCompat
  */
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
+    private var pendingAudioPermission: PermissionRequest? = null
+
+    // Ask for microphone access only when Jerry's trusted local UI requests audio.
+    private val audioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val request = pendingAudioPermission
+        pendingAudioPermission = null
+        if (request != null) {
+            if (granted) request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+            else request.deny()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,7 +56,37 @@ class MainActivity : AppCompatActivity() {
             settings.javaScriptCanOpenWindowsAutomatically = false
             settings.setSupportMultipleWindows(false)
             settings.safeBrowsingEnabled = true
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+                override fun onPermissionRequest(request: PermissionRequest) {
+                    val origin = request.origin
+                    val trustedLocalOrigin = origin.scheme == "https" &&
+                        origin.host == "localhost" && (origin.port == -1 || origin.port == 443)
+                    val audioOnly = request.resources.isNotEmpty() &&
+                        request.resources.all { it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }
+
+                    if (!trustedLocalOrigin || !audioOnly) {
+                        request.deny()
+                        return
+                    }
+
+                    if (ContextCompat.checkSelfPermission(
+                            this@MainActivity,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                        return
+                    }
+
+                    pendingAudioPermission?.deny()
+                    pendingAudioPermission = request
+                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+
+                override fun onPermissionRequestCanceled(request: PermissionRequest) {
+                    if (pendingAudioPermission === request) pendingAudioPermission = null
+                }
+            }
             webViewClient = object : WebViewClientCompat() {
                 override fun shouldInterceptRequest(
                     view: WebView,
@@ -64,6 +112,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        pendingAudioPermission?.deny()
+        pendingAudioPermission = null
         if (::webView.isInitialized) {
             webView.stopLoading()
             webView.destroy()
