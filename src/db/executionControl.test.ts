@@ -157,6 +157,52 @@ test('withSharedExecutionLease does not run work when database admission fails',
 });
 
 
+
+test('PostgreSQL concurrent identical stop requests produce one state transition', {
+  skip: process.env.JERRY_JOURNAL_TEST_DATABASE !== '1'
+    ? 'Set JERRY_JOURNAL_TEST_DATABASE=1 for a disposable PostgreSQL database.'
+    : false,
+}, async () => {
+  assert.notEqual(process.env.NODE_ENV, 'production');
+  assert.ok(process.env.SQL_HOST && process.env.SQL_USER && /test|tenant/i.test(process.env.SQL_DB_NAME ?? ''),
+    'Execution-control integration requires a disposable PostgreSQL database name containing test/tenant.');
+  const { createPool } = await import('./index.ts');
+  const pool = createPool();
+  const { readSharedExecutionControl, updateSharedExecutionControl } = await import('./executionControl.ts');
+  const actorUid = 'concurrent-stop-integration';
+  const reason = 'concurrent identical owner stop integration';
+  try {
+    await pool.query(
+      "UPDATE jerry_execution_control SET stopped=false, epoch=epoch+1, reason='concurrent stop fixture enabled', updated_by='test-fixture', updated_at=now() WHERE id=1",
+    );
+    const before = await readSharedExecutionControl();
+    const auditBefore = await pool.query(
+      'SELECT count(*)::int AS count FROM jerry_execution_control_audit WHERE epoch > $1',
+      [before.epoch],
+    );
+    const results = await Promise.all([
+      updateSharedExecutionControl({ stopped: true, actorUid, reason }),
+      updateSharedExecutionControl({ stopped: true, actorUid, reason }),
+    ]);
+    const after = await readSharedExecutionControl();
+    const auditAfter = await pool.query(
+      'SELECT count(*)::int AS count FROM jerry_execution_control_audit WHERE epoch > $1',
+      [before.epoch],
+    );
+    assert.equal(after.stopped, true);
+    assert.equal(after.epoch, before.epoch + 1, 'Identical concurrent stop requests must share one committed epoch transition.');
+    assert.deepEqual(results.map((item) => item.epoch), [after.epoch, after.epoch]);
+    assert.equal(Number(auditAfter.rows[0].count) - Number(auditBefore.rows[0].count), 1,
+      'Exactly one audit event must represent the concurrent stop transition.');
+  } finally {
+    await pool.query(
+      "UPDATE jerry_execution_control SET stopped=false, epoch=epoch+1, reason='concurrent stop integration cleanup', updated_by='test-fixture', updated_at=now() WHERE id=1",
+    );
+    await pool.end();
+  }
+});
+
+
 test('PostgreSQL stop waits for an admitted execution lease to release', {
   skip: process.env.JERRY_JOURNAL_TEST_DATABASE !== '1'
     ? 'Set JERRY_JOURNAL_TEST_DATABASE=1 for a disposable PostgreSQL database.'
