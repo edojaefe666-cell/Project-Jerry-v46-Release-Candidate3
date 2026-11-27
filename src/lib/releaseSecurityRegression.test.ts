@@ -883,3 +883,17 @@ test('provider executions are pinned to admission epoch and stale results are re
   assert.ok(registrations.length >= 10,
     'Provider and long-running routes must capture the shared control epoch when admitted.');
 });
+
+
+test('cross-instance owner recovery reconciles the local SQLite latch before execution polling', () => {
+  assert.match(server, /import \{ synchronizeLocalEmergencyControl \} from '\.\/src\/lib\/emergencyStopSync\.ts'/);
+  const pollerStart = server.indexOf('const synchronizeSharedExecutionControl = async');
+  const pollerEnd = server.indexOf('const executionControlPoller', pollerStart);
+  const poller = server.slice(pollerStart, pollerEnd);
+  const sharedRead = poller.indexOf('await readSharedExecutionControl()');
+  const localSync = poller.indexOf('synchronizeLocalEmergencyControl(sharedControl, securityStore)');
+  const registryUpdate = poller.indexOf('executionRegistry.setStopped(');
+  assert.ok(sharedRead >= 0 && localSync > sharedRead && registryUpdate > localSync,
+    'each instance must reconcile its local durable stop mirror from shared owner state before setting its execution latch');
+  assert.match(poller, /catch \{\s*executionRegistry\.setStopped\(true/);
+});
