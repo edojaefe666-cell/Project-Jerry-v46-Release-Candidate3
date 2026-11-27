@@ -176,13 +176,18 @@ async function startServer() {
     res: express.Response,
     deliver: () => void,
   ): Promise<boolean> => {
+    let staleEpoch = false;
     try {
       await withSharedExecutionLease(async (lease) => {
-        if (lease.epoch !== execution.epoch || execution.signal.aborted || isEmergencyStopActive() || res.destroyed || res.writableEnded) return;
+        if (lease.epoch !== execution.epoch) {
+          staleEpoch = true;
+          return;
+        }
+        if (execution.signal.aborted || isEmergencyStopActive() || res.destroyed || res.writableEnded) return;
         deliver();
       });
-      if (execution.signal.aborted || isEmergencyStopActive()) {
-        if (!res.headersSent && !res.destroyed) res.status(423).json({ error: 'Jerry emergency stop blocked result delivery.', status: 'cancelled' });
+      if (staleEpoch || execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.destroyed) res.status(423).json({ error: staleEpoch ? 'Jerry rejected a stale result from before the latest emergency-stop transition.' : 'Jerry emergency stop blocked result delivery.', status: 'cancelled' });
         return false;
       }
       return res.headersSent || res.writableEnded;
