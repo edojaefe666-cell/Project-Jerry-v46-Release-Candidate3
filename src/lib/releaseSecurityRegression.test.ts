@@ -177,7 +177,153 @@ test('shared execution leases serialize owner stop with active ledger side effec
   assert.match(outbox, /ensureWalletTransactionJournaled/);
 });
 
+test('AI-enhanced owner learning is persisted only inside the shared execution lease', () => {
+  const start = server.indexOf("app.post('/api/jerry/teach'");
+  const end = server.indexOf("app.post('/api/jerry/self-program'", start);
+  const route = server.slice(start, end);
+  const lease = route.indexOf('withSharedExecutionLease(() => saveMemoryEntryForUser(');
+  assert.ok(lease >= 0, 'learning persistence must be fenced by the shared emergency-stop lease');
+  assert.ok(route.indexOf('saveMemoryEntryForUser', lease) > lease);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+});
+
 test('isolated self-upgrade runner holds a shared lease until verification exits', () => {
+  const start = server.indexOf('const runIsolatedTestsWithStop =');
+  const end = server.indexOf('// Provider calls consume quota', start);
+  const helper = server.slice(start, end);
+  assert.match(helper, /withSharedExecutionLease\(async \(\) =>/);
+  assert.ok(helper.indexOf('withSharedExecutionLease') < helper.indexOf('runIsolatedSelfUpgradeTests(input'),
+    'the runner must execute before the shared lease is released');
+  assert.match(helper, /execution\.signal\.aborted/);
+  assert.match(helper, /execution\.release\(\)/);
+});
+
+test('owner emergency stop uses the shared execution registry for in-flight verification', () => {
+  assert.match(server, /new ExecutionRegistry\(isEmergencyStopActive\(\)\)/);
+  assert.match(server, /executionRegistry\.setStopped\([\s\S]*body\.action === 'stop'/);
+  assert.match(server, /runIsolatedSelfUpgradeTests\(input, \{ signal: execution\.signal \}\)/);
+  assert.match(server, /if \(execution\.signal\.aborted\)/);
+  assert.match(server, /execution\.release\(\)/);
+});
+
+test('Jerry Brain provider requests are cancellable on stop and client disconnect', () => {
+  const start = server.indexOf("app.post('/api/brain/generate'");
+  const end = server.indexOf("// Legacy state routes", start);
+  const route = server.slice(start, end);
+  assert.match(route, /executionRegistry\.register\(\)/);
+  assert.match(route, /signal: execution\.signal/);
+  assert.match(route, /res\.once\('close', cancelOnDisconnect\)/);
+  assert.match(route, /execution\.cancel\('Jerry Brain client disconnected'\)/);
+  assert.match(route, /execution\.release\(\)/);
+});
+
+test('emergency stop blocks model-provider and financial mutation routes', () => {
+  const guardedRoutes = [
+    '/api/brain/generate', '/api/jerry/chat', '/api/jerry/plan-goal',
+    '/api/jerry/vision', '/api/jerry/tts', '/api/jerry/transcribe',
+    '/api/jerry/scan-opportunities', '/api/jerry/discover-daily-ways',
+    '/api/wallet/commands/record-income', '/api/wallet/sync-onchain',
+    '/api/wallet/financial-truth/backfill', '/api/wallet/commands/reconcile-tx',
+  ];
+  for (const route of guardedRoutes) {
+    const declaration = server.split('\n').find((line) => line.includes("app.post('" + route + "'"));
+    assert.ok(declaration, 'missing route declaration: ' + route);
+    assert.match(declaration, /requireExecutionEnabled/, 'emergency stop must guard: ' + route);
+  }
+});
+
+test('Vision, TTS, and transcription provider calls are cancellable on stop and disconnect', () => {
+  for (const routePath of ['/api/jerry/vision','/api/jerry/tts','/api/jerry/transcribe']) {
+    const start=server.indexOf(`app.post('${routePath}'`);
+    const end=server.indexOf('  // Jerry Proactive Opportunity Radar.',start);
+    const route=server.slice(start,end);
+    assert.ok(start>=0,`missing route ${routePath}`);
+    assert.match(route,/executionRegistry\.register\(\)/);
+    assert.match(route,/signal:execution\.signal/);
+    assert.match(route,/res\.once\('close',cancelOnDisconnect\)/);
+    assert.match(route,/execution\.cancel\(/);
+    assert.match(route,/execution\.release\(\)/);
+  }
+});
+
+test('Opportunity Radar and Learning cancel provider work on emergency stop or client disconnect', () => {
+  for (const routePath of ['/api/jerry/scan-opportunities', '/api/jerry/teach']) {
+    const start = server.indexOf(`app.post('${routePath}'`);
+    const end = server.indexOf('\n  // Jerry ', start + 1);
+    const route = server.slice(start, end > start ? end : server.length);
+    assert.ok(start >= 0, `missing route ${routePath}`);
+    assert.match(route, /executionRegistry\.register\(\)/);
+    assert.match(route, /res\.once\('close', cancelOnDisconnect\)/);
+    assert.match(route, /execution\.cancel\(/);
+    assert.match(route, /execution\.release\(\)/);
+    assert.match(route, /signal: execution\.signal/);
+  }
+});
+
+
+test('daily opportunity discovery aborts Gemini generation on emergency stop or client disconnect', () => {
+  const start = server.indexOf("app.post('/api/jerry/discover-daily-ways'");
+  const end = server.indexOf('\n  // Jerry Daily Human Understanding:', start);
+  const route = server.slice(start, end > start ? end : server.length);
+  assert.ok(start >= 0, 'missing daily opportunity discovery route');
+  assert.match(route, /executionRegistry\.register\(\)/);
+  assert.match(route, /abortSignal: execution\.signal/);
+  assert.match(route, /res\.once\('close', cancelOnDisconnect\)/);
+  assert.match(route, /execution\.cancel\(/);
+  assert.match(route, /execution\.release\(\)/);
+  assert.match(route, /isEmergencyStopActive\(\)/);
+});
+
+
+test('financial workspace mutations hold the shared stop lease through durable state changes', () => {
+  const decisionStart = server.indexOf("app.post('/api/approvals/:id/decision'");
+  const decisionEnd = server.indexOf("app.post('/api/wallet/commands/record-income'", decisionStart);
+  const decisionRoute = server.slice(decisionStart, decisionEnd);
+  assert.match(decisionRoute.split('=>')[0], /requireExecutionEnabled/);
+  assert.match(decisionRoute, /withSharedExecutionLease\(\(\) => runIdempotentWorkspaceCommand/);
+
+  const incomeStart = server.indexOf("app.post('/api/wallet/commands/record-income'");
+  const transferStart = server.indexOf("app.post('/api/wallet/commands/submit-transfer'", incomeStart);
+  const incomeRoute = server.slice(incomeStart, transferStart);
+  assert.match(incomeRoute, /withSharedExecutionLease\(\(\) => runIdempotentWorkspaceCommand/);
+
+  const transferEnd = server.indexOf('// Real Live Bitcoin Market Price', transferStart);
+  const transferRoute = server.slice(transferStart, transferEnd);
+  const leaseStart = transferRoute.indexOf('withSharedExecutionLease(async () =>');
+  const finalize = transferRoute.indexOf('securityStore.finalizeApprovalReservation', leaseStart);
+  const leaseClose = transferRoute.indexOf('return { ...commandResult, finalizedApproval };', leaseStart);
+  assert.ok(leaseStart >= 0 && finalize > leaseStart && leaseClose > finalize,
+    'transfer reservation finalization must remain inside the shared execution lease');
+
+  const reconcileStart = server.indexOf("app.post('/api/wallet/commands/reconcile-tx'");
+  const reconcileEnd = server.indexOf("app.post('/api/jerry/chat'", reconcileStart);
+  const reconcileRoute = server.slice(reconcileStart, reconcileEnd);
+  assert.match(reconcileRoute, /withSharedExecutionLease\(async \(\) =>/);
+  assert.ok(reconcileRoute.indexOf('ensureWalletTransactionJournaled') > reconcileRoute.indexOf('withSharedExecutionLease'),
+    'journal synchronization must complete before releasing the reconciliation lease');
+});
+
+
+test('stale task recovery holds the shared execution lease through its durable state repair', () => {
+  const start = server.indexOf("app.post('/api/jerry/tasks/recover'");
+  const end = server.indexOf("app.post('/api/jerry/discover-daily-ways'", start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  assert.match(route, /withSharedExecutionLease\(\(\) => recoverStaleTaskExecutions\(uid, email\)\)/);
+});
+
+test('approved destructive workspace reset cannot race the shared emergency stop', () => {
+  const start = server.indexOf("app.post('/api/state/reset'");
+  const end = server.indexOf('// Cloud SQL PostgreSQL Protected Routes', start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  const lease = route.indexOf('withSharedExecutionLease(async () =>');
+  const reset = route.indexOf('updateWorkspaceForUserAtomic', lease);
+  const finalize = route.indexOf('securityStore.finalizeApprovalReservation', lease);
+  assert.ok(lease >= 0 && reset > lease && finalize > reset,
+    'workspace reset and approval finalization must stay inside the shared lease');
+});
+
   const start = server.indexOf('const runIsolatedTestsWithStop =');
   const end = server.indexOf('// Provider calls consume quota', start);
   const helper = server.slice(start, end);
