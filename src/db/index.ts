@@ -6,6 +6,25 @@ declare global {
   var _postgresPool: Pool | undefined;
 }
 
+export const createMigrationPool = () => {
+  const migrationDatabaseUrl = process.env.MIGRATION_DATABASE_URL?.trim();
+
+  // Production migrations must use Neon’s direct endpoint, not the pooled runtime endpoint.
+  if (process.env.NODE_ENV === 'production' && !migrationDatabaseUrl) {
+    throw new Error('MIGRATION_DATABASE_URL must be set for production migrations.');
+  }
+
+  if (!migrationDatabaseUrl) return createPool();
+
+  return new Pool({
+    connectionString: migrationDatabaseUrl,
+    // Keep TLS certificate verification enabled for the direct Neon connection.
+    ssl: { rejectUnauthorized: true },
+    max: 3,
+    connectionTimeoutMillis: 15000,
+  });
+};
+
 export const createPool = () => {
   if (!global._postgresPool) {
     const databaseUrl = process.env.DATABASE_URL?.trim();
