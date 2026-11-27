@@ -51,6 +51,7 @@ import {
 } from './src/db/deviceApprovalChallengeStore.ts';
 import { verifyDeviceApprovalProof } from './src/lib/deviceApprovalSigningProof.ts';
 import { createFirstDeviceBootstrapChallenge, getFirstDeviceBootstrapChallenge, consumeFirstDeviceBootstrapChallenge } from './src/db/deviceFirstBootstrapStore.ts';
+import { hasRecentOwnerAuthentication } from './src/lib/deviceFirstBootstrap.ts';
 import { reserveConfiguredProviderOperation } from './src/db/providerOperationStore.ts';
 import { reserveProviderTokens, settleProviderTokens, getProviderUsageAudit, type ProviderUsageReservation } from './src/db/providerUsageStore.ts';
 import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, getProviderCostAudit, type ProviderCostReservation } from './src/db/providerCostStore.ts';
@@ -821,9 +822,7 @@ async function startServer() {
   // zero active devices, native confirmation, and an atomic owner-row lock.
   app.post('/api/devices/bootstrap/first/challenge', requireAuth, requireExecutionEnabled, deviceApprovalRateLimit, async (req: AuthRequest, res) => {
     try {
-      const authTime = Number(req.user?.auth_time);
-      const nowSeconds = Math.floor(Date.now() / 1000);
-      if (!Number.isSafeInteger(authTime) || authTime > nowSeconds + 30 || nowSeconds - authTime > 300) {
+      if (!hasRecentOwnerAuthentication(req.user?.auth_time)) {
         res.status(401).json({ error: 'Recent owner sign-in is required before first-device trust can be established.' });
         return;
       }
@@ -843,9 +842,7 @@ async function startServer() {
 
   app.post('/api/devices/bootstrap/first/complete', requireAuth, requireExecutionEnabled, deviceApprovalRateLimit, async (req: AuthRequest, res) => {
     try {
-      const authTime = Number(req.user?.auth_time);
-      const nowSeconds = Math.floor(Date.now() / 1000);
-      if (!Number.isSafeInteger(authTime) || authTime > nowSeconds + 30 || nowSeconds - authTime > 300) {
+      if (!hasRecentOwnerAuthentication(req.user?.auth_time)) {
         res.status(401).json({ error: 'Recent owner sign-in is required to complete first-device trust.' });
         return;
       }
