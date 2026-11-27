@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, KeyRound, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 import { apiJson } from '../lib/apiClient';
+import { useAuth } from '../lib/AuthContext';
+import { fetchAndInstallDeviceMemoryKeyEnvelope, isAndroidMemoryKeyInstalled, shareAndroidMemoryKeyWithApprovedDevice } from '../lib/encryptedMemoryApi';
 import { bootstrapFirstJerryOwnerDevice, requestAndroidDeviceEnrollment, approvePendingJerryDevice } from '../lib/deviceEnrollmentApi';
 import { getOrCreateJerryDeviceId } from '../lib/deviceIdentity';
 
@@ -8,6 +10,7 @@ interface DeviceRecord {
   id: string;
   deviceId: string;
   deviceName: string;
+  exchangePublicKey: { kty: 'EC'; crv: 'P-256'; x: string; y: string };
   platform: string;
   status: 'pending' | 'active' | 'revoked';
   createdAt: string;
@@ -27,6 +30,7 @@ export function DeviceManagement() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState('Jerry Android phone');
+  const { user } = useAuth();
 
   const currentDeviceId = useMemo(() => {
     try { return getOrCreateJerryDeviceId(); } catch { return null; }
@@ -103,6 +107,28 @@ export function DeviceManagement() {
   };
 
   const currentRecord = devices.find((device) => device.deviceId === currentDeviceId);
+
+  const restoreMemoryKey = async () => {
+    if (!user?.uid || !currentRecord || currentRecord.status !== 'active' || !nativeAvailable) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      await fetchAndInstallDeviceMemoryKeyEnvelope(user.uid, 1);
+      if (!(await isAndroidMemoryKeyInstalled(user.uid, 1))) throw new Error('Android did not confirm that the recovered key was installed.');
+      setMessage('The encrypted-memory key was restored to this approved phone. Existing ciphertext has not been changed.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Memory-key restoration failed.'); }
+    finally { setBusy(false); }
+  };
+
+  const shareMemoryKey = async (target: DeviceRecord) => {
+    if (!user?.uid || !currentRecord || currentRecord.status !== 'active' || target.status !== 'active' || !nativeAvailable) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      if (!(await isAndroidMemoryKeyInstalled(user.uid, 1))) throw new Error('This phone does not have the local protected memory key. Restore it first.');
+      await shareAndroidMemoryKeyWithApprovedDevice(user.uid, target.deviceId, target.exchangePublicKey, 1);
+      setMessage('A wrapped memory-key envelope was stored for the approved recipient. The recipient must separately restore it on that device.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Memory-key sharing failed.'); }
+    finally { setBusy(false); }
+  };
   const pendingDevices = devices.filter((device) => device.status === 'pending' && device.deviceId !== currentDeviceId);
 
   return (
@@ -143,11 +169,13 @@ export function DeviceManagement() {
             {device.status === 'pending' && device.deviceId !== currentDeviceId && <button type="button" onClick={() => void approveDevice(device)} disabled={busy || !nativeAvailable || !currentRecord || currentRecord.status !== 'active'} className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-slate-950 disabled:opacity-40"><ShieldCheck className="h-3.5 w-3.5" /> Approve from this active device</button>}
             {device.status === 'pending' && device.deviceId === currentDeviceId && <p className="mt-3 flex items-center gap-2 text-xs text-amber-200"><Clock3 className="h-3.5 w-3.5" /> Waiting for approval from another active device.</p>}
             {device.status === 'active' && <p className="mt-3 flex items-center gap-2 text-xs text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Owner-approved device</p>}
+            {device.status === 'active' && device.deviceId === currentDeviceId && <button type="button" onClick={() => void restoreMemoryKey()} disabled={busy || !nativeAvailable || !user?.uid} className="mt-3 rounded-lg border border-cyan-500/40 px-3 py-2 text-xs font-semibold text-cyan-200 disabled:opacity-40">Restore encrypted-memory key to this phone</button>}
+            {device.status === 'active' && device.deviceId !== currentDeviceId && currentRecord?.status === 'active' && <button type="button" onClick={() => void shareMemoryKey(device)} disabled={busy || !nativeAvailable || !user?.uid} className="mt-3 rounded-lg border border-cyan-500/40 px-3 py-2 text-xs font-semibold text-cyan-200 disabled:opacity-40">Share memory key to this approved device</button>}
           </article>
         ))}
       </div>
       {pendingDevices.length > 0 && !devices.some((device) => device.status === 'active' && device.deviceId === currentDeviceId) && <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">An already-active device is required to approve pending devices. This phone cannot approve itself.</p>}
-      <div className="rounded-lg border border-slate-800 p-4 text-xs text-slate-500"><KeyRound className="mr-2 inline h-4 w-4" />Revocation, recovery, and signing-key rotation are separate protected operations and are not enabled by this enrollment screen.</div>
+      <div className="rounded-lg border border-slate-800 p-4 text-xs text-slate-500"><KeyRound className="mr-2 inline h-4 w-4" />Memory-key sharing is a separate owner action. Android confirms the recipient before wrapping; recovery requires an envelope previously shared to this approved phone. Device revocation and key rotation remain separate protected operations.</div>
     </section>
   );
 }
