@@ -60,7 +60,7 @@ class DeviceMemoryExchangeKeyStore(
                 "Stored memory exchange key is malformed."
             }
             // Authenticate the stored private-key ciphertext before returning its public identity.
-            val encodedPrivate = decryptPrivateKey(iv, ciphertext)
+            val encodedPrivate = decryptPrivateKey(iv, ciphertext, storedX, storedY)
             try {
                 require(encodedPrivate.isNotEmpty()) { "Stored memory exchange private key is empty." }
             } finally {
@@ -74,11 +74,11 @@ class DeviceMemoryExchangeKeyStore(
         val pair = generator.generateKeyPair()
         val privateBytes = pair.private.encoded
             ?: throw IllegalStateException("Generated memory exchange key cannot be encoded for protected storage.")
+        val publicKey = pair.public as java.security.interfaces.ECPublicKey
+        val x = encodeCoordinate(publicKey.w.affineX)
+        val y = encodeCoordinate(publicKey.w.affineY)
         try {
-            val encrypted = encryptPrivateKey(privateBytes)
-            val publicKey = pair.public as java.security.interfaces.ECPublicKey
-            val x = encodeCoordinate(publicKey.w.affineX)
-            val y = encodeCoordinate(publicKey.w.affineY)
+            val encrypted = encryptPrivateKey(privateBytes, x, y)
             val saved = preferences.edit()
                 .putString(KEY_PUBLIC_X, x)
                 .putString(KEY_PUBLIC_Y, y)
@@ -118,7 +118,11 @@ class DeviceMemoryExchangeKeyStore(
             ?: throw IllegalStateException("Memory exchange key has not been enrolled.")
         val ciphertext = decodeStored(KEY_PRIVATE_CIPHERTEXT)
             ?: throw IllegalStateException("Memory exchange key has not been enrolled.")
-        val privateBytes = decryptPrivateKey(iv, ciphertext)
+        val storedX = preferences.getString(KEY_PUBLIC_X, null)
+            ?: throw IllegalStateException("Memory exchange public key is missing.")
+        val storedY = preferences.getString(KEY_PUBLIC_Y, null)
+            ?: throw IllegalStateException("Memory exchange public key is missing.")
+        val privateBytes = decryptPrivateKey(iv, ciphertext, storedX, storedY)
         try {
             val privateKey = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(privateBytes))
             val agreement = KeyAgreement.getInstance("ECDH")
@@ -143,19 +147,34 @@ class DeviceMemoryExchangeKeyStore(
         if (store.containsAlias(encryptionAlias)) store.deleteEntry(encryptionAlias)
     }
 
-    private fun encryptPrivateKey(plaintext: ByteArray): Pair<ByteArray, ByteArray> {
+    private fun encryptPrivateKey(
+        plaintext: ByteArray,
+        publicX: String,
+        publicY: String,
+    ): Pair<ByteArray, ByteArray> {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateWrappingKey())
+        cipher.updateAAD(publicKeyBinding(publicX, publicY))
         val ciphertext = cipher.doFinal(plaintext)
         return cipher.iv to ciphertext
     }
 
-    private fun decryptPrivateKey(iv: ByteArray, ciphertext: ByteArray): ByteArray {
+    private fun decryptPrivateKey(
+        iv: ByteArray,
+        ciphertext: ByteArray,
+        publicX: String,
+        publicY: String,
+    ): ByteArray {
         require(iv.size == GCM_IV_BYTES) { "Memory exchange key IV is invalid." }
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, getOrCreateWrappingKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+        cipher.updateAAD(publicKeyBinding(publicX, publicY))
         return cipher.doFinal(ciphertext)
     }
+
+    /** Authenticates the persisted public identity together with its private key ciphertext. */
+    private fun publicKeyBinding(publicX: String, publicY: String): ByteArray =
+        "Jerry device memory exchange key v1\\u0000$publicX\\u0000$publicY".toByteArray(Charsets.UTF_8)
 
     private fun getOrCreateWrappingKey(): java.security.Key {
         val store = keyStore()
