@@ -206,6 +206,105 @@ class DeviceMemoryExchangeKeyStore(
         }
     }
 
+    data class EncryptedPayload(val iv: String, val ciphertext: String)
+
+    /**
+     * Encrypts a serialized memory payload using the locally protected data key.
+     * AAD byte order/JSON encoding exactly matches encryptedMemoryRecord.ts.
+     */
+    @Synchronized
+    fun encryptMemoryRecordPayload(
+        ownerUid: String,
+        deviceId: String,
+        keyVersion: Int,
+        recordId: String,
+        revision: Int,
+        plaintextJson: String,
+    ): EncryptedPayload {
+        require(plaintextJson.isNotEmpty() && plaintextJson.toByteArray(Charsets.UTF_8).size <= 24_000) {
+            "Memory record plaintext size is invalid."
+        }
+        val contextJson = canonicalContextJson(ownerUid, deviceId, keyVersion)
+        val key = loadMemoryDataKey(contextJson)
+        val aad = memoryRecordAad(ownerUid, recordId, keyVersion, revision)
+        val iv = ByteArray(GCM_IV_BYTES).also { java.security.SecureRandom().nextBytes(it) }
+        val plaintext = plaintextJson.toByteArray(Charsets.UTF_8)
+        try {
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.updateAAD(aad)
+            val ciphertext = cipher.doFinal(plaintext)
+            return EncryptedPayload(encode(iv), encode(ciphertext))
+        } finally {
+            key.fill(0)
+            aad.fill(0)
+            iv.fill(0)
+            plaintext.fill(0)
+        }
+    }
+
+    /** Decrypts an authenticated record and returns only its plaintext JSON to the trusted app UI. */
+    @Synchronized
+    fun decryptMemoryRecordPayload(
+        ownerUid: String,
+        deviceId: String,
+        keyVersion: Int,
+        recordId: String,
+        revision: Int,
+        ivEncoded: String,
+        ciphertextEncoded: String,
+    ): String {
+        val contextJson = canonicalContextJson(ownerUid, deviceId, keyVersion)
+        val key = loadMemoryDataKey(contextJson)
+        val iv = decodeBase64Url(ivEncoded, GCM_IV_BYTES, "record IV")
+        val ciphertext = decodeBase64Url(ciphertextEncoded, -1, "record ciphertext")
+        require(ciphertext.size in 17..48_000) { "Encrypted memory record ciphertext length is invalid." }
+        val aad = memoryRecordAad(ownerUid, recordId, keyVersion, revision)
+        var plaintext: ByteArray? = null
+        try {
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.updateAAD(aad)
+            plaintext = cipher.doFinal(ciphertext)
+            return plaintext.toString(Charsets.UTF_8)
+        } finally {
+            key.fill(0)
+            iv.fill(0)
+            ciphertext.fill(0)
+            aad.fill(0)
+            plaintext?.fill(0)
+        }
+    }
+
+    private fun loadMemoryDataKey(contextJson: String): ByteArray {
+        val suffix = contextStorageId(contextJson)
+        val iv = preferences.getString(DATA_KEY_IV_PREFIX + suffix, null)
+            ?.let { Base64.decode(it, BASE64_FLAGS) }
+            ?: throw IllegalStateException("No protected memory data key is installed for this context.")
+        val ciphertext = preferences.getString(DATA_KEY_CIPHERTEXT_PREFIX + suffix, null)
+            ?.let { Base64.decode(it, BASE64_FLAGS) }
+            ?: throw IllegalStateException("No protected memory data key is installed for this context.")
+        try {
+            require(iv.size == GCM_IV_BYTES && ciphertext.size == 48) {
+                "Protected memory data key storage is malformed."
+            }
+            return decryptPersistedMemoryKey(iv, ciphertext, contextJson)
+        } finally {
+            iv.fill(0)
+            ciphertext.fill(0)
+        }
+    }
+
+    private fun memoryRecordAad(ownerUid: String, recordId: String, keyVersion: Int, revision: Int): ByteArray {
+        require(ownerUid.isNotBlank() && ownerUid.length <= 160) { "Memory record owner is invalid." }
+        require(recordId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) { "Memory record ID is invalid." }
+        require(keyVersion in 1..999_999_999 && revision in 1..Int.MAX_VALUE) {
+            "Memory record key version or revision is invalid."
+        }
+        val json = "{\"purpose\":\"jerry-memory-record-v1\",\"ownerUid\":${JSONObject.quote(ownerUid)},\"recordId\":${JSONObject.quote(recordId)},\"keyVersion\":$keyVersion,\"revision\":$revision,\"schemaVersion\":1}"
+        return json.toByteArray(Charsets.UTF_8)
+    }
+
     /** True only when a locally authenticated key exists for this exact context. */
     @Synchronized
     fun hasInstalledMemoryKey(ownerUid: String, deviceId: String, keyVersion: Int): Boolean {
@@ -261,7 +360,7 @@ class DeviceMemoryExchangeKeyStore(
     private fun decodeBase64Url(value: String, expectedSize: Int, field: String): ByteArray {
         require(value.matches(Regex("[A-Za-z0-9_-]+"))) { "Memory key envelope $field encoding is invalid." }
         val decoded = Base64.decode(value, BASE64_FLAGS)
-        require(decoded.size == expectedSize) { "Memory key envelope $field length is invalid." }
+        require((expectedSize < 0 || decoded.size == expectedSize) && decoded.isNotEmpty()) { "Memory key envelope $field length is invalid." }
         return decoded
     }
 
