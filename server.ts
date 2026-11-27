@@ -388,7 +388,7 @@ async function startServer() {
         // Commit the shared stop first so every instance observes the stop
         // before this instance performs local cancellation and audit updates.
         sharedControl = await updateSharedExecutionControl({ stopped: true, actorUid: req.user!.uid, reason });
-        control = securityStore.setEmergencyStop(true, req.user!.uid, reason);
+        control = securityStore.setEmergencyStop(true, req.user!.uid, reason, sharedControl.epoch);
       } else {
         // Resume local state first; the shared latch is cleared last. If the
         // shared write fails, other instances remain stopped (fail-safe).
