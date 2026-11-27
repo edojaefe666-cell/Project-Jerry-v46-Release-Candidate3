@@ -17,6 +17,9 @@ import { SecurityStore } from './src/lib/securityStore.ts';
 import {
   createSharedApproval, listSharedApprovals, decideSharedApproval,
   reserveSharedApproval, finalizeSharedApprovalReservation, releaseSharedApprovalReservation,
+  createSharedContact, listSharedContacts, setSharedContactStatus,
+  listSharedSecurityAudit, verifySharedSecurityAudit, auditSharedSecurityEvent,
+  exportSharedSecuritySnapshot, restoreSharedSecuritySnapshot,
 } from './src/db/approvalStore.ts';
 import { synchronizeLocalEmergencyControl } from './src/lib/emergencyStopSync.ts';
 import { ExecutionRegistry } from './src/lib/executionRegistry.ts';
@@ -424,11 +427,11 @@ async function startServer() {
     }
   });
 
-  app.get('/api/security/contacts', requireAuth, (req: AuthRequest, res) => {
-    res.json({ contacts: securityStore.listContacts(req.user!.uid) });
+  app.get('/api/security/contacts', requireAuth, async (req: AuthRequest, res) => {
+    res.json({ contacts: await listSharedContacts(req.user!.uid) });
   });
 
-  app.post('/api/security/contacts', requireAuth, (req: AuthRequest, res) => {
+  app.post('/api/security/contacts', requireAuth, async (req: AuthRequest, res) => {
     const body = req.body as { name?: string; email?: string; purpose?: string };
     const name = String(body.name ?? '').trim();
     const email = String(body.email ?? '').trim().toLowerCase();
@@ -436,26 +439,26 @@ async function startServer() {
     if (!name || name.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || !purpose || purpose.length > 500) {
       res.status(400).json({ error: 'Valid name, email, and permitted purpose are required.' }); return;
     }
-    res.status(201).json({ contact: securityStore.createContact({ name, email, purpose, ownerUid: req.user!.uid }) });
+    res.status(201).json({ contact: await createSharedContact({ name, email, purpose, ownerUid: req.user!.uid }) });
   });
 
-  app.post('/api/security/contacts/:id/status', requireAuth, (req: AuthRequest, res) => {
+  app.post('/api/security/contacts/:id/status', requireAuth, async (req: AuthRequest, res) => {
     const status = (req.body as { status?: string }).status;
     if (status !== 'active' && status !== 'revoked') {
       res.status(400).json({ error: 'Contact status must be active or revoked.' }); return;
     }
-    const contact = securityStore.setContactStatus(req.params.id, status, req.user!.uid);
+    const contact = await setSharedContactStatus(req.params.id, status, req.user!.uid);
     if (!contact) { res.status(404).json({ error: 'Approved contact not found.' }); return; }
     res.json({ contact });
   });
 
-  app.get('/api/security/audit', requireAuth, (req: AuthRequest, res) => {
+  app.get('/api/security/audit', requireAuth, async (req: AuthRequest, res) => {
     const limit = Number(req.query.limit ?? 100);
-    res.json({ entries: securityStore.listAudit(Number.isFinite(limit) ? limit : 100, req.user!.uid) });
+    res.json({ entries: await listSharedSecurityAudit(req.user!.uid, Number.isFinite(limit) ? limit : 100) });
   });
 
-  app.get('/api/security/audit/integrity', requireAuth, (req: AuthRequest, res) => {
-    res.json(securityStore.verifyAuditChain(req.user!.uid));
+  app.get('/api/security/audit/integrity', requireAuth, async (req: AuthRequest, res) => {
+    res.json(await verifySharedSecurityAudit(req.user!.uid));
   });
 
   app.get('/api/security/session', requireAuth, (req: AuthRequest, res) => {
@@ -466,18 +469,18 @@ async function startServer() {
   app.post('/api/security/sessions/revoke-all', requireAuth, async (req: AuthRequest, res) => {
     try {
       await adminAuth.revokeRefreshTokens(req.user!.uid);
-      securityStore.audit(req.user!.uid, 'firebase.refresh_sessions.revoked', { uid: req.user!.uid });
+      await auditSharedSecurityEvent(req.user!.uid, 'firebase.refresh_sessions.revoked', { uid: req.user!.uid });
       res.json({ message: 'All Firebase refresh sessions have been revoked. The current client token will refresh shortly.' });
     } catch (error) {
       res.status(503).json({ error: error instanceof Error ? error.message : 'Unable to revoke Firebase refresh sessions.' });
     }
   });
 
-  app.post('/api/security/backup', requireAuth, (req: AuthRequest, res) => {
+  app.post('/api/security/backup', requireAuth, async (req: AuthRequest, res) => {
     try {
       const passphrase = String((req.body as { passphrase?: string }).passphrase ?? '');
       if (passphrase.length < 12) { res.status(400).json({ error: 'Backup passphrase must be at least 12 characters.' }); return; }
-      const backup = encryptSecurityBackup(securityStore.exportSnapshot(req.user!.uid), passphrase);
+      const backup = encryptSecurityBackup(await exportSharedSecuritySnapshot(req.user!.uid), passphrase);
       res.json({ backup, createdAt: new Date().toISOString() });
     } catch (error) {
       console.error('Internal server error:', error);
@@ -496,7 +499,7 @@ async function startServer() {
       // but before this security-state mutation begins.
       await withSharedExecutionLease(async () => {
         const snapshot = decryptSecurityBackup(String(body.backup ?? ''), String(body.passphrase));
-        securityStore.restoreSnapshotWithApproval(snapshot, req.user!.uid, String(body.approvalId ?? '').trim());
+        securityStore.validateSnapshot(snapshot);\n         await restoreSharedSecuritySnapshot(snapshot, req.user!.uid, String(body.approvalId ?? '').trim());
       });
       res.json({ restored: true, message: 'Jerry security records restored successfully.' });
     } catch (error) {
