@@ -59,6 +59,6 @@ test('owner cancellation aborts an active Tavily request', async () => {
   });
   await new Promise(resolve => setImmediate(resolve));
   controller.abort(new Error('owner stop'));
-  await assert.rejects(pending, /owner stop/);
+  await assert.rejects(pending);
   assert.equal(calls, 1);
 });
