@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateWithModelFallback, providerConfigurationFromEnvironment } from './providerAdapters';
 
+// Provider requests in this suite use mocked fetch implementations only.
+process.env.JERRY_PAID_SERVICES_ENABLED = '1';
+
 const jsonResponse = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
   status, headers: { 'content-type': 'application/json' },
 });
