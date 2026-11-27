@@ -501,7 +501,7 @@ export class SecurityStore {
     const verify = (rows: any[]) => {
       let previous = 'GENESIS';
       for (const row of rows) {
-        const details = typeof row.details === 'string' ? row.details : JSON.stringify(row.details ?? {});
+        const details = typeof row.details === 'string' ? row.details : JSON.stringify(canonicalize(row.details ?? {}));
         const expected = sha256(`${previous}\n${row.createdAt}\n${row.actorUid ?? 'system'}\n${row.event}\n${details}`);
         if (row.previousHash !== previous || row.entryHash !== expected) throw new Error(`Security backup audit chain is invalid at event ${row.event}.`);
         previous = row.entryHash;
