@@ -24,6 +24,8 @@ test('allows only canonical encrypted-memory paths and methods', () => {
   assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/encrypted'), true);
   assert.equal(isAllowedEncryptedMemoryTarget('POST', '/api/memory/encrypted'), true);
   assert.equal(isAllowedEncryptedMemoryTarget('PUT', '/api/memory/encrypted/record_1234567890abcdef'), true);
+  assert.equal(isAllowedEncryptedMemoryTarget('POST', '/api/memory/key-envelopes'), true);
+  assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/key-envelopes/1'), true);
   for (const [method, path] of [
     ['DELETE', '/api/memory/encrypted'], ['POST', '/api/memory/encrypted/x'],
     ['GET', '/api/memory/encrypted?limit=10'], ['GET', '/api/memory/../wallet'],
