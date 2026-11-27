@@ -835,7 +835,7 @@ async function startServer() {
       }
       const payload = { kind: input.kind, subjectId: input.subjectId.trim(), title: input.title.trim(), reason: input.reason.trim() };
       const command = `approval-create:${JSON.stringify(payload)}`;
-      const result = await withSharedExecutionLease(() => runIdempotentWorkspaceCommand(uid, email, key, command, async (current) => {
+      const result = await runIdempotentWorkspaceCommand(uid, email, key, command, async (current) => {
         const subjectExists = payload.kind === 'autonomous_task'
           ? current.tasks.some((item) => item.id === payload.subjectId)
           : payload.kind === 'self_upgrade'
@@ -948,6 +948,7 @@ async function startServer() {
         res.status(400).json({ error: 'A valid Bitcoin transaction hash is required for every settlement.' });
         return;
       }
+      await withSharedExecutionLease(async () => {
       const workspace = await getWorkspaceForUser(uid, email);
       if (!workspace) { res.status(404).json({ error: 'Workspace not initialized.' }); return; }
       const receivingAddresses = (workspace.walletAssets ?? [])
@@ -1003,8 +1004,9 @@ async function startServer() {
         }
         const state = { ...current, approvals: [approval, ...(current.approvals ?? [])], transactions: [tx, ...(current.transactions ?? [])] };
         return { state, response: { transaction: tx, approval, state } };
-        }));
+      });
       res.status(result.replayed ? 200 : 201).json({ ...result.response, replayed: result.replayed });
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to submit settlement evidence.';
       res.status(/already been recorded|Idempotency key is already bound/i.test(message) ? 409 : 500).json({ error: message });
