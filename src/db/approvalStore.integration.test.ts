@@ -20,6 +20,9 @@ test('shared PostgreSQL approval reservation is single-winner across independent
   const idA = randomUUID();
   const idB = randomUUID();
   let approvalId = '';
+  const initialControl = await pool.query('SELECT stopped FROM jerry_execution_control WHERE id=1');
+  if (typeof initialControl.rows[0]?.stopped !== 'boolean') throw new Error('Shared execution control fixture is missing.');
+  const originalStopped = initialControl.rows[0].stopped as boolean;
   try {
     await pool.query(
       "UPDATE jerry_execution_control SET stopped=false,epoch=epoch+1,reason='approval test fixture enabled',updated_by='test-fixture',updated_at=now() WHERE id=1");
@@ -53,6 +56,6 @@ test('shared PostgreSQL approval reservation is single-winner across independent
       await pool.query('DELETE FROM jerry_security_approvals WHERE owner_uid=$1', [ownerUid]);
     }
     await pool.query(
-      "UPDATE jerry_execution_control SET stopped=true,epoch=epoch+1,reason='approval test fixture cleanup',updated_by='test-fixture',updated_at=now() WHERE id=1");
+      "UPDATE jerry_execution_control SET stopped=$1,epoch=epoch+1,reason='approval test fixture cleanup',updated_by='test-fixture',updated_at=now() WHERE id=1", [originalStopped]);
   }
 });
