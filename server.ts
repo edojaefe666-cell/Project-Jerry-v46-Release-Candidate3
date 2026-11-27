@@ -2299,7 +2299,7 @@ async function startServer() {
           (focusHint ? `Owner focus hint: "${focusHint}". ` : '') +
           `Avoid repeating these titles: ${existingTitles.slice(0, 12).join('; ') || 'none'}. ` +
           'Return ONLY a valid JSON array of up to 3 methods with keys: title, methodCategory (one of "Automation Template", "Productized Service", "AI Micro-Tool", "Retainer Upsell", "Data & API Feed"), whyEasierAndFaster, executionShortcut, estimatedHoursSavedPerWeek (number), estimatedDailyProfitUsd (number), startupCapitalUsd (number). Explain pricing, volume, cost and capacity assumptions for any nonzero financial scenario. Prefer estimatedDailyProfitUsd 0 when assumptions cannot be substantiated.',
-        config: { tools: [{ googleSearch: {} }], abortSignal: execution.signal },
+        config: { tools: [{ googleSearch: {} }], maxOutputTokens: 2048, abortSignal: execution.signal },
       });
 
       if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
@@ -2500,6 +2500,7 @@ async function startServer() {
           `Return valid JSON matching the schema with a domain ("Buyer Psychology" | "Owner Style" | "Communication & Trust" | "Decision Friction" | "Offer Framing"), concise title, deep human observation, practicalApplication, and clarityScoreGain (2-5).`,
         config: {
           responseMimeType: 'application/json',
+          maxOutputTokens: 2048,
           responseSchema: {
             type: Type.OBJECT,
             properties: {
