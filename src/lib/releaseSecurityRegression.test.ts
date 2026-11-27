@@ -188,6 +188,7 @@ test('AI-enhanced owner learning is persisted only inside the shared execution l
 });
 
 test('isolated self-upgrade runner holds a shared lease until verification exits', () => {
+test('isolated self-upgrade verification holds the shared stop lease until the runner exits', () => {
   const start = server.indexOf('const runIsolatedTestsWithStop =');
   const end = server.indexOf('// Provider calls consume quota', start);
   const helper = server.slice(start, end);
