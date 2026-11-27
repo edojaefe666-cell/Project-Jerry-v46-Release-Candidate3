@@ -796,3 +796,21 @@ test('Jerry teaching refreshes durable stop after optional AI enhancement and be
   assert.ok(provider >= 0 && stop > provider && persist > stop,
     'teaching must refresh shared stop after enhancement and before memory persistence');
 });
+
+test('chat, goal planning, opportunity assessment and self-programming refresh shared stop after Gemini/provider completion', () => {
+  const cases = [
+    { name: 'chat', start: "app.post('/api/jerry/chat'", end: "app.post('/api/jerry/plan-goal'", call: 'await generateWithModelFallback(' },
+    { name: 'goal planning', start: "app.post('/api/jerry/plan-goal'", end: "app.post('/api/jerry/assess-opportunity'", call: 'await generateWithModelFallback(' },
+    { name: 'opportunity assessment', start: "app.post('/api/jerry/assess-opportunity'", end: "app.post('/api/jerry/self-program'", call: 'await generateWithModelFallback(' },
+    { name: 'self-programming', start: "app.post('/api/jerry/self-program'", end: "app.post('/api/jerry/discover-daily-ways'", call: 'await generateWithModelFallback(' },
+  ];
+  for (const item of cases) {
+    const start = server.indexOf(item.start);
+    const end = server.indexOf(item.end, start + item.start.length);
+    const route = server.slice(start, end);
+    const provider = route.indexOf(item.call);
+    const guard = route.indexOf('await sharedStopBlocksAcceptance()', provider);
+    assert.ok(start >= 0 && provider >= 0 && guard > provider,
+      `${item.name} must refresh the shared emergency-stop latch after provider completion`);
+  }
+});
