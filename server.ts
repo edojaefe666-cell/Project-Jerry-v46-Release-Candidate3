@@ -454,6 +454,8 @@ async function startServer() {
     },
   );
 
+  const deviceApprovalRateLimit = createSharedOwnerRateLimiter('device-approval', 8, 60_000);
+
   // Device enrollment is owner-scoped. New devices always remain pending until
   // an already-active device proves possession of its separate ECDSA signing key.
   app.get('/api/devices', requireAuth, async (req: AuthRequest, res) => {
@@ -652,7 +654,6 @@ async function startServer() {
   const goalPlanRateLimit = createSharedOwnerRateLimiter('goal-plan', 10, 60_000);
   const opportunityRateLimit = createSharedOwnerRateLimiter('opportunity', 10, 60_000);
   const voiceRateLimit = createSharedOwnerRateLimiter('voice', 20, 60_000);
-  const deviceApprovalRateLimit = createSharedOwnerRateLimiter('device-approval', 8, 60_000);
 
   const encryptSecurityBackup = (payload: unknown, passphrase: string): string => {
     const salt = randomBytes(16);
