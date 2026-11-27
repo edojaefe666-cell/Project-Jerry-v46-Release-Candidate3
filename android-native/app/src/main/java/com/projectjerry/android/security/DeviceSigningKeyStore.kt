@@ -97,7 +97,7 @@ internal object EcdsaSignatureEncoding {
     fun derToP1363(der: ByteArray): ByteArray {
         require(der.size >= 8 && der[0] == 0x30.toByte()) { "ECDSA DER sequence is malformed." }
         val sequenceLength = readLength(der, 1)
-        require(sequenceLength.first + sequenceLength.second + 2 == der.size) { "ECDSA DER sequence length is invalid." }
+        require(sequenceLength.first + sequenceLength.second + 1 == der.size) { "ECDSA DER sequence length is invalid." }
         var offset = 1 + sequenceLength.second
         require(der[offset] == 0x02.toByte()) { "ECDSA DER r integer is missing." }
         val rLength = readLength(der, offset + 1)
