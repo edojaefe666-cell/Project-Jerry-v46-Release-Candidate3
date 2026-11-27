@@ -983,3 +983,22 @@ test('production startup rejects unsupported multi-instance SQLite approval auth
     'topology must be checked before opening the local approval store',
   );
 });
+
+test('owner approval APIs and external-operation reservations use shared PostgreSQL authority', () => {
+  assert.match(server, /from '\.\/src\/db\/approvalStore\.ts'/);
+  for (const marker of [
+    'await listSharedApprovals',
+    'await createSharedApproval',
+    'await decideSharedApproval',
+    'await reserveSharedApproval',
+    'await finalizeSharedApprovalReservation',
+    'await releaseSharedApprovalReservation',
+  ]) {
+    assert.ok(server.includes(marker), `missing shared approval operation: ${marker}`);
+  }
+  const start = server.indexOf("app.get('/api/security/approvals'");
+  const end = server.indexOf("app.get('/api/security/emergency-stop'", start);
+  const routes = server.slice(start, end);
+  assert.doesNotMatch(routes, /securityStore\.(listApprovals|createApproval|decideApproval)/);
+  assert.match(routes, /async \(req: AuthRequest, res\)/);
+});
