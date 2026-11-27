@@ -3,6 +3,9 @@ import { digestDeviceHttpBody, type DeviceHttpRequestChallenge } from './deviceH
 import { getOrCreateJerryDeviceId } from './deviceIdentity.ts';
 import { signNativeDeviceMemoryRequestChallenge } from './nativeDeviceSigning.ts';
 import type { EncryptedMemoryRecord } from './encryptedMemoryRecord.ts';
+import type { DeviceKeyEnvelope } from './memoryKeyEnvelope.ts';
+import { getOrCreateJerryDeviceId } from './deviceIdentity.ts';
+import { unwrapNativeDeviceMemoryKeyEnvelope } from './nativeDeviceSigning.ts';
 
 export interface StoredEncryptedMemoryRecord extends EncryptedMemoryRecord {
   createdAt: string;
@@ -91,4 +94,43 @@ export async function updateEncryptedMemoryRecord(
     { record, expectedRevision },
   );
   return result.record;
+}
+
+/**
+ * Retrieves the envelope addressed to this already-approved device and installs
+ * the unwrapped data key inside Android's native protected storage.
+ */
+export async function fetchAndInstallDeviceMemoryKeyEnvelope(
+  ownerUid: string,
+  keyVersion: number,
+): Promise<void> {
+  if (typeof ownerUid !== 'string' || !ownerUid.trim() || ownerUid.length > 160 ||
+      !Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+    throw new Error('Memory key owner or version is invalid.');
+  }
+  const deviceId = getOrCreateJerryDeviceId();
+  const result = await signedEncryptedMemoryRequest<{
+    envelope: {
+      version: 1;
+      algorithm: DeviceKeyEnvelope['algorithm'];
+      context: DeviceKeyEnvelope['context'];
+      ephemeralPublicKey: DeviceKeyEnvelope['ephemeralPublicKey'];
+      salt: string;
+      iv: string;
+      ciphertext: string;
+    };
+  }>('GET', `/api/memory/key-envelopes/${keyVersion}`);
+  const envelope = result.envelope;
+  if (!envelope || envelope.version !== 1 ||
+      envelope.algorithm !== 'ECDH-P256-HKDF-SHA256-AES-256-GCM' ||
+      envelope.context.ownerUid !== ownerUid ||
+      envelope.context.deviceId !== deviceId ||
+      envelope.context.keyVersion !== keyVersion) {
+    throw new Error('Jerry returned a memory-key envelope for a different owner, device, or version.');
+  }
+  await unwrapNativeDeviceMemoryKeyEnvelope(envelope, {
+    ownerUid,
+    deviceId,
+    keyVersion,
+  });
 }
