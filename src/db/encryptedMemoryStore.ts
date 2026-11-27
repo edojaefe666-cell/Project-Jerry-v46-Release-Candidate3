@@ -12,13 +12,17 @@ export interface StoredEncryptedMemoryRecord extends EncryptedMemoryRecord {
 export function validateEncryptedMemoryRecord(record: unknown): string | null {
   if (!record || typeof record !== 'object') return 'An encrypted memory record is required.';
   const value = record as Record<string, unknown>;
+  const allowedFields = new Set(['schemaVersion', 'recordId', 'keyVersion', 'revision', 'iv', 'ciphertext']);
+  if (Object.keys(value).some((field) => !allowedFields.has(field))) {
+    return 'Encrypted memory record must contain ciphertext envelope fields only.';
+  }
   if (value.schemaVersion !== 1 ||
       typeof value.recordId !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(value.recordId) ||
       !Number.isSafeInteger(value.keyVersion) || (value.keyVersion as number) < 1 ||
       !Number.isSafeInteger(value.revision) || (value.revision as number) < 1 ||
       typeof value.iv !== 'string' || !/^[A-Za-z0-9_-]{16}$/.test(value.iv) ||
       typeof value.ciphertext !== 'string' || value.ciphertext.length < 23 ||
-      value.ciphertext.length > 64_000 || !/^[A-Za-z0-9_-]+$/.test(value.ciphertext)) {
+      value.ciphertext.length > 64_000 || value.ciphertext.length % 4 === 1 || !/^[A-Za-z0-9_-]+$/.test(value.ciphertext)) {
     return 'Encrypted memory record envelope is invalid.';
   }
   return null;
