@@ -73,7 +73,7 @@ export async function revokeApprovedJerryDevice(registrationId: string): Promise
     deviceName: string;
     revokedKeyEnvelopeCount: number;
     recordsPreserved: true;
-  }>('POST', '/api/devices/revoke', { registrationId });
+  }>('POST', `/api/devices/${registrationId}/revoke`, {});
   if (result.revoked !== true || result.recordsPreserved !== true ||
       typeof result.revokedKeyEnvelopeCount !== 'number') {
     throw new Error('Jerry did not confirm the complete device revocation.');
