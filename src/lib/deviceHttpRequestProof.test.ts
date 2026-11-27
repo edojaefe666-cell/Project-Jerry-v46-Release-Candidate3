@@ -49,7 +49,7 @@ test('verifies ECDSA proof only for the exact challenge and body bytes', async (
   const valid = { ...challenge, bodySha256: digest };
   const signature = await cryptoProvider.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey,
-    canonicalDeviceHttpChallenge(valid, now),
+    canonicalDeviceHttpChallenge(valid, now).slice().buffer as ArrayBuffer,
   );
   const bytes = new Uint8Array(signature);
   let binary = '';
