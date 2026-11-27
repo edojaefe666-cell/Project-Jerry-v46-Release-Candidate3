@@ -115,6 +115,15 @@ async function startServer() {
   });
   app.use(express.json({ limit: '12mb' }));
 
+  // Approval decisions, reservations and their audit chain still live in a
+  // process-local SQLite store. Until they are migrated to one PostgreSQL
+  // authority, production must explicitly declare a single-instance topology.
+  // A multi-instance deployment without this gate could accept conflicting
+  // approvals on separate SQLite databases, so it is unsupported and fails closed.
+  if (process.env.NODE_ENV === 'production' && process.env.JERRY_SECURITY_STORE_TOPOLOGY !== 'single_instance') {
+    throw new Error('Production startup blocked: Jerry approval authority is SQLite-local. Set JERRY_SECURITY_STORE_TOPOLOGY=single_instance only for a single durable server instance; multi-instance production is not yet supported.');
+  }
+
   const securityStore = new SecurityStore();
 
   // PostgreSQL is the authoritative cross-instance owner latch. SQLite
