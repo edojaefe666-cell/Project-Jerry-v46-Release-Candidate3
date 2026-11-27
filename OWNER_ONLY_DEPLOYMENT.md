@@ -21,6 +21,13 @@ With `NODE_ENV=production`, requests fail closed with HTTP 503 if the owner UID 
 - `GET /readyz` is a public, non-diagnostic readiness probe. In production it requires `JERRY_OWNER_UID`, a reachable PostgreSQL database, the SQL migration registry with the latest required migration applied, and a readable shared execution-control record. It returns only `{ "status": "ready" }` or a generic HTTP 503 `{ "status": "not_ready" }`; it never returns database errors, owner identifiers, or secret values.
 - Apply the numbered SQL migrations before routing user traffic to a new deployment. Configure the orchestrator to use `/healthz` for liveness and `/readyz` for readiness. Do not use the liveness endpoint as proof that Jerry is connected.
 
+## Android release artifacts and signing
+
+- CI builds the debug APK and an unsigned release APK candidate, runs Android unit tests and lint, and publishes SHA-256 checksums with both artifacts.
+- The unsigned release candidate is a verification artifact, not an installable final release. Do not distribute it.
+- Production signing requires an owner-controlled Android upload/release key. Never generate or store the production signing key in source control, the Android app, or chat. Configure signing only after the owner has safely created and backed up the key and explicitly authorized its use.
+- The connected release APK additionally requires a verified HTTPS backend origin. The CI placeholder origin is intentionally blocked by the Android API client and does not constitute a connected build.
+
 ## Rollout
 1. Independently verify the owner's Firebase UID.
 2. Store it in the server secret manager as `JERRY_OWNER_UID`.
