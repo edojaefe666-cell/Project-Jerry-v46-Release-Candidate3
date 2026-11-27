@@ -72,3 +72,34 @@ test('shared control write rolls back and releases the client on audit failure',
   assert.ok(calls.includes('ROLLBACK'));
   assert.equal(calls.at(-1), 'RELEASE');
 });
+
+test('PostgreSQL stop waits for an admitted execution lease to release', {
+  skip: process.env.JERRY_JOURNAL_TEST_DATABASE !== '1'
+    ? 'Set JERRY_JOURNAL_TEST_DATABASE=1 for a disposable PostgreSQL database.'
+    : false,
+}, async () => {
+  assert.notEqual(process.env.NODE_ENV, 'production');
+  assert.ok(process.env.SQL_HOST && process.env.SQL_USER && /test|tenant/i.test(process.env.SQL_DB_NAME ?? ''),
+    'Execution-control integration requires a disposable PostgreSQL database name containing test/tenant.');
+  const { createPool } = await import('./index.ts');
+  const pool = createPool();
+  const { acquireSharedExecutionLease, readSharedExecutionControl, updateSharedExecutionControl } = await import('./executionControl.ts');
+  await pool.query("UPDATE jerry_execution_control SET stopped=false, epoch=epoch+1, reason='integration fixture enabled', updated_by='test-fixture', updated_at=now() WHERE id=1");
+  const lease = await acquireSharedExecutionLease();
+  let stopFinished = false;
+  const stop = updateSharedExecutionControl({
+    stopped: true,
+    actorUid: 'integration-owner',
+    reason: 'integration test stop waits for active lease',
+  }).then((value) => { stopFinished = true; return value; });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(stopFinished, false, 'Owner stop must not commit while a protected side effect lease is held.');
+  } finally {
+    await lease.release();
+  }
+  const stopped = await stop;
+  assert.equal(stopped.stopped, true);
+  assert.equal((await readSharedExecutionControl()).stopped, true);
+  await pool.query("UPDATE jerry_execution_control SET stopped=false, epoch=epoch+1, reason='integration fixture cleanup', updated_by='test-fixture', updated_at=now() WHERE id=1");
+});
