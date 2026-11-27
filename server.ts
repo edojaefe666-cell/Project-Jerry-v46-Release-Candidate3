@@ -35,7 +35,7 @@ import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { requestDeviceRegistrationForUser, listDeviceRegistrationsForUser, isActiveDeviceForUser } from './src/db/deviceRegistrationStore.ts';
-import { users, encryptedMemoryRecords, deviceRegistrations, deviceMemoryKeyEnvelopes } from './src/db/schema.ts';
+import { users, encryptedMemoryRecords, deviceRegistrations, deviceMemoryKeyEnvelopes, deviceHttpRequestChallenges, deviceApprovalChallenges } from './src/db/schema.ts';
 import {
   createDeviceHttpRequestChallengeForUser,
   getDeviceHttpRequestChallengeForUser,
@@ -62,7 +62,7 @@ import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts
 import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
 import { applyLearningEnhancement, createOwnerLearningEntry } from './src/lib/learningMemory.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import {
   getWorkspaceForUser,
   saveDailySummaryForUser,
@@ -660,6 +660,94 @@ async function startServer() {
         revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
         createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
       })) };
+    });
+  });
+
+  // Device revocation is a signed, owner-confirmed command. It retains records
+  // and challenge evidence, but atomically blocks the target device and its
+  // key envelopes. The last active device and the authorizing device cannot
+  // revoke themselves through this path.
+  app.post('/api/devices/revoke', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    const body = req.body as { registrationId?: unknown };
+    if (!body || Object.keys(body).length !== 1 ||
+        typeof body.registrationId !== 'string' ||
+        !/^[A-Za-z0-9_-]{16,128}$/.test(body.registrationId)) {
+      res.status(400).json({ error: 'A single valid device registration ID is required.' });
+      return;
+    }
+    const ownerUid = req.user!.uid;
+    const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+    const challengeId = req.header('x-jerry-challenge-id') ?? '';
+    const proofChallenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
+    if (!proofChallenge || proofChallenge.method !== 'POST' ||
+        proofChallenge.path !== '/api/devices/revoke' ||
+        proofChallenge.deviceId.length < 16) {
+      res.status(403).json({ error: 'An active trusted-device signature is required.' });
+      return;
+    }
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      // Serialize all revocations for this owner so two concurrent requests
+      // cannot each observe two active devices and revoke both.
+      const [owner] = await tx.select({ id: users.id }).from(users)
+        .where(eq(users.uid, ownerUid)).limit(1).for('update');
+      if (!owner || owner.id !== ownerId) throw new Error('Owner account is unavailable.');
+      const [target] = await tx.select().from(deviceRegistrations)
+        .where(and(
+          eq(deviceRegistrations.userId, ownerId),
+          eq(deviceRegistrations.id, body.registrationId as string),
+          eq(deviceRegistrations.status, 'active'),
+        )).limit(1).for('update');
+      if (!target) throw new Error('The selected device is not active or does not belong to this owner.');
+      const [authorizer] = await tx.select({ id: deviceRegistrations.id }).from(deviceRegistrations)
+        .where(and(
+          eq(deviceRegistrations.userId, ownerId),
+          eq(deviceRegistrations.deviceId, proofChallenge.deviceId),
+          eq(deviceRegistrations.status, 'active'),
+        )).limit(1);
+      if (!authorizer) throw new Error('The authorizing device is no longer active.');
+      if (target.id === authorizer.id) throw new Error('Use another trusted device to revoke this phone.');
+      const active = await tx.select({ id: deviceRegistrations.id }).from(deviceRegistrations)
+        .where(and(eq(deviceRegistrations.userId, ownerId), eq(deviceRegistrations.status, 'active')));
+      if (active.length <= 1) throw new Error('Jerry will not revoke the last active owner device.');
+      const revokedAt = new Date();
+      const [revoked] = await tx.update(deviceRegistrations)
+        .set({ status: 'revoked', revokedAt })
+        .where(and(
+          eq(deviceRegistrations.userId, ownerId),
+          eq(deviceRegistrations.id, target.id),
+          eq(deviceRegistrations.status, 'active'),
+        )).returning({ id: deviceRegistrations.id, deviceName: deviceRegistrations.deviceName });
+      if (!revoked) throw new Error('Device state changed before revocation could be committed.');
+      const revokedEnvelopes = await tx.update(deviceMemoryKeyEnvelopes)
+        .set({ status: 'revoked', revokedAt })
+        .where(and(
+          eq(deviceMemoryKeyEnvelopes.userId, ownerId),
+          eq(deviceMemoryKeyEnvelopes.deviceRegistrationId, target.id),
+          eq(deviceMemoryKeyEnvelopes.status, 'active'),
+        )).returning({ id: deviceMemoryKeyEnvelopes.id });
+      await tx.update(deviceHttpRequestChallenges)
+        .set({ consumedAt: revokedAt })
+        .where(and(
+          eq(deviceHttpRequestChallenges.userId, ownerId),
+          eq(deviceHttpRequestChallenges.deviceRegistrationId, target.id),
+          isNull(deviceHttpRequestChallenges.consumedAt),
+        ));
+      await tx.update(deviceApprovalChallenges)
+        .set({ consumedAt: revokedAt })
+        .where(and(
+          eq(deviceApprovalChallenges.userId, ownerId),
+          isNull(deviceApprovalChallenges.consumedAt),
+          or(
+            eq(deviceApprovalChallenges.approverRegistrationId, target.id),
+            eq(deviceApprovalChallenges.targetRegistrationId, target.id),
+          ),
+        ));
+      return {
+        revoked: true,
+        deviceName: revoked.deviceName,
+        revokedKeyEnvelopeCount: revokedEnvelopes.length,
+        recordsPreserved: true,
+      };
     });
   });
 
