@@ -272,10 +272,10 @@ test('Jerry chat, goal planning and business assessment cancel provider work on 
     ['/api/jerry/self-program', '\n  // Persist a generated self-upgrade proposal'],
   ] as const;
   for (const [routePath, endMarker] of routes) {
-    const start = server.indexOf(\`app.post('\${routePath}'\`);
+    const start = server.indexOf(`app.post('${routePath}'`);
     const end = server.indexOf(endMarker, start);
     const route = server.slice(start, end > start ? end : server.length);
-    assert.ok(start >= 0, \`missing provider route: \${routePath}\`);
+    assert.ok(start >= 0, `missing provider route: ${routePath}`);
     assert.match(route.split('=>')[0], /requireExecutionEnabled/);
     assert.match(route, /executionRegistry\.register\(\)/);
     assert.match(route, /signal: execution\.signal/);
