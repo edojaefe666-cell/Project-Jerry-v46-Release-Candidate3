@@ -89,17 +89,6 @@ jobs:
           sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/app-debug.apk.sha256
           sha256sum app/build/outputs/apk/release/app-release-unsigned.apk > app/build/outputs/apk/release/app-release-unsigned.apk.sha256
 
-      - name: Smoke test Jerry on an Android 10 emulator
-        timeout-minutes: 15
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 29
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          disable-animations: true
-          script: cd android-native && gradle --no-daemon :app:connectedDebugAndroidTest
-
       # Publish compiled candidates even if the emulator smoke test fails, so
       # a device-installable diagnostic build is not lost with the test result.
       - name: Publish Android build candidates and SHA-256 checksums
@@ -114,3 +103,15 @@ jobs:
             android-native/app/build/outputs/apk/release/app-release-unsigned.apk.sha256
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Smoke test Jerry on an Android 10 emulator
+        timeout-minutes: 15
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: cd android-native && gradle --no-daemon :app:connectedDebugAndroidTest
+
