@@ -31,7 +31,7 @@ import { saveMemoryEntryForUser, searchMemoryForUser } from './src/db/memoryStor
 import { generateWithModelFallback, providerConfigurationFromEnvironment } from './src/lib/providerAdapters.ts';
 import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
-import { createOwnerRateLimiter } from './src/lib/requestRateLimit.ts';
+import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
 import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
@@ -267,11 +267,11 @@ async function startServer() {
 
   // Provider calls consume quota and may incur cost. Apply per-owner limits
   // after Firebase authentication and before parsing/generating model output.
-  const brainRateLimit = createOwnerRateLimiter({ limit: 20, windowMs: 60_000, maxKeys: 1_000 });
-  const chatRateLimit = createOwnerRateLimiter({ limit: 30, windowMs: 60_000, maxKeys: 1_000 });
-  const goalPlanRateLimit = createOwnerRateLimiter({ limit: 10, windowMs: 60_000, maxKeys: 1_000 });
-  const opportunityRateLimit = createOwnerRateLimiter({ limit: 10, windowMs: 60_000, maxKeys: 1_000 });
-  const voiceRateLimit = createOwnerRateLimiter({ limit: 20, windowMs: 60_000, maxKeys: 1_000 });
+  const brainRateLimit = createSharedOwnerRateLimiter('brain', 20, 60_000);
+  const chatRateLimit = createSharedOwnerRateLimiter('chat', 30, 60_000);
+  const goalPlanRateLimit = createSharedOwnerRateLimiter('goal-plan', 10, 60_000);
+  const opportunityRateLimit = createSharedOwnerRateLimiter('opportunity', 10, 60_000);
+  const voiceRateLimit = createSharedOwnerRateLimiter('voice', 20, 60_000);
 
   const encryptSecurityBackup = (payload: unknown, passphrase: string): string => {
     const salt = randomBytes(16);
