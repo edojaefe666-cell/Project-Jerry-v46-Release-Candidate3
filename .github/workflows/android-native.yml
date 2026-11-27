@@ -64,7 +64,7 @@ jobs:
           JERRY_ANDROID_STORE_PASSWORD: ${{ secrets.JERRY_ANDROID_STORE_PASSWORD }}
           JERRY_ANDROID_KEY_PASSWORD: ${{ secrets.JERRY_ANDROID_KEY_PASSWORD }}
         run: |
-          set -euo pipefail
+          set -eu
           test -n "$JERRY_ANDROID_KEYSTORE_BASE64" || { echo "Missing JERRY_ANDROID_KEYSTORE_BASE64 secret."; exit 1; }
           echo "::add-mask::$JERRY_ANDROID_KEY_ALIAS"
           echo "::add-mask::$JERRY_ANDROID_STORE_PASSWORD"
