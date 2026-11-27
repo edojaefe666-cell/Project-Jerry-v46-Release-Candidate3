@@ -14,9 +14,7 @@ class JerryPermissionManager(private val context: Context) {
         const val REQUEST_SCREENING_ROLE = 7211
         const val REQUEST_DIALER_ROLE = 7212
         val runtimePermissions = buildList {
-            add(android.Manifest.permission.READ_CONTACTS)
             add(android.Manifest.permission.RECORD_AUDIO)
-            add(android.Manifest.permission.READ_PHONE_STATE)
             add(android.Manifest.permission.MODIFY_AUDIO_SETTINGS)
             if (Build.VERSION.SDK_INT <= 30) add(android.Manifest.permission.BLUETOOTH)
         }
