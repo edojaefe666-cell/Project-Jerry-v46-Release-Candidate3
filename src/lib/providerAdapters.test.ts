@@ -25,6 +25,31 @@ test('does not send hosted model requests while pre-revenue spending is disabled
   }
 });
 
+test('continues to a local model when hosted spending is disabled', async () => {
+  const previous = process.env.JERRY_PAID_SERVICES_ENABLED;
+  const requested: string[] = [];
+  try {
+    process.env.JERRY_PAID_SERVICES_ENABLED = '0';
+    const result = await generateWithModelFallback({
+      task: 'chat',
+      prompt: 'keep this local',
+      configuration: {
+        google: { apiKey: 'must-not-be-used', model: 'gemini-test' },
+        local: { enabled: true, baseUrl: 'http://127.0.0.1:11434', model: 'local-test' },
+      },
+      fetchImpl: async (input) => {
+        requested.push(String(input));
+        return jsonResponse({ choices: [{ message: { content: 'Local-only response' } }] });
+      },
+    });
+    assert.equal(result.provider, 'local');
+    assert.equal(result.text, 'Local-only response');
+    assert.deepEqual(requested, ['http://127.0.0.1:11434/v1/chat/completions']);
+  } finally {
+    process.env.JERRY_PAID_SERVICES_ENABLED = previous ?? '1';
+  }
+});
+
 test('calls the configured Google provider and returns provider-neutral output', async () => {
   let requested = '';
   let headers: HeadersInit | undefined;
