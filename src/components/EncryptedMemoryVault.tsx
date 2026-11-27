@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import {
   createEncryptedMemoryRecord,
@@ -27,8 +27,27 @@ function makeRecordId(): string {
 
 export function EncryptedMemoryVault() {
   const { user } = useAuth();
-  const [keyReady, setKeyReady] = useState(false);
+  const ownerUid = user?.uid ?? null;
+  const activeOwnerUidRef = useRef<string | null>(ownerUid);
+  const [keyReadyOwnerUid, setKeyReadyOwnerUid] = useState<string | null>(null);
   const [records, setRecords] = useState<VaultEntry[]>([]);
+  const [recordsOwnerUid, setRecordsOwnerUid] = useState<string | null>(null);
+  const keyReady = ownerUid !== null && keyReadyOwnerUid === ownerUid;
+
+  // Never carry decrypted plaintext or readiness from one authenticated owner to another.
+  useEffect(() => {
+    activeOwnerUidRef.current = ownerUid;
+    setKeyReadyOwnerUid(null);
+    setRecords([]);
+    setRecordsOwnerUid(null);
+    setQuery('');
+    setMessage('');
+    setError('');
+    setTitle('');
+    setContent('');
+    setTags('');
+    setBusy(false);
+  }, [ownerUid]);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [category, setCategory] = useState<MemoryEntry['category']>('lesson');
@@ -40,72 +59,93 @@ export function EncryptedMemoryVault() {
   const [error, setError] = useState('');
 
   const visible = useMemo(() => {
+    if (!ownerUid || recordsOwnerUid !== ownerUid) return [];
     const needle = query.trim().toLocaleLowerCase();
     return records.filter((entry) => !entry.deleted && (!needle ||
       [entry.title, entry.content, entry.category, entry.area, ...entry.tags]
         .join(' ').toLocaleLowerCase().includes(needle)));
-  }, [records, query]);
+  }, [records, query, ownerUid, recordsOwnerUid]);
 
   const prepareKey = async () => {
-    if (!user?.uid) {
+    const requestedOwnerUid = user?.uid;
+    if (!requestedOwnerUid) {
       setError('Sign in to Jerry before setting up the encrypted vault.');
       return;
     }
     setBusy(true); setError(''); setMessage('');
     try {
       if (!window.JerryNativeAuth) throw new Error('Open Jerry inside the Android app to use its protected Keystore.');
-      await initializeAndroidMemoryKey(user.uid, 1);
-      const installed = await isAndroidMemoryKeyInstalled(user.uid, 1);
+      await initializeAndroidMemoryKey(requestedOwnerUid, 1);
+      if (activeOwnerUidRef.current !== requestedOwnerUid) return;
+      const installed = await isAndroidMemoryKeyInstalled(requestedOwnerUid, 1);
+      if (activeOwnerUidRef.current !== requestedOwnerUid) return;
       if (!installed) throw new Error('Android did not find the protected memory key after setup.');
-      setKeyReady(true);
+      setKeyReadyOwnerUid(requestedOwnerUid);
       setMessage('Android confirmed that the protected local memory key is installed.');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not initialize the local memory key.');
-    } finally { setBusy(false); }
+      if (activeOwnerUidRef.current === requestedOwnerUid) {
+        setError(cause instanceof Error ? cause.message : 'Could not initialize the local memory key.');
+      }
+    } finally {
+      if (activeOwnerUidRef.current === requestedOwnerUid) setBusy(false);
+    }
   };
 
   const loadVault = async () => {
-    if (!user?.uid) { setError('Sign in before loading the encrypted vault.'); return; }
+    const requestedOwnerUid = user?.uid;
+    if (!requestedOwnerUid) { setError('Sign in before loading the encrypted vault.'); return; }
     setBusy(true); setError(''); setMessage('');
     try {
       if (!window.JerryNativeAuth) throw new Error('The Android Keystore bridge is unavailable.');
-      const installed = await isAndroidMemoryKeyInstalled(user.uid, 1);
+      const installed = await isAndroidMemoryKeyInstalled(requestedOwnerUid, 1);
+      if (activeOwnerUidRef.current !== requestedOwnerUid) return;
       if (!installed) {
-        setKeyReady(false);
+        setKeyReadyOwnerUid(null);
         setRecords([]);
+        setRecordsOwnerUid(null);
         throw new Error('This device has no installed key for this memory vault. Confirm or restore the owner-approved key before loading records.');
       }
       const envelopes: StoredEncryptedMemoryRecord[] = await listEncryptedMemoryRecords();
+      if (activeOwnerUidRef.current !== requestedOwnerUid) return;
       const decrypted: VaultEntry[] = [];
       const failures: string[] = [];
       for (const envelope of envelopes) {
         try {
           const context = {
-            ownerUid: user.uid,
+            ownerUid: requestedOwnerUid,
             recordId: envelope.recordId,
             keyVersion: envelope.keyVersion,
             revision: envelope.revision,
           };
           const payload = await decryptMemoryRecordOnAndroid(envelope, context);
+          if (activeOwnerUidRef.current !== requestedOwnerUid) return;
           decrypted.push({ ...payload, recordId: envelope.recordId });
         } catch {
+          if (activeOwnerUidRef.current !== requestedOwnerUid) return;
           failures.push(envelope.recordId);
         }
       }
+      if (activeOwnerUidRef.current !== requestedOwnerUid) return;
       setRecords(decrypted);
-      setKeyReady(true);
+      setRecordsOwnerUid(requestedOwnerUid);
+      setKeyReadyOwnerUid(requestedOwnerUid);
       setMessage(failures.length
         ? `Loaded ${decrypted.length} record(s); ${failures.length} could not be decrypted on this device.`
         : `Loaded and decrypted ${decrypted.length} encrypted record(s) on this device.`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not load the encrypted vault.');
-    } finally { setBusy(false); }
+      if (activeOwnerUidRef.current === requestedOwnerUid) {
+        setError(cause instanceof Error ? cause.message : 'Could not load the encrypted vault.');
+      }
+    } finally {
+      if (activeOwnerUidRef.current === requestedOwnerUid) setBusy(false);
+    }
   };
 
-  const saveRecord = async (event: React.FormEvent<HTMLFormElement>) => {
+  const saveRecord = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!user?.uid) { setError('Sign in before saving encrypted memory.'); return; }
-    if (!keyReady) { setError('First confirm the local Android encryption key.'); return; }
+    const requestedOwnerUid = user?.uid;
+    if (!requestedOwnerUid) { setError('Sign in before saving encrypted memory.'); return; }
+    if (!keyReady || keyReadyOwnerUid !== requestedOwnerUid) { setError('First confirm the local Android encryption key.'); return; }
     setBusy(true); setError(''); setMessage('');
     try {
       const now = new Date().toISOString();
@@ -122,16 +162,24 @@ export function EncryptedMemoryVault() {
         updatedAt: now,
         deleted: false,
       };
-      const context = { ownerUid: user.uid, recordId, keyVersion: 1, revision: 1 };
+      const context = { ownerUid: requestedOwnerUid, recordId, keyVersion: 1, revision: 1 };
       const encrypted = await encryptMemoryRecordOnAndroid(payload, context);
+      if (activeOwnerUidRef.current !== requestedOwnerUid) return;
       const stored = await createEncryptedMemoryRecord(encrypted);
+      if (activeOwnerUidRef.current !== requestedOwnerUid) return;
       const verified = await decryptMemoryRecordOnAndroid(stored, context);
+      if (activeOwnerUidRef.current !== requestedOwnerUid) return;
       setRecords((current) => [{ ...verified, recordId }, ...current.filter((item) => item.recordId !== recordId)]);
+      setRecordsOwnerUid(requestedOwnerUid);
       setTitle(''); setContent(''); setTags('');
       setMessage('Encrypted record saved. Its content was encrypted on this phone before upload and read back locally.');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save encrypted memory.');
-    } finally { setBusy(false); }
+      if (activeOwnerUidRef.current === requestedOwnerUid) {
+        setError(cause instanceof Error ? cause.message : 'Could not save encrypted memory.');
+      }
+    } finally {
+      if (activeOwnerUidRef.current === requestedOwnerUid) setBusy(false);
+    }
   };
 
   return (
@@ -179,7 +227,7 @@ export function EncryptedMemoryVault() {
         {visible.length === 0 ? <p className="text-xs text-slate-500">No decrypted records loaded. Choose “Load encrypted vault” to fetch and decrypt records on this phone.</p> :
           <div className="divide-y divide-slate-200">
             {visible.map((entry) => <article key={entry.recordId} className="py-3 first:pt-0">
-              <p className="text-[11px] text-indigo-700">{entry.area.replaceAll('_', ' ')} · {entry.category} · {entry.createdAt.slice(0, 10)}</p>
+              <p className="text-[11px] text-indigo-700">{entry.area.split('_').join(' ')} · {entry.category} · {entry.createdAt.slice(0, 10)}</p>
               <h4 className="mt-1 text-sm font-semibold text-slate-900">{entry.title}</h4>
               <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-700">{entry.content}</p>
               {entry.tags.length > 0 && <p className="mt-1 text-[11px] text-slate-500">{entry.tags.join(' · ')}</p>}
