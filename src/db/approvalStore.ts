@@ -276,6 +276,7 @@ export interface SharedSecuritySnapshot {
   approvals: Array<Record<string, unknown>>;
   contacts: Array<Record<string, unknown>>;
   audit: Array<Record<string, unknown>>;
+  legacyAuditArchive?: Array<Record<string, unknown>>;
 }
 
 export async function exportSharedSecuritySnapshot(ownerUid: string): Promise<SharedSecuritySnapshot> {
@@ -317,6 +318,8 @@ export async function restoreSharedSecuritySnapshot(
 
     await client.query('DELETE FROM jerry_security_approved_contacts WHERE owner_uid=$1', [ownerUid]);
     await client.query('DELETE FROM jerry_security_audit WHERE owner_uid=$1', [ownerUid]);
+    await client.query('DELETE FROM jerry_security_legacy_audit_archive WHERE owner_uid=$1', [ownerUid]);
+    await client.query("UPDATE jerry_security_approvals SET status=CASE WHEN status='pending' THEN 'rejected' ELSE status END, consumed_at=CASE WHEN status='approved' THEN COALESCE(consumed_at,now()) ELSE consumed_at END, reservation_id=NULL, reserved_at=NULL WHERE owner_uid=$1 AND consumed_at IS NULL", [ownerUid]);
     for (const contact of snapshot.contacts) {
       await client.query(
         `INSERT INTO jerry_security_approved_contacts(id,owner_uid,name,email,purpose,status,created_at,updated_at)
