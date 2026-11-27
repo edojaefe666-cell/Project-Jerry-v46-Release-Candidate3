@@ -117,9 +117,10 @@ async function startServer() {
 
   const securityStore = new SecurityStore();
 
-  // The owner-controlled SQLite latch and the out-of-band environment switch
-  // are independent fail-closed controls. If the control store cannot be read,
-  // sensitive execution remains stopped.
+  // PostgreSQL is the authoritative cross-instance owner latch. SQLite
+  // mirrors that state and preserves local audit evidence; the environment
+  // switch remains an independent out-of-band hard stop. If SQLite cannot be
+  // read or reconciled, sensitive execution remains stopped.
   const isEmergencyStopActive = (): boolean => {
     if (process.env.JERRY_EMERGENCY_STOP === '1') return true;
     try {
