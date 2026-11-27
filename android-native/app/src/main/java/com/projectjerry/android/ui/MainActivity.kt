@@ -320,6 +320,53 @@ class MainActivity : AppCompatActivity() {
                         .show()
                     true
                 }
+                "signFirstDeviceBootstrapChallenge" -> {
+                    val challenge = message.optJSONObject("challenge")
+                        ?: throw IllegalArgumentException("First-device bootstrap challenge is required.")
+                    val registrationId = challenge.optString("targetRegistrationId")
+                    val deviceId = challenge.optString("approverDeviceId")
+                    require(registrationId.matches(Regex("[A-Za-z0-9_-]{16,128}")) &&
+                        deviceId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) {
+                        "First-device identity is invalid."
+                    }
+                    AlertDialog.Builder(this)
+                        .setTitle("Trust this as Jerry's first owner device?")
+                        .setMessage(
+                            "No other Jerry owner device is currently trusted. This will make this Android installation the first trusted owner device. " +
+                                "Device ID: " + deviceId + ". Registration: " + registrationId + ". " +
+                                "Only continue if you personally initiated this setup."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "First-device trust was cancelled by the owner.").toString()
+                            )
+                        }
+                        .setPositiveButton("Trust this device") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                val result = deviceSigningKeyStore.signApprovalChallenge(challenge.toString())
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId)
+                                        .put("proof", result).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "First-device bootstrap signing failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "First-device trust was cancelled by the owner.").toString()
+                            )
+                        }
+                        .show()
+                    true
+                }
                 "signDeviceApprovalChallenge" -> {
                     val challenge = message.optJSONObject("challenge")
                         ?: throw IllegalArgumentException("Approval challenge is required.")
