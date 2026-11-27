@@ -320,7 +320,7 @@ class DeviceMemoryExchangeKeyStore(
         val salt = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
         val iv = ByteArray(GCM_IV_BYTES).also { java.security.SecureRandom().nextBytes(it) }
         val contextBytes = recoveryContext.toByteArray(Charsets.UTF_8)
-        val info = ("Jerry owner memory recovery v1\\u0000" + recoveryContext).toByteArray(Charsets.UTF_8)
+        val info = ("Jerry owner memory recovery v1\u0000" + recoveryContext).toByteArray(Charsets.UTF_8)
         var wrappingKey: ByteArray? = null
         var ciphertext: ByteArray? = null
         try {
@@ -383,7 +383,7 @@ class DeviceMemoryExchangeKeyStore(
         val iv = decodeBase64Url(envelope.getString("iv"), GCM_IV_BYTES, "recovery IV")
         val ciphertext = decodeBase64Url(envelope.getString("ciphertext"), 48, "recovery ciphertext")
         val contextBytes = expectedRecoveryContext.toByteArray(Charsets.UTF_8)
-        val info = ("Jerry owner memory recovery v1\\u0000" + expectedRecoveryContext).toByteArray(Charsets.UTF_8)
+        val info = ("Jerry owner memory recovery v1\u0000" + expectedRecoveryContext).toByteArray(Charsets.UTF_8)
         var wrappingKey: ByteArray? = null
         var rawMemoryKey: ByteArray? = null
         try {
