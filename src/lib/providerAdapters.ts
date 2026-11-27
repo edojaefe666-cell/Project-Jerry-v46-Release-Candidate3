@@ -167,8 +167,10 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
   const failures: string[] = [];
   for (const route of routes) {
     if (options.signal?.aborted) throw new Error('Jerry Brain request cancelled by emergency stop or client disconnect.');
-    if (route.provider !== 'local') assertHostedProviderSpendEnabled(`${route.provider}/${route.model}`);
     try {
+      // A disabled hosted route should fail over to a genuinely local route,
+      // not abort the entire ordered route list before local execution is tried.
+      if (route.provider !== 'local') assertHostedProviderSpendEnabled(`${route.provider}/${route.model}`);
       const executeAttempt = async (): Promise<ModelGenerationResult> => {
         let reservation: ProviderUsageReservation | undefined;
         let costReservation: ProviderCostReservation | undefined;
