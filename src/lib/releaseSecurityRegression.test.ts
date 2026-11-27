@@ -640,7 +640,7 @@ test('standalone upgrade verification holds the shared stop lease during the ext
 });
 
 test('on-chain wallet sync holds the shared stop lease across external reads and workspace persistence', () => {
-  const start = server.indexOf("app.post('/api/wallet/sync-onchain'");
+  const start = server.indexOf("app.post('/api/wallet/sync-onchain'"));
   const end = server.indexOf("app.post('/api/wallet/verify-tx'", start);
   const route = server.slice(start, end);
   assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
@@ -1055,7 +1055,7 @@ test('direct Coinbase and Blockstream requests reserve shared owner operations b
   assert.match(server, /async function reserveExternalServiceOperations\(ownerUid: string, operationCount: number\)/);
   assert.match(server, /for \(let index = 0; index < operationCount; index \+= 1\)/);
   const routes = [
-    { marker: "app.post('/api/wallet/settlement", count: 3 },
+    { marker: "app.post('/api/wallet/commands/record-income", count: 3 },
     { marker: "app.post('/api/wallet/sync-onchain", count: 2 },
     { marker: "app.post('/api/wallet/verify-tx", count: 2 },
     { marker: "app.post('/api/wallet/commands/reconcile-tx", count: 2 },
