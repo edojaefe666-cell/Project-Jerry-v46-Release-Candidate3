@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Clock3, KeyRound, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 import { apiJson } from '../lib/apiClient';
 import { useAuth } from '../lib/AuthContext';
@@ -38,6 +38,19 @@ export function DeviceManagement() {
   const [recoveryInput, setRecoveryInput] = useState('');
   const [recoveryConfigured, setRecoveryConfigured] = useState(false);
   const { user, reauthenticateWithGoogle } = useAuth();
+  const activeOwnerUidRef = useRef<string | null>(user?.uid ?? null);
+
+  useEffect(() => {
+    activeOwnerUidRef.current = user?.uid ?? null;
+    // Recovery material is account-scoped and must not survive sign-out or
+    // switching to another Firebase owner account.
+    setRecoverySecret('');
+    setRecoveryEnvelope(null);
+    setRecoveryBackupAcknowledged(false);
+    setRecoveryInput('');
+    setRecoveryConfigured(false);
+  }, [user?.uid]);
+
 
   const currentDeviceId = useMemo(() => {
     try { return getOrCreateJerryDeviceId(); } catch { return null; }
@@ -138,19 +151,22 @@ export function DeviceManagement() {
   };
   const createRecoveryBackup = async () => {
     if (!user?.uid || !currentRecord || currentRecord.status !== 'active' || !nativeAvailable) return;
+    const ownerUid = user.uid;
     setBusy(true); setError(null); setMessage(null);
     try {
       await reauthenticateWithGoogle();
+      if (activeOwnerUidRef.current !== ownerUid) throw new Error('The signed-in owner account changed. Recovery setup was cancelled.');
       try {
-        await getOwnerMemoryRecoveryEnvelope(user.uid, 1);
+        await getOwnerMemoryRecoveryEnvelope(ownerUid, 1);
         setRecoveryConfigured(true);
         setMessage('An owner recovery envelope already exists for key version 1. Jerry will not overwrite it; use your existing offline recovery key.');
         return;
       } catch (cause) {
         if (!(cause instanceof Error) || !/no owner recovery envelope exists|not found|404/i.test(cause.message)) throw cause;
       }
-      if (!(await isAndroidMemoryKeyInstalled(user.uid, 1))) throw new Error('This phone does not have the protected memory key. Restore it before creating a recovery backup.');
-      const created = await createNativeOwnerMemoryRecoveryEnvelope(user.uid, currentDeviceId || getOrCreateJerryDeviceId(), 1);
+      if (!(await isAndroidMemoryKeyInstalled(ownerUid, 1))) throw new Error('This phone does not have the protected memory key. Restore it before creating a recovery backup.');
+      const created = await createNativeOwnerMemoryRecoveryEnvelope(ownerUid, currentDeviceId || getOrCreateJerryDeviceId(), 1);
+      if (activeOwnerUidRef.current !== ownerUid) throw new Error('The signed-in owner account changed. Recovery material was discarded.');
       setRecoverySecret(created.recoveryKey); setRecoveryEnvelope(created.envelope); setRecoveryBackupAcknowledged(false);
       setMessage('Your one-time recovery key is ready. Store it offline before Jerry uploads the encrypted envelope.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Owner recovery setup failed.'); }
@@ -158,10 +174,12 @@ export function DeviceManagement() {
   };
 
   const storeRecoveryBackup = async () => {
-    if (!user?.uid || !recoverySecret || !recoveryEnvelope || !recoveryBackupAcknowledged) return;
+    if (!user?.uid || activeOwnerUidRef.current !== user.uid || !recoverySecret || !recoveryEnvelope || !recoveryBackupAcknowledged) return;
+    const ownerUid = user.uid;
     setBusy(true); setError(null); setMessage(null);
     try {
-      await storeOwnerMemoryRecoveryEnvelope(recoveryEnvelope, user.uid, 1);
+      await storeOwnerMemoryRecoveryEnvelope(recoveryEnvelope, ownerUid, 1);
+      if (activeOwnerUidRef.current !== ownerUid) throw new Error('The signed-in owner account changed during recovery storage.');
       setRecoverySecret(''); setRecoveryEnvelope(null); setRecoveryBackupAcknowledged(false); setRecoveryConfigured(true);
       setMessage('Encrypted recovery envelope stored. Jerry did not receive or store your recovery secret. Keep your offline copy safe.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Encrypted recovery backup could not be stored.'); }
@@ -170,13 +188,18 @@ export function DeviceManagement() {
 
   const restoreFromOwnerRecovery = async () => {
     if (!user?.uid || !nativeAvailable) return;
+    const ownerUid = user.uid;
+    const suppliedRecoveryKey = recoveryInput.trim();
     setBusy(true); setError(null); setMessage(null);
     try {
       await reauthenticateWithGoogle();
-      const envelope = await getOwnerMemoryRecoveryEnvelope(user.uid, 1);
+      if (activeOwnerUidRef.current !== ownerUid) throw new Error('The signed-in owner account changed. Recovery was cancelled.');
+      const envelope = await getOwnerMemoryRecoveryEnvelope(ownerUid, 1);
+      if (activeOwnerUidRef.current !== ownerUid) throw new Error('The signed-in owner account changed. Recovery was cancelled.');
       const deviceId = getOrCreateJerryDeviceId();
-      await restoreNativeOwnerMemoryRecoveryEnvelope(envelope, recoveryInput.trim(), user.uid, deviceId, 1);
-      if (!(await isAndroidMemoryKeyInstalled(user.uid, 1))) throw new Error('Android did not confirm that the recovered memory key was installed.');
+      await restoreNativeOwnerMemoryRecoveryEnvelope(envelope, suppliedRecoveryKey, ownerUid, deviceId, 1);
+      if (activeOwnerUidRef.current !== ownerUid) throw new Error('The signed-in owner account changed during local recovery.');
+      if (!(await isAndroidMemoryKeyInstalled(ownerUid, 1))) throw new Error('Android did not confirm that the recovered memory key was installed.');
       setRecoveryInput('');
       setMessage('Owner-held recovery succeeded. The memory key is protected locally on this phone; encrypted records were not changed.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Owner-held memory recovery failed.'); }
