@@ -20,6 +20,14 @@ export interface NativeDeviceHttpProof {
   challengeId: string;
   signature: string;
 }
+export interface OwnerMemoryRecoveryEnvelope {
+  version: 1;
+  algorithm: 'HKDF-SHA256-AES-256-GCM';
+  context: { ownerUid: string; keyVersion: number };
+  salt: string;
+  iv: string;
+  ciphertext: string;
+}
 
 type NativeBridgeReply = {
   requestId?: string;
@@ -33,6 +41,8 @@ type NativeBridgeReply = {
   plaintextJson?: string;
   created?: boolean;
   envelope?: DeviceKeyEnvelope;
+  recoveryKey?: string;
+  recoveryEnvelope?: OwnerMemoryRecoveryEnvelope;
 };
 
 type NativeBridge = {
@@ -308,4 +318,57 @@ export async function wrapNativeMemoryKeyForApprovedDevice(
     throw new Error('Android did not return a correctly scoped memory-key envelope.');
   }
   return reply.envelope;
+}
+
+/**
+ * Creates a random owner-held recovery secret and an encrypted memory-key
+ * envelope. The recovery secret is returned for one-time owner display only;
+ * callers must never upload, log, or persist it in Jerry/cloud storage.
+ */
+export async function createNativeOwnerMemoryRecoveryEnvelope(
+  ownerUid: string,
+  deviceId: string,
+  keyVersion: number,
+): Promise<{ recoveryKey: string; envelope: OwnerMemoryRecoveryEnvelope }> {
+  const reply = await requestNative<NativeBridgeReply>('createOwnerMemoryRecoveryEnvelope', {
+    ownerUid,
+    deviceId,
+    keyVersion,
+  });
+  const envelope = reply.recoveryEnvelope;
+  if (typeof reply.recoveryKey !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(reply.recoveryKey) ||
+      !envelope || envelope.version !== 1 ||
+      envelope.algorithm !== 'HKDF-SHA256-AES-256-GCM' ||
+      envelope.context.ownerUid !== ownerUid || envelope.context.keyVersion !== keyVersion ||
+      !/^[A-Za-z0-9_-]{43}$/.test(envelope.salt) ||
+      !/^[A-Za-z0-9_-]{16}$/.test(envelope.iv) ||
+      !/^[A-Za-z0-9_-]{64}$/.test(envelope.ciphertext)) {
+    throw new Error('Android did not return a valid owner-held memory recovery envelope.');
+  }
+  return { recoveryKey: reply.recoveryKey, envelope };
+}
+
+/** Restores the memory key locally from an owner-held recovery secret and encrypted envelope. */
+export async function restoreNativeOwnerMemoryRecoveryEnvelope(
+  envelope: OwnerMemoryRecoveryEnvelope,
+  recoveryKey: string,
+  ownerUid: string,
+  deviceId: string,
+  keyVersion: number,
+): Promise<void> {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(recoveryKey) ||
+      envelope?.version !== 1 || envelope.algorithm !== 'HKDF-SHA256-AES-256-GCM' ||
+      envelope.context?.ownerUid !== ownerUid || envelope.context?.keyVersion !== keyVersion) {
+    throw new Error('Owner memory recovery information is invalid or belongs to another owner/version.');
+  }
+  const reply = await requestNative<NativeBridgeReply>('restoreOwnerMemoryRecoveryEnvelope', {
+    recoveryEnvelope: envelope,
+    recoveryKey,
+    ownerUid,
+    deviceId,
+    keyVersion,
+  });
+  if (reply.installed !== true) {
+    throw new Error('Android did not confirm protected owner memory-key recovery.');
+  }
 }
