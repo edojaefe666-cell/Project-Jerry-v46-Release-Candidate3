@@ -146,7 +146,7 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
         if (signal?.aborted) {
           await client.query(
             `UPDATE wallet_journal_outbox
-                SET status = 'pending',
+                SET status = 'pending', claim_token = NULL,
                     available_at = now(),
                     last_error = 'Paused by Jerry emergency stop after journal operation',
                     updated_at = now()
@@ -168,7 +168,7 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
           break;
         }
 
-        await client.query(
+        const finalized = await client.query(
           `UPDATE wallet_journal_outbox
               SET status = 'processed', claim_token = NULL,
                   processed_at = now(),
@@ -178,10 +178,10 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
           [row.id, claimToken],
         );
 
-        // Count every successfully completed outbox row, including safe no-op
-        // duplicate deliveries whose journal effect was already applied.
-        // Journal posting counts are measured from the ledger, not this worker metric.
-        processed++;
+        // A stale worker may finish its idempotent journal call after a newer
+        // worker has reclaimed the row. Only the current claim owner may count
+        // or finalize that queue item.
+        if (finalized.rowCount === 1) processed++;
       } catch (error) {
         const interrupted = signal?.aborted === true;
         const message = interrupted
