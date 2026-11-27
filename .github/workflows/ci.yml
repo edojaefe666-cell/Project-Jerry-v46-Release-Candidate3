@@ -71,3 +71,5 @@ jobs:
           SQL_PASSWORD: jerry_test
           SQL_DB_NAME: jerry_tenant_test
         run: bun run verify:release
+      - name: Build production backend container
+        run: docker build --tag jerry-backend:ci .
