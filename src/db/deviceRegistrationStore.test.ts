@@ -6,6 +6,7 @@ const valid = {
   deviceId: 'device_12345678901234567890',
   deviceName: 'Jerry Android',
   platform: 'android' as const,
+  signingPublicKey: { kty: 'EC' as const, crv: 'P-256' as const, x: 'C'.repeat(43), y: 'D'.repeat(43) },
   exchangePublicKey: {
     kty: 'EC' as const,
     crv: 'P-256' as const,
