@@ -1,5 +1,14 @@
 import { resolveModelRoute, type ModelProvider, type ProviderConfiguration } from './modelRouter';
 import { reserveConfiguredProviderOperation } from '../db/providerOperationStore.ts';
+import { withSharedExecutionLease } from '../db/executionControl.ts';
+
+async function fetchUnderOwnerLease<T>(ownerUid: string | undefined, work: () => Promise<T>): Promise<T> {
+  if (!ownerUid) {
+    if (process.env.NODE_ENV === 'production') throw new Error('Authenticated owner identity is required for provider execution protection.');
+    return work();
+  }
+  return withSharedExecutionLease(work);
+}
 
 export interface VisionAnalysisOptions {
   prompt: string;
@@ -22,9 +31,9 @@ function createRequestAbort(signal: AbortSignal | undefined, timeoutMs: number) 
  const timer=setTimeout(()=>controller.abort(new Error('Provider request timed out.')),timeoutMs);
  return {signal:controller.signal,cleanup:()=>{clearTimeout(timer);signal?.removeEventListener('abort',abortFromParent);}};
 }
-async function postJson(url:string,headers:Record<string,string>,body:unknown,timeoutMs:number,fetchImpl:typeof fetch,parentSignal?:AbortSignal) {
+async function postJson(url:string,headers:Record<string,string>,body:unknown,timeoutMs:number,fetchImpl:typeof fetch,parentSignal?:AbortSignal,ownerUid?:string) {
  throwIfAborted(parentSignal);const request=createRequestAbort(parentSignal,timeoutMs);
- try {const response=await fetchImpl(url,{method:'POST',headers,body:JSON.stringify(body),signal:request.signal});
+ try {const response=await fetchUnderOwnerLease(undefined, () => fetchImpl(url,{method:'POST',headers,body:JSON.stringify(body),signal:request.signal}));
     if (request.signal.aborted) {
       try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
       throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
@@ -90,7 +99,7 @@ export async function analyzeImageWithModelFallback(options: VisionAnalysisOptio
           { model: route.model, messages: [{ role: 'user', content: [
             { type: 'text', text: prompt },
             { type: 'image_url', image_url: { url: `data:${options.mimeType};base64,${options.base64Data}` } },
-          ] }] }, timeoutMs, fetchImpl, options.signal);
+          ] }] }, timeoutMs, fetchImpl, options.signal, options.ownerUid);
       } else continue;
       return { text: readText(route.provider, body), provider: route.provider, model: route.model };
     } catch (error) {
@@ -136,7 +145,7 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
         const model = options.openaiModel || 'gpt-4o-mini-tts';
         const request = createRequestAbort(options.signal, timeoutMs);
         try {
-          const response = await fetchImpl('https://api.openai.com/v1/audio/speech', {
+          const response = await fetchUnderOwnerLease(options.ownerUid, () => fetchImpl('https://api.openai.com/v1/audio/speech', {
             method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
             body: JSON.stringify({ model, input: text, voice: ['alloy','ash','ballad','coral','echo','fable','onyx','nova','sage','shimmer','verse','marin','cedar'].includes(options.voice || '') ? options.voice : 'onyx', instructions: options.style || 'Speak clearly in a calm, warm, confident tone.', response_format: 'mp3' }),
             signal: request.signal,
@@ -215,7 +224,7 @@ export async function transcribeAudioWithModelFallback(options: AudioTranscripti
         form.append('file', new Blob([bytes], { type: options.mimeType }), `recording.${extension}`);
         const request = createRequestAbort(options.signal, timeoutMs);
         try {
-          const response = await fetchImpl('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form, signal: request.signal });
+          const response = await fetchUnderOwnerLease(options.ownerUid, () => fetchImpl('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form, signal: request.signal }));
           if (request.signal.aborted) {
             try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
             throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
