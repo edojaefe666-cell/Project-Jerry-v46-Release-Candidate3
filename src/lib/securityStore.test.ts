@@ -359,3 +359,23 @@ test('workspace reset approval is exact-scope, reserved once, and consumed on fi
   );
   store.close();
 });
+
+
+test('emergency-stop state and audit event roll back together when audit persistence fails', () => {
+  const store = new SecurityStore(':memory:');
+  try {
+    const before = store.getEmergencyStop();
+    const originalAudit = store.audit.bind(store);
+    store.audit = (() => { throw new Error('audit disk failure'); }) as typeof store.audit;
+    assert.throws(
+      () => store.setEmergencyStop(false, 'owner-atomic', 'Owner resume must be audited'),
+      /audit disk failure/,
+    );
+    store.audit = originalAudit;
+    assert.deepEqual(store.getEmergencyStop(), before,
+      'A failed audit write must not leave the local emergency stop changed.');
+    assert.equal(store.verifyAuditChain('owner-atomic').entries, 0);
+  } finally {
+    store.close();
+  }
+});
