@@ -867,5 +867,5 @@ test('Bitcoin settlement verification and persistence share one owner-stop lease
   const persistence = route.indexOf('runIdempotentWorkspaceCommand(');
   assert.ok(lease >= 0 && firstExternalRead > lease, 'shared lease must be acquired before external Bitcoin verification');
   assert.ok(persistence > firstExternalRead, 'verified settlement persistence must remain inside the same lease');
-  assert.equal((route.match(/withSharedExecutionLease\\(/g) ?? []).length, 1, 'settlement must not nest execution leases');
+  assert.equal((route.match(/withSharedExecutionLease\(/g) ?? []).length, 1, 'settlement must not nest execution leases');
 });
