@@ -69,3 +69,42 @@ test('missing or over-reservation actual cost never releases reserved funds', as
   }, 11, { query: async () => { called = true; return { rows: [], rowCount: 1 }; } } as never);
   assert.equal(called, false);
 });
+
+
+test('PostgreSQL provider USD reservations enforce concurrent ceilings and exactly-once settlement', {
+  skip: process.env.JERRY_PROVIDER_LEDGER_TEST_DATABASE !== '1'
+    ? 'Set JERRY_PROVIDER_LEDGER_TEST_DATABASE=1 for a disposable PostgreSQL database.'
+    : false,
+}, async () => {
+  assert.notEqual(process.env.NODE_ENV, 'production');
+  assert.ok(process.env.SQL_HOST && process.env.SQL_USER && /test|tenant/i.test(process.env.SQL_DB_NAME ?? ''),
+    'Provider ledger integration requires a disposable PostgreSQL database name containing test/tenant.');
+  const { createPool } = await import('./index.ts');
+  const { randomUUID } = await import('node:crypto');
+  const pool = createPool();
+  const ownerUid = 'provider-cost-integration-' + randomUUID();
+  try {
+    const attempts = await Promise.allSettled([
+      reserveProviderCost({ ownerUid, reserveMicroUsd: 60, dailyLimitMicroUsd: 100 }),
+      reserveProviderCost({ ownerUid, reserveMicroUsd: 60, dailyLimitMicroUsd: 100 }),
+    ]);
+    const accepted = attempts.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof reserveProviderCost>>> => result.status === 'fulfilled');
+    assert.equal(accepted.length, 1, 'only one concurrent reservation may fit under the daily cost ceiling');
+    const reservation = accepted[0].value;
+    const settlements = await Promise.allSettled([
+      settleProviderCost(reservation, 40),
+      settleProviderCost(reservation, 40),
+    ]);
+    assert.equal(settlements.filter(result => result.status === 'fulfilled').length, 1,
+      'concurrent duplicate settlement must apply exactly once');
+    const daily = await pool.query(
+      'SELECT reserved_micro_usd, actual_micro_usd FROM jerry_provider_daily_cost WHERE owner_uid=$1 AND usage_day=$2::date',
+      [ownerUid, reservation.day],
+    );
+    assert.equal(Number(daily.rows[0].reserved_micro_usd), 0);
+    assert.equal(Number(daily.rows[0].actual_micro_usd), 40);
+  } finally {
+    await pool.query('DELETE FROM jerry_provider_cost_reservations WHERE owner_uid=$1', [ownerUid]);
+    await pool.query('DELETE FROM jerry_provider_daily_cost WHERE owner_uid=$1', [ownerUid]);
+  }
+});
