@@ -206,7 +206,7 @@ export async function transcribeAudioWithModelFallback(options: AudioTranscripti
         const body = await postJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
           { 'content-type': 'application/json', 'x-goog-api-key': key },
           { contents: [{ role: 'user', parts: [{ inlineData: { mimeType: options.mimeType, data: options.audioBase64 } }, { text: 'Transcribe the spoken audio accurately. Return only the transcript.' }] }] },
-          timeoutMs, fetchImpl, options.signal);
+          timeoutMs, fetchImpl, options.signal, options.ownerUid);
         const transcript = body.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('').trim();
         if (typeof transcript !== 'string' || !transcript) throw new Error('Provider returned no transcript.');
         return { transcript, provider: 'google', model };
