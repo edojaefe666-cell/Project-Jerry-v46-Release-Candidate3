@@ -76,3 +76,13 @@ testRunner('fails closed when storage credentials or HTTPS endpoint are missing'
     method: 'GET', bucket: 'jerry-private-storage', objectKey: 'owner/a/file.txt', now: fixedTime,
   }, { ...environment, AWS_REGION: 'us-east-1' }), /branch region/);
 });
+
+
+testRunner('creates a signed private Neon DELETE request for upload compensation', () => {
+  const result = createNeonStoragePresignedUrl({ method: 'DELETE', bucket: 'jerry-private-storage', objectKey: 'owners/abc/uploads/object-id', expiresInSeconds: 120, now: fixedTime }, environment);
+  const url = new URL(result.url);
+  assert.equal(result.method, 'DELETE');
+  assert.deepEqual(result.headers, {});
+  assert.equal(url.searchParams.get('X-Amz-SignedHeaders'), 'host');
+  assert.match(url.searchParams.get('X-Amz-Signature') ?? '', /^[a-f0-9]{64}$/);
+});
