@@ -9,6 +9,10 @@ import java.security.KeyStore
 import java.security.Signature
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
+import org.json.JSONObject
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 
 /**
  * Owner-device approval identity held by Android Keystore.
@@ -51,6 +55,38 @@ class DeviceSigningKeyStore(
             x = encodeCoordinate(publicKey.w.affineX),
             y = encodeCoordinate(publicKey.w.affineY),
         )
+    }
+
+    /**
+     * Validates the challenge fields and constructs the exact canonical payload
+     * expected by the TypeScript verifier before using the private Keystore key.
+     */
+    fun signApprovalChallenge(challengeJson: String): JSONObject {
+        require(challengeJson.length in 2..4096) { "Approval challenge is invalid." }
+        val challenge = JSONObject(challengeJson)
+        val challengeId = challenge.optString("challengeId")
+        val nonce = challenge.optString("nonce")
+        val ownerUid = challenge.optString("ownerUid")
+        val approverDeviceId = challenge.optString("approverDeviceId")
+        val targetRegistrationId = challenge.optString("targetRegistrationId")
+        val expiresAt = challenge.optString("expiresAt")
+        require(challengeId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) { "Challenge ID is invalid." }
+        require(nonce.matches(Regex("[A-Za-z0-9_-]{32,256}"))) { "Challenge nonce is invalid." }
+        require(ownerUid.isNotBlank() && ownerUid.length <= 160) { "Challenge owner is invalid." }
+        require(approverDeviceId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) { "Approver device ID is invalid." }
+        require(targetRegistrationId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) { "Target registration ID is invalid." }
+        val expiry = Instant.parse(expiresAt)
+        val now = Instant.now()
+        require(expiry.isAfter(now) && !expiry.isAfter(now.plusSeconds(360))) { "Approval challenge has expired or exceeds its allowed lifetime." }
+        val normalizedExpiry = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'")
+            .withZone(ZoneOffset.UTC).format(expiry)
+        val canonical = """{"purpose":"jerry-device-approval-v1","challengeId":${JSONObject.quote(challengeId)},"nonce":${JSONObject.quote(nonce)},"ownerUid":${JSONObject.quote(ownerUid)},"approverDeviceId":${JSONObject.quote(approverDeviceId)},"targetRegistrationId":${JSONObject.quote(targetRegistrationId)},"expiresAt":${JSONObject.quote(normalizedExpiry)}}"""
+        val publicKey = createOrGetPublicKey()
+        val signature = signCanonicalChallenge(canonical.toByteArray(Charsets.UTF_8))
+        return JSONObject()
+            .put("challengeId", challengeId)
+            .put("signature", signature)
+            .put("publicKey", JSONObject().put("kty", publicKey.kty).put("crv", publicKey.crv).put("x", publicKey.x).put("y", publicKey.y))
     }
 
     /** Signs the exact UTF-8 canonical challenge bytes; returns WebCrypto-compatible r||s. */
