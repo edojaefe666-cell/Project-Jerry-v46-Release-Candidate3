@@ -64,6 +64,9 @@ export async function runOpportunityRadar(options: OpportunityRadarOptions): Pro
     maxResults: 5,
     signal: options.signal,
   });
+  const research = options.ownerUid
+    ? await withSharedExecutionLease(researchRequest)
+    : await researchRequest();
   throwIfAborted();
   if (research.sources.length === 0) {
     throw new OpportunityRadarError(
