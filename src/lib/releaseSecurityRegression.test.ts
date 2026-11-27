@@ -1150,3 +1150,33 @@ test('wallet external-service operation reservations are acquired inside the sha
       `${item.name}: quota reservation and outbound request must both occur after acquiring the shared stop lease`);
   }
 });
+
+
+test('direct Gemini SDK execution reserves configured USD cost inside the shared stop lease', () => {
+  const helperStart = server.indexOf('async function generateDirectGeminiWithBudget');
+  const helperEnd = server.indexOf('async function startServer()', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, 'direct Gemini budget helper must exist');
+  const helper = server.slice(helperStart, helperEnd);
+  const lease = helper.indexOf('withSharedExecutionLease(async () =>');
+  const tokenReservation = helper.indexOf('reserveDirectGeminiTokens(ownerUid, prompt)');
+  const operationReservation = helper.indexOf('reserveConfiguredProviderOperation(ownerUid)');
+  const costReservation = helper.indexOf('reserveProviderCost({ ownerUid');
+  const request = helper.indexOf('const response = await generate()');
+  assert.ok(lease >= 0 && tokenReservation > lease && operationReservation > tokenReservation &&
+    costReservation > operationReservation && request > costReservation,
+    'shared stop lease must cover token, operation and USD cost reservations before SDK request');
+
+  const routes = [
+    "app.post('/api/jerry/discover-daily-ways'",
+    "app.post('/api/jerry/learn-human-insight'",
+    "app.post('/api/jerry/learn-internet-growth'",
+  ];
+  for (const routeMarker of routes) {
+    const start = server.indexOf(routeMarker);
+    assert.ok(start >= 0, `route ${routeMarker} must exist`);
+    const route = server.slice(start, start + 16_000);
+    assert.match(route, /generateDirectGeminiWithBudget\\(req\\.user!\\.uid, prompt, execution\\.signal/);
+  }
+  assert.equal((server.match(/ai\\.models\\.generateContent\\(/g) ?? []).length, 3,
+    'all direct Gemini SDK generation call sites must remain within the budgeted helper');
+});
