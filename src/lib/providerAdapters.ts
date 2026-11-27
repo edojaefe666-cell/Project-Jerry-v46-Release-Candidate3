@@ -43,11 +43,23 @@ async function requestJson(
   try {
     if (controller.signal.aborted) throw new Error('Provider request cancelled.');
     const response = await fetchImpl(url, { ...init, signal: controller.signal });
+    if (controller.signal.aborted) {
+      try { await response.body?.cancel(); } catch { /* best-effort response cleanup */ }
+      throw controller.signal.reason instanceof Error
+        ? controller.signal.reason
+        : new Error('Provider request cancelled.');
+    }
     if (!response.ok) {
-      // Do not surface provider response bodies: they may contain request data or secrets.
+      // Do not read provider error bodies; cancel them so failed responses release the stream.
+      try { await response.body?.cancel(); } catch { /* best-effort response cleanup */ }
       throw new Error(`Provider returned HTTP ${response.status}.`);
     }
     const body: unknown = await response.json();
+    if (controller.signal.aborted) {
+      throw controller.signal.reason instanceof Error
+        ? controller.signal.reason
+        : new Error('Provider request cancelled.');
+    }
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new Error('Provider returned an invalid response.');
     }
