@@ -202,10 +202,22 @@ export class SecurityStore {
     const cleanReason = reason.trim().slice(0, 1000);
     if (!ownerUid.trim() || cleanReason.length < 5) throw new Error('Owner UID and a meaningful emergency-control reason are required.');
     const updatedAt = now();
-    this.db.prepare(
-      'UPDATE emergency_control SET stopped=?, reason=?, updated_at=?, owner_uid=? WHERE id=1'
-    ).run(stopped ? 1 : 0, cleanReason, updatedAt, ownerUid);
-    this.audit(ownerUid, stopped ? 'emergency_stop.engaged' : 'emergency_stop.released', { reason: cleanReason, updatedAt });
+    // The local latch and its audit event are one durable SQLite transition.
+    // Never leave a changed stop state without its corresponding evidence.
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(
+        'UPDATE emergency_control SET stopped=?, reason=?, updated_at=?, owner_uid=? WHERE id=1'
+      ).run(stopped ? 1 : 0, cleanReason, updatedAt, ownerUid);
+      if (Number(result.changes ?? 0) !== 1) {
+        throw new Error('Emergency-stop control row is missing; local state was not changed.');
+      }
+      this.audit(ownerUid, stopped ? 'emergency_stop.engaged' : 'emergency_stop.released', { reason: cleanReason, updatedAt });
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original failure */ }
+      throw error;
+    }
     return this.getEmergencyStop();
   }
 
