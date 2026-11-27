@@ -233,3 +233,42 @@ test('PostgreSQL stop waits for an admitted execution lease to release', {
   assert.equal((await readSharedExecutionControl()).stopped, true);
   await pool.query("UPDATE jerry_execution_control SET stopped=false, epoch=epoch+1, reason='integration fixture cleanup', updated_by='test-fixture', updated_at=now() WHERE id=1");
 });
+
+
+test('PostgreSQL emergency stop denies leases from an independent application instance', {
+  skip: process.env.JERRY_JOURNAL_TEST_DATABASE !== '1'
+    ? 'Set JERRY_JOURNAL_TEST_DATABASE=1 for a disposable PostgreSQL database.'
+    : false,
+}, async () => {
+  assert.notEqual(process.env.NODE_ENV, 'production');
+  assert.ok(process.env.SQL_HOST && process.env.SQL_USER && /test|tenant/i.test(process.env.SQL_DB_NAME ?? ''),
+    'Execution-control integration requires a disposable PostgreSQL database name containing test/tenant.');
+  const { createPool } = await import('./index.ts');
+  const instanceBPool = createPool();
+  const { acquireSharedExecutionLease, updateSharedExecutionControl } = await import('./executionControl.ts');
+  try {
+    await updateSharedExecutionControl({
+      stopped: false,
+      actorUid: 'integration-owner',
+      reason: 'independent instance lease fixture enabled',
+    });
+    await updateSharedExecutionControl({
+      stopped: true,
+      actorUid: 'integration-owner',
+      reason: 'independent instance lease fixture stopped',
+    });
+
+    await assert.rejects(
+      acquireSharedExecutionLease(() => instanceBPool.connect()),
+      /emergency stop is engaged/i,
+      'A second application instance must observe the durable stop before admitting work.',
+    );
+  } finally {
+    await updateSharedExecutionControl({
+      stopped: false,
+      actorUid: 'integration-owner',
+      reason: 'independent instance lease fixture cleanup',
+    });
+    await instanceBPool.end();
+  }
+});
