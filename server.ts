@@ -2183,13 +2183,6 @@ async function startServer() {
     };
 
     const ai = getGeminiClient();
-    const execution = executionRegistry.register();
-    const cancelOnDisconnect = () => {
-      if (!res.writableEnded && !execution.signal.aborted) {
-        execution.cancel('Human insight generation client disconnected');
-      }
-    };
-    res.once('close', cancelOnDisconnect);
     if (!ai) {
       res.json({
         insight: buildOfflineInsight(),
@@ -2197,6 +2190,14 @@ async function startServer() {
       });
       return;
     }
+
+    const execution = executionRegistry.register();
+    const cancelOnDisconnect = () => {
+      if (!res.writableEnded && !execution.signal.aborted) {
+        execution.cancel('Human insight generation client disconnected');
+      }
+    };
+    res.once('close', cancelOnDisconnect);
 
     try {
       if (execution.signal.aborted || isEmergencyStopActive()) {
@@ -2318,13 +2319,6 @@ async function startServer() {
     };
 
     const ai = getGeminiClient();
-    const execution = executionRegistry.register();
-    const cancelOnDisconnect = () => {
-      if (!res.writableEnded && !execution.signal.aborted) {
-        execution.cancel('Internet growth generation client disconnected');
-      }
-    };
-    res.once('close', cancelOnDisconnect);
     if (!ai) {
       res.json({
         playbook: buildOfflinePlaybook(),
@@ -2332,6 +2326,14 @@ async function startServer() {
       });
       return;
     }
+
+    const execution = executionRegistry.register();
+    const cancelOnDisconnect = () => {
+      if (!res.writableEnded && !execution.signal.aborted) {
+        execution.cancel('Internet growth generation client disconnected');
+      }
+    };
+    res.once('close', cancelOnDisconnect);
 
     try {
       if (execution.signal.aborted || isEmergencyStopActive()) {
