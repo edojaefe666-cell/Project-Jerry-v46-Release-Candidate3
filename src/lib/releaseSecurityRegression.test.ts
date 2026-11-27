@@ -614,3 +614,17 @@ test('on-chain wallet sync holds the shared stop lease across external reads and
     'shared lease must cover both external wallet reads and the subsequent workspace write');
   assert.match(route, /res\.status\(423\)/);
 });
+
+test('Bitcoin reconciliation holds the shared stop lease across blockchain reads, ledger journaling and workspace persistence', () => {
+  const start = server.indexOf("app.post('/api/wallet/commands/reconcile-tx'");
+  const end = server.indexOf("app.post('/api/jerry/chat'", start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  const lease = route.indexOf('withSharedExecutionLease(async () =>');
+  const chainRead = route.indexOf('https://blockstream.info/api/tx/', lease);
+  const mutationLease = route.indexOf('runIdempotentWorkspaceCommand', chainRead);
+  const journal = route.indexOf('ensureWalletTransactionJournaled', mutationLease);
+  assert.ok(lease >= 0 && chainRead > lease && mutationLease > chainRead && journal > mutationLease,
+    'outer shared lease must cover chain reads, transaction persistence and journal posting');
+  assert.match(route, /res\.status\(423\)/);
+});
