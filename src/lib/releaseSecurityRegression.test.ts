@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../.
 const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
 const securityUi = fs.readFileSync(path.join(root, 'src/components/SecurityApprovals.tsx'), 'utf8');
 const jerryEngine = fs.readFileSync(path.join(root, 'src/lib/jerryEngine.ts'), 'utf8');
+const walletOutbox = fs.readFileSync(path.join(root, 'src/db/walletJournalOutbox.ts'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -843,4 +844,15 @@ test('provider result delivery holds the durable shared execution lease through 
     assert.ok(server.slice(start, end).includes('deliverWithSharedExecutionLease('),
       `${route} must hand provider output to the response under the shared lease`);
   }
+});
+
+
+test('wallet outbox claims are serialized against the durable owner emergency stop', () => {
+  const claimStart = walletOutbox.indexOf('const picked = await withSharedExecutionLease');
+  const claimEnd = walletOutbox.indexOf('const claimedRows =', claimStart);
+  assert.ok(claimStart >= 0 && claimEnd > claimStart, 'outbox claim must be inside a shared execution lease');
+  const claim = walletOutbox.slice(claimStart, claimEnd);
+  assert.match(claim, /if \(signal\?\.aborted\) throw/);
+  assert.match(claim, /client\.query\(/);
+  assert.match(claim, /UPDATE wallet_journal_outbox/);
 });
