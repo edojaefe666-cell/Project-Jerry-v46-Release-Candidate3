@@ -137,3 +137,42 @@ export async function getProviderUsageLedgerSnapshot(ownerUid: string, limit = 3
   ]);
   return { daily: daily.rows as ProviderUsageLedgerSnapshot['daily'], reservations: reservations.rows as ProviderUsageLedgerSnapshot['reservations'] };
 }
+
+
+export async function getProviderUsageAudit(ownerUid: string, days = 30): Promise<{
+  daily: Array<{ day: string; dailyLimitTokens: number; reservedTokens: number; actualTokens: number }>;
+  reservations: Array<{ reservationId: string; day: string; reservedTokens: number; status: 'reserved' | 'settled'; createdAt: string; settledAt: string | null }>;
+}> {
+  if (!ownerUid.trim() || !Number.isSafeInteger(days) || days < 1 || days > 90) {
+    throw new Error('Provider usage audit scope is invalid.');
+  }
+  await ensureSchema();
+  const [dailyResult, reservationResult] = await Promise.all([
+    pool.query(
+      `SELECT usage_day::text AS day, daily_limit_tokens, reserved_tokens, actual_tokens
+       FROM jerry_provider_daily_usage
+       WHERE owner_uid=$1 AND usage_day >= (now() AT TIME ZONE 'UTC')::date - $2::integer
+       ORDER BY usage_day DESC LIMIT 90`,
+      [ownerUid, days],
+    ),
+    pool.query(
+      `SELECT reservation_id, usage_day::text AS day, reserved_tokens, status,
+              created_at, settled_at
+       FROM jerry_provider_token_reservations
+       WHERE owner_uid=$1
+       ORDER BY created_at DESC LIMIT 100`,
+      [ownerUid],
+    ),
+  ]);
+  return {
+    daily: dailyResult.rows.map((row: any) => ({
+      day: row.day, dailyLimitTokens: Number(row.daily_limit_tokens),
+      reservedTokens: Number(row.reserved_tokens), actualTokens: Number(row.actual_tokens),
+    })),
+    reservations: reservationResult.rows.map((row: any) => ({
+      reservationId: row.reservation_id, day: row.day, reservedTokens: Number(row.reserved_tokens),
+      status: row.status, createdAt: new Date(row.created_at).toISOString(),
+      settledAt: row.settled_at ? new Date(row.settled_at).toISOString() : null,
+    })),
+  };
+}
