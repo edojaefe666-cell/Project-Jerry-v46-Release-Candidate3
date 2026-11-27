@@ -532,3 +532,21 @@ test('security backup restore holds the shared emergency-stop lease through the 
   assert.match(route, /res\.status\(423\)/);
   assert.match(route, /Security restore was not started/);
 });
+
+test('owner memory and workspace persistence writes are fenced by the shared emergency stop', () => {
+  const routes = [
+    ['/api/memory', '\n  // Provider-neutral Jerry Brain endpoint', 'post'],
+    ['/api/state', "app.post('/api/state/reset'", 'put'],
+    ['/api/cloudsql/workspace', "app.post('/api/cloudsql/daily-summary'", 'put'],
+    ['/api/cloudsql/daily-summary', '\n  // Server-owned approval and financial command boundary', 'post'],
+  ] as const;
+  for (const [routePath, endMarker, method] of routes) {
+    const start = server.indexOf(`app.${method}('${routePath}'`);
+    const end = server.indexOf(endMarker, start + 1);
+    const route = server.slice(start, end > start ? end : server.length);
+    assert.ok(start >= 0, `missing persistence route: ${routePath}`);
+    assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+    assert.match(route, /withSharedExecutionLease\(/,
+      `persistence mutation must hold the shared emergency-stop lease: ${routePath}`);
+  }
+});
