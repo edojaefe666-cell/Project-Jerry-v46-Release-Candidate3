@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
-import { Download, FileText, RefreshCw, UploadCloud } from 'lucide-react';
+import { Download, FileText, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
 import { apiFetch } from '../lib/apiClient';
 
 type StoredFile = {
@@ -103,6 +103,26 @@ export function PrivateFileVault() {
     }
   };
 
+  const handleDelete = async (file: StoredFile) => {
+    const confirmed = window.confirm(`Permanently delete "${file.fileName}" from Jerry's private vault? This cannot be undone.`);
+    if (!confirmed) return;
+    setBusy(true);
+    setMessage('Deleting private file…');
+    try {
+      const response = await apiFetch(`/api/storage/files/${encodeURIComponent(file.id)}`, { method: 'DELETE' });
+      const payload = await response.json() as { deleted?: boolean; error?: string };
+      if (!response.ok || !payload.deleted) {
+        throw new Error(payload.error || 'File deletion was not confirmed.');
+      }
+      setMessage('File permanently deleted from your private vault.');
+      await loadFiles();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Private file deletion failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -144,9 +164,14 @@ export function PrivateFileVault() {
                 <p className="text-[11px] text-slate-500">{file.contentType} · {formatBytes(file.byteSize)} · {new Date(file.createdAt).toLocaleDateString()}</p>
               </div>
             </div>
-            <button type="button" onClick={() => void handleDownload(file.objectKey)} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">
-              <Download className="h-3.5 w-3.5" /> Download
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button type="button" onClick={() => void handleDownload(file.objectKey)} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 disabled:opacity-50">
+                <Download className="h-3.5 w-3.5" /> Download
+              </button>
+              <button type="button" onClick={() => void handleDelete(file)} disabled={busy} aria-label={`Delete ${file.fileName}`} className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 disabled:opacity-50">
+                <Trash2 className="h-3.5 w-3.5" /> Delete
+              </button>
+            </div>
           </div>
         ))}
       </div>
