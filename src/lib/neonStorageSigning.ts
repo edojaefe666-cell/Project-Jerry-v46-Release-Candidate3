@@ -24,7 +24,7 @@ const hmac = (key: Buffer | string, value: string): Buffer =>
 
 const encodeRfc3986 = (value: string): string =>
   encodeURIComponent(value).replace(/[!'()*]/g, (character) =>
-    \`%\${character.charCodeAt(0).toString(16).toUpperCase()}\`,
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
 
 const encodePath = (value: string): string =>
@@ -83,14 +83,14 @@ export function createNeonStoragePresignedUrl(
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
   const dateStamp = amzDate.slice(0, 8);
   const service = 's3';
-  const scope = \`\${dateStamp}/\${region}/\${service}/aws4_request\`;
+  const scope = `${dateStamp}/${region}/${service}/aws4_request`;
   const host = endpoint.host;
   const basePath = endpoint.pathname.replace(/\/$/, '');
-  const canonicalUri = \`\${basePath}/\${encodeRfc3986(request.bucket)}/\${encodePath(request.objectKey)}\`;
+  const canonicalUri = `${basePath}/${encodeRfc3986(request.bucket)}/${encodePath(request.objectKey)}`;
 
   const query: Array<[string, string]> = [
     ['X-Amz-Algorithm', 'AWS4-HMAC-SHA256'],
-    ['X-Amz-Credential', \`\${accessKeyId}/\${scope}\`],
+    ['X-Amz-Credential', `${accessKeyId}/${scope}`],
     ['X-Amz-Date', amzDate],
     ['X-Amz-Expires', String(expiresInSeconds)],
     ['X-Amz-SignedHeaders', request.contentType ? 'content-type;host' : 'host'],
@@ -101,12 +101,12 @@ export function createNeonStoragePresignedUrl(
       leftKey < rightKey ? -1 : leftKey > rightKey ? 1 :
         leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0,
     )
-    .map(([key, value]) => \`\${key}=\${value}\`)
+    .map(([key, value]) => `${key}=${value}`)
     .join('&');
 
   const canonicalHeaders = request.contentType
-    ? \`content-type:\${request.contentType.trim()}\nhost:\${host}\n\`
-    : \`host:\${host}\n\`;
+    ? `content-type:${request.contentType.trim()}\nhost:${host}\n`
+    : `host:${host}\n`;
   const signedHeaders = request.contentType ? 'content-type;host' : 'host';
   const canonicalRequest = [
     request.method,
@@ -123,7 +123,7 @@ export function createNeonStoragePresignedUrl(
     sha256(canonicalRequest),
   ].join('\n');
 
-  const dateKey = hmac(\`AWS4\${secretAccessKey}\`, dateStamp);
+  const dateKey = hmac(`AWS4${secretAccessKey}`, dateStamp);
   const regionKey = hmac(dateKey, region);
   const serviceKey = hmac(regionKey, service);
   const signingKey = hmac(serviceKey, 'aws4_request');
@@ -131,7 +131,7 @@ export function createNeonStoragePresignedUrl(
 
   const url = new URL(endpoint.toString());
   url.pathname = canonicalUri;
-  url.search = \`\${canonicalQuery}&X-Amz-Signature=\${signature}\`;
+  url.search = `${canonicalQuery}&X-Amz-Signature=${signature}`;
 
   return {
     url: url.toString(),
