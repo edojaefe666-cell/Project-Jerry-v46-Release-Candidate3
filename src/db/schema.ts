@@ -145,6 +145,19 @@ export const deviceApprovalChallenges = pgTable('device_approval_challenges', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const deviceHttpRequestChallenges = pgTable('device_http_request_challenges', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  deviceRegistrationId: text('device_registration_id').references(() => deviceRegistrations.id, { onDelete: 'cascade' }).notNull(),
+  nonce: text('nonce').notNull().unique(),
+  method: text('method').notNull(),
+  path: text('path').notNull(),
+  bodySha256: text('body_sha256').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const encryptedMemoryRecords = pgTable('encrypted_memory_records', {
   id: text('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
