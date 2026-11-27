@@ -43,6 +43,7 @@ import {
 } from './src/db/deviceHttpRequestChallengeStore.ts';
 import { verifyDeviceHttpRequestProof, isAllowedEncryptedMemoryTarget } from './src/lib/deviceHttpRequestProof.ts';
 import { validateEncryptedMemoryRecord } from './src/db/encryptedMemoryStore.ts';
+import { createOwnerMemoryRecoveryEnvelopeForUser, getOwnerMemoryRecoveryEnvelopeForUser, validateOwnerMemoryRecoveryEnvelope } from './src/db/memoryRecoveryEnvelopeStore.ts';
 import { validateDeviceMemoryKeyEnvelope } from './src/db/deviceMemoryKeyEnvelopeStore.ts';
 import {
   createDeviceApprovalChallengeForUser,
@@ -467,6 +468,68 @@ async function startServer() {
 
 
   const encryptedMemoryRateLimit = createSharedOwnerRateLimiter('encrypted-memory', 60, 60_000);
+
+  // Owner-held recovery envelope routes require a freshly authenticated Firebase
+  // session. Only ciphertext is accepted/stored; the offline recovery secret is
+  // never a request field. Emergency-stop/execution policy applies to both.
+  app.post('/api/memory/recovery-envelope', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: AuthRequest, res) => {
+    const ownerUid = req.user!.uid;
+    const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+    if (!hasRecentOwnerAuthentication(req.user?.auth_time)) {
+      res.status(401).json({ error: 'Recent owner reauthentication is required for memory recovery setup.' });
+      return;
+    }
+    const body = req.body as Record<string, unknown> | undefined;
+    if (!body || typeof body !== 'object' || Array.isArray(body) ||
+        Object.keys(body).length !== 1 || !Object.prototype.hasOwnProperty.call(body, 'envelope')) {
+      res.status(400).json({ error: 'Only the encrypted recovery envelope may be submitted; recovery secrets are never accepted.' });
+      return;
+    }
+    const envelope = body.envelope;
+    const validationError = validateOwnerMemoryRecoveryEnvelope(envelope, ownerUid);
+    if (validationError) {
+      res.status(400).json({ error: validationError });
+      return;
+    }
+    try {
+      const stored = await withSharedExecutionLease(() =>
+        createOwnerMemoryRecoveryEnvelopeForUser(ownerUid, ownerEmail, envelope as Parameters<typeof createOwnerMemoryRecoveryEnvelopeForUser>[2]));
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Pragma', 'no-cache');
+      res.status(201).json({ envelope: stored });
+    } catch {
+      // The unique owner/key-version constraint makes setup create-once.
+      res.status(409).json({ error: 'A recovery envelope already exists for this memory-key version, or storage is unavailable. Existing recovery data was not overwritten.' });
+    }
+  });
+
+  app.get('/api/memory/recovery-envelope/:keyVersion', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: AuthRequest, res) => {
+    const ownerUid = req.user!.uid;
+    const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+    if (!hasRecentOwnerAuthentication(req.user?.auth_time)) {
+      res.status(401).json({ error: 'Recent owner reauthentication is required to retrieve memory recovery data.' });
+      return;
+    }
+    const keyVersion = Number(req.params.keyVersion);
+    if (!Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+      res.status(400).json({ error: 'A valid memory-key version is required.' });
+      return;
+    }
+    try {
+      const envelope = await withSharedExecutionLease(() =>
+        getOwnerMemoryRecoveryEnvelopeForUser(ownerUid, ownerEmail, keyVersion));
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Pragma', 'no-cache');
+      if (!envelope) {
+        res.status(404).json({ error: 'No owner recovery envelope exists for this memory-key version.' });
+        return;
+      }
+      res.json({ envelope });
+    } catch {
+      res.status(503).json({ error: 'Owner memory recovery data is temporarily unavailable.' });
+    }
+  });
+
   type RawBodyAuthRequest = AuthRequest & { rawBody?: Buffer };
 
   app.post('/api/memory/encrypted/challenge', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: AuthRequest, res) => {

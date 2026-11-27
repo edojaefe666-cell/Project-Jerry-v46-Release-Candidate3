@@ -213,3 +213,76 @@ export async function shareAndroidMemoryKeyWithApprovedDevice(
     { recipientDeviceId, envelope },
   );
 }
+
+export interface StoredOwnerMemoryRecoveryEnvelope {
+  version: 1;
+  algorithm: 'HKDF-SHA256-AES-256-GCM';
+  context: { ownerUid: string; keyVersion: number };
+  salt: string;
+  iv: string;
+  ciphertext: string;
+}
+
+function assertOwnerMemoryRecoveryEnvelope(
+  envelope: StoredOwnerMemoryRecoveryEnvelope,
+  ownerUid: string,
+  keyVersion: number,
+): void {
+  if (!envelope || envelope.version !== 1 ||
+      envelope.algorithm !== 'HKDF-SHA256-AES-256-GCM' ||
+      envelope.context?.ownerUid !== ownerUid ||
+      envelope.context?.keyVersion !== keyVersion ||
+      !/^[A-Za-z0-9_-]{43}$/.test(envelope.salt) ||
+      !/^[A-Za-z0-9_-]{16}$/.test(envelope.iv) ||
+      !/^[A-Za-z0-9_-]{64}$/.test(envelope.ciphertext) ||
+      Object.keys(envelope).some((key) =>
+        !['version', 'algorithm', 'context', 'salt', 'iv', 'ciphertext'].includes(key),
+      ) ||
+      Object.keys(envelope.context).some((key) => !['ownerUid', 'keyVersion'].includes(key))) {
+    throw new Error('Jerry returned an invalid or incorrectly scoped owner memory recovery envelope.');
+  }
+}
+
+/**
+ * Stores only the encrypted envelope after the owner has safely backed up the
+ * one-time recovery secret offline. This endpoint deliberately does not accept
+ * a recovery secret and does not require an already-trusted device signature;
+ * Firebase recent reauthentication is enforced by the server.
+ */
+export async function storeOwnerMemoryRecoveryEnvelope(
+  envelope: StoredOwnerMemoryRecoveryEnvelope,
+  ownerUid: string,
+  keyVersion: number,
+): Promise<void> {
+  if (typeof ownerUid !== 'string' || !ownerUid.trim() || ownerUid.length > 160 ||
+      !Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+    throw new Error('Memory recovery owner or key version is invalid.');
+  }
+  assertOwnerMemoryRecoveryEnvelope(envelope, ownerUid, keyVersion);
+  const result = await apiJson<{ stored: true }>('/api/memory/recovery-envelope', {
+    method: 'POST',
+    body: JSON.stringify({ envelope }),
+    cache: 'no-store',
+  });
+  if (result.stored !== true) throw new Error('Jerry did not confirm recovery-envelope storage.');
+}
+
+/**
+ * Retrieves the owner-scoped ciphertext after recent Firebase reauthentication.
+ * The recovery secret is supplied separately by the owner and never sent here.
+ */
+export async function getOwnerMemoryRecoveryEnvelope(
+  ownerUid: string,
+  keyVersion: number,
+): Promise<StoredOwnerMemoryRecoveryEnvelope> {
+  if (typeof ownerUid !== 'string' || !ownerUid.trim() || ownerUid.length > 160 ||
+      !Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+    throw new Error('Memory recovery owner or key version is invalid.');
+  }
+  const result = await apiJson<{ envelope: StoredOwnerMemoryRecoveryEnvelope }>(
+    `/api/memory/recovery-envelope/${keyVersion}`,
+    { method: 'GET', cache: 'no-store' },
+  );
+  assertOwnerMemoryRecoveryEnvelope(result.envelope, ownerUid, keyVersion);
+  return result.envelope;
+}
