@@ -61,6 +61,27 @@ test('aborts the active provider request and never falls back after emergency st
   assert.equal(calls, 1, 'cancellation must prevent fallback provider requests');
 });
 
+test('does not accept a provider response body after the owner stop aborts during body parsing', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    const response = jsonResponse({ choices: [{ message: { content: 'must not be returned' } }] });
+    response.json = async () => {
+      controller.abort(new Error('owner stop during body read'));
+      return { choices: [{ message: { content: 'must not be returned' } }] };
+    };
+    return response;
+  };
+  await assert.rejects(() => generateWithModelFallback({
+    task: 'chat', prompt: 'hello',
+    configuration: { google: { apiKey: 'g-key' }, openai: { apiKey: 'o-key' } },
+    fetchImpl: fetchImpl as typeof fetch,
+    signal: controller.signal,
+  }), /cancelled by emergency stop/);
+  assert.equal(calls, 1, 'a cancelled response must not be accepted or trigger provider fallback');
+});
+
 test('uses Anthropic Messages response format', async () => {
   let headers: HeadersInit | undefined;
   const result = await generateWithModelFallback({
