@@ -1420,7 +1420,7 @@ async function startServer() {
         configuration: providerConfigurationFromEnvironment(process.env),
         signal: execution.signal,
       });
-      if (execution.signal.aborted || isEmergencyStopActive()) {
+      if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted Jerry chat.', status: 'cancelled' });
         return;
       }
@@ -1483,7 +1483,7 @@ async function startServer() {
         configuration: providerConfigurationFromEnvironment(process.env),
         signal: execution.signal,
       });
-      if (execution.signal.aborted || isEmergencyStopActive()) {
+      if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted goal planning.', status: 'cancelled' });
         return;
       }
@@ -1597,7 +1597,7 @@ async function startServer() {
         configuration: providerConfigurationFromEnvironment(process.env),
         signal: execution.signal,
       });
-      if (execution.signal.aborted || isEmergencyStopActive()) {
+      if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted business opportunity assessment.', status: 'cancelled' });
         return;
       }
@@ -1940,7 +1940,7 @@ async function startServer() {
     res.once('close', cancelOnDisconnect);
 
     try {
-      if (execution.signal.aborted || isEmergencyStopActive()) {
+      if (execution.signal.aborted || await sharedStopBlocksAcceptance()) {
         res.status(423).json({ error: 'Jerry emergency stop interrupted self-programming.', status: 'cancelled' });
         return;
       }
