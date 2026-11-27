@@ -116,6 +116,19 @@ async function ensureSchema(client: Pool | PoolClient = pool): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS jerry_security_approval_audit_owner_seq
       ON jerry_security_approval_audit(owner_uid,seq);
+    CREATE TABLE IF NOT EXISTS jerry_security_approved_contacts (
+      id text PRIMARY KEY, owner_uid text NOT NULL, name text NOT NULL, email text NOT NULL,
+      purpose text NOT NULL, status text NOT NULL CHECK(status IN ('active','revoked')),
+      created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS jerry_security_contacts_owner_created
+      ON jerry_security_approved_contacts(owner_uid,created_at DESC);
+    CREATE TABLE IF NOT EXISTS jerry_security_audit (
+      seq bigserial PRIMARY KEY, owner_uid text NOT NULL, actor_uid text NOT NULL, event text NOT NULL,
+      details jsonb NOT NULL, created_at timestamptz NOT NULL, previous_hash text NOT NULL,
+      entry_hash text NOT NULL UNIQUE
+    );
+    CREATE INDEX IF NOT EXISTS jerry_security_audit_owner_seq ON jerry_security_audit(owner_uid,seq);
   `);
 }
 
@@ -253,4 +266,125 @@ export async function consumeSharedApproval(
     await audit(client, ownerUid, ownerUid, 'approval.consumed', { id, action, consumedAt: result.rows[0].consumed_at });
     return mapRow(result.rows[0]);
   });
+}
+
+
+export interface SharedSecuritySnapshot {
+  version: 1;
+  approvals: Array<Record<string, unknown>>;
+  contacts: Array<Record<string, unknown>>;
+  audit: Array<Record<string, unknown>>;
+}
+
+export async function exportSharedSecuritySnapshot(ownerUid: string): Promise<SharedSecuritySnapshot> {
+  await ensureSchema();
+  const [approvals, contacts, auditRows] = await Promise.all([
+    pool.query(`SELECT id,action,summary,amount_usd AS "amountUsd",scope_json AS "scopeJson",scope_hash AS "scopeHash",
+      status,created_at AS "createdAt",decided_at AS "decidedAt",decided_by AS "decidedBy",
+      consumed_at AS "consumedAt" FROM jerry_security_approvals WHERE owner_uid=$1 ORDER BY created_at`, [ownerUid]),
+    pool.query(`SELECT id,name,email,purpose,status,created_at AS "createdAt",updated_at AS "updatedAt"
+      FROM jerry_security_approved_contacts WHERE owner_uid=$1 ORDER BY created_at`, [ownerUid]),
+    pool.query(`SELECT seq,actor_uid AS "actorUid",event,details,created_at AS "createdAt",
+      previous_hash AS "previousHash",entry_hash AS "entryHash"
+      FROM jerry_security_audit WHERE owner_uid=$1 ORDER BY seq`, [ownerUid]),
+  ]);
+  return { version: 1, approvals: approvals.rows, contacts: contacts.rows, audit: auditRows.rows };
+}
+
+/**
+ * Restores contact and audit history under the same transaction as consuming
+ * the exact restore approval. Historical approvals are imported as inert:
+ * pending approvals become rejected and every imported approved approval is
+ * marked consumed, preventing backup restore from reviving spending authority.
+ */
+export async function restoreSharedSecuritySnapshot(
+  snapshot: SharedSecuritySnapshot, ownerUid: string, approvalId: string,
+): Promise<void> {
+  await transaction(async (client) => {
+    const expectedScope = scopeHash({ operation: 'security_backup_restore' });
+    const consumed = await client.query(
+      `UPDATE jerry_security_approvals SET consumed_at=now()
+       WHERE id=$1 AND owner_uid=$2 AND action='high_impact_change' AND status='approved'
+       AND consumed_at IS NULL AND reservation_id IS NULL AND created_at >= $3 AND scope_hash=$4
+       RETURNING id`,
+      [approvalId, ownerUid, new Date(Date.now()-TTL_MS), expectedScope]);
+    if (consumed.rowCount !== 1) throw new Error('A fresh approved high-impact restore authorization is required.');
+    await audit(client, ownerUid, ownerUid, 'approval.consumed', { id: approvalId, operation: 'security_backup_restore' });
+
+    await client.query('DELETE FROM jerry_security_approved_contacts WHERE owner_uid=$1', [ownerUid]);
+    await client.query('DELETE FROM jerry_security_audit WHERE owner_uid=$1', [ownerUid]);
+    for (const contact of snapshot.contacts) {
+      await client.query(
+        `INSERT INTO jerry_security_approved_contacts(id,owner_uid,name,email,purpose,status,created_at,updated_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [String(contact.id),ownerUid,String(contact.name),String(contact.email),String(contact.purpose),
+          contact.status === 'active' ? 'active' : 'revoked',contact.createdAt,contact.updatedAt]);
+    }
+    for (const entry of snapshot.audit) {
+      await appendSharedSecurityAudit(client, ownerUid, String(entry.actorUid ?? 'system'),
+        String(entry.event), entry.details ?? {}, new Date(String(entry.createdAt)),
+        String(entry.previousHash ?? ''), String(entry.entryHash ?? ''));
+    }
+    for (const item of snapshot.approvals) {
+      const originalStatus = item.status;
+      const importedStatus = originalStatus === 'pending' ? 'rejected'
+        : originalStatus === 'approved' || originalStatus === 'rejected' ? originalStatus : 'rejected';
+      const consumedAt = importedStatus === 'approved' ? (item.consumedAt ? new Date(String(item.consumedAt)) : new Date()) : null;
+      await client.query(
+        `INSERT INTO jerry_security_approvals(id,owner_uid,action,summary,amount_usd,scope_json,scope_hash,status,
+          created_at,decided_at,decided_by,consumed_at,reservation_id,reserved_at)
+         VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,NULL,NULL)
+         ON CONFLICT(id) DO NOTHING`,
+        [String(item.id),ownerUid,String(item.action),String(item.summary),item.amountUsd ?? null,
+          item.scopeJson ? JSON.stringify(item.scopeJson) : item.scope ? JSON.stringify(item.scope) : null,
+          String(item.scopeHash ?? ''),importedStatus,item.createdAt,item.decidedAt ?? null,
+          item.decidedBy ?? null,consumedAt]);
+    }
+    await appendSharedSecurityAudit(client, ownerUid, ownerUid, 'security.backup.restored',
+      { approvalId, approvalCount: snapshot.approvals.length, contactCount: snapshot.contacts.length },
+      new Date(), undefined, undefined);
+  });
+}
+
+export interface SharedSecurityAuditEntry {
+  seq: number; actorUid: string; event: string; details: unknown; createdAt: string;
+  previousHash: string; entryHash: string;
+}
+async function appendSharedSecurityAudit(
+  client: PoolClient, ownerUid: string, actorUid: string, event: string, details: unknown,
+  createdAt = new Date(), suppliedPrevious?: string, suppliedHash?: string,
+): Promise<void> {
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`jerry-security-audit:${ownerUid}`]);
+  const previous = await client.query('SELECT entry_hash FROM jerry_security_audit WHERE owner_uid=$1 ORDER BY seq DESC LIMIT 1',[ownerUid]);
+  const previousHash = suppliedPrevious ?? String(previous.rows[0]?.entry_hash ?? 'GENESIS');
+  const canonicalDetails = canonicalize(details);
+  const entryHash = suppliedHash ?? sha256(`${previousHash}\n${createdAt.toISOString()}\n${actorUid}\n${event}\n${JSON.stringify(canonicalDetails)}`);
+  await client.query(
+    `INSERT INTO jerry_security_audit(owner_uid,actor_uid,event,details,created_at,previous_hash,entry_hash)
+     VALUES($1,$2,$3,$4,$5,$6,$7)`,
+    [ownerUid,actorUid,event,JSON.stringify(canonicalDetails),createdAt,previousHash,entryHash]);
+}
+export async function listSharedSecurityAudit(ownerUid: string, limit = 100): Promise<SharedSecurityAuditEntry[]> {
+  await ensureSchema();
+  const safeLimit = Math.min(500,Math.max(1,Math.floor(limit)));
+  const result = await pool.query(
+    `SELECT seq,actor_uid AS "actorUid",event,details,created_at AS "createdAt",
+      previous_hash AS "previousHash",entry_hash AS "entryHash"
+     FROM jerry_security_audit WHERE owner_uid=$1 ORDER BY seq DESC LIMIT $2`,[ownerUid,safeLimit]);
+  return result.rows;
+}
+export async function verifySharedSecurityAudit(ownerUid: string): Promise<{valid:boolean;count:number}> {
+  await ensureSchema();
+  const result = await pool.query(
+    'SELECT actor_uid AS "actorUid",event,details,created_at AS "createdAt",previous_hash AS "previousHash",entry_hash AS "entryHash" FROM jerry_security_audit WHERE owner_uid=$1 ORDER BY seq',[ownerUid]);
+  let previous = 'GENESIS';
+  for (const row of result.rows) {
+    const expected = sha256(`${previous}\n${new Date(row.createdAt).toISOString()}\n${row.actorUid}\n${row.event}\n${JSON.stringify(canonicalize(row.details))}`);
+    if (row.previousHash !== previous || row.entryHash !== expected) return {valid:false,count:result.rows.length};
+    previous = row.entryHash;
+  }
+  return {valid:true,count:result.rows.length};
+}
+export async function auditSharedSecurityEvent(ownerUid: string, event: string, details: unknown): Promise<void> {
+  await transaction(async client => appendSharedSecurityAudit(client,ownerUid,ownerUid,event,details));
 }
