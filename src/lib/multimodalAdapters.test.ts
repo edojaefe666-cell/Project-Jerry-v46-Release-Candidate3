@@ -23,6 +23,27 @@ test('does not send multimodal requests while pre-revenue spending is disabled',
   }
 });
 
+test('blocks hosted speech and transcription before network access while pre-revenue spending is disabled', async () => {
+  const previous = process.env.JERRY_PAID_SERVICES_ENABLED;
+  let calls = 0;
+  const fetchImpl = async () => { calls += 1; return response({ text: 'unexpected' }); };
+  try {
+    process.env.JERRY_PAID_SERVICES_ENABLED = '0';
+    await assert.rejects(() => synthesizeSpeechWithModelFallback({
+      text: 'Hello', configuration: { openai: { apiKey: 'must-not-be-used' } },
+      fetchImpl: fetchImpl as typeof fetch,
+    }), /Hosted provider spending is disabled/);
+    await assert.rejects(() => transcribeAudioWithModelFallback({
+      audioBase64: 'AQIDBA==', mimeType: 'audio/webm',
+      configuration: { openai: { apiKey: 'must-not-be-used' } },
+      fetchImpl: fetchImpl as typeof fetch,
+    }), /Hosted provider spending is disabled/);
+    assert.equal(calls, 0);
+  } finally {
+    process.env.JERRY_PAID_SERVICES_ENABLED = previous ?? '1';
+  }
+});
+
 test('sends image bytes to Google using a server-side API key header', async () => {
   let url = '';
   let headers: HeadersInit | undefined;
