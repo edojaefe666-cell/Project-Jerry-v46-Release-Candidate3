@@ -69,7 +69,7 @@ export async function getDeviceHttpRequestChallengeForUser(
       eq(deviceRegistrations.userId, user.id),
       eq(deviceRegistrations.status, 'active'),
     )).limit(1);
-  const publicKey = row?.device.signingPublicKey as StoredDeviceHttpRequestChallenge['signingPublicKey'] | null;
+  const publicKey = row?.device.signingPublicKey as unknown as StoredDeviceHttpRequestChallenge['signingPublicKey'] | null;
   if (!row || !publicKey || publicKey.kty !== 'EC' || publicKey.crv !== 'P-256' ||
       typeof publicKey.x !== 'string' || typeof publicKey.y !== 'string') return null;
   return {
