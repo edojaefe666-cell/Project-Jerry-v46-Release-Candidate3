@@ -4,6 +4,21 @@ import type {
   DeviceSigningPublicKey,
 } from './deviceApprovalSigningProof.ts';
 
+export interface NativeDeviceHttpChallenge {
+  challengeId: string;
+  nonce: string;
+  ownerUid: string;
+  deviceId: string;
+  method: 'GET' | 'POST' | 'PUT';
+  path: string;
+  bodySha256: string;
+  expiresAt: string;
+}
+export interface NativeDeviceHttpProof {
+  challengeId: string;
+  signature: string;
+}
+
 type NativeBridgeReply = {
   requestId?: string;
   ok?: boolean;
@@ -103,4 +118,16 @@ export async function signNativeDeviceApprovalChallenge(
 /** Deletes the local private signing key; call only as part of an explicit owner recovery/revocation flow. */
 export async function deleteNativeDeviceSigningKey(): Promise<void> {
   await requestNative<NativeBridgeReply>('deleteDeviceSigningKey');
+}
+/** Signs one server-issued encrypted-memory request challenge in Android Keystore. */
+export async function signNativeDeviceMemoryRequestChallenge(
+  challenge: NativeDeviceHttpChallenge,
+): Promise<NativeDeviceHttpProof> {
+  const reply = await requestNative<NativeBridgeReply>('signDeviceMemoryRequestChallenge', { challenge });
+  if (!reply.proof || typeof reply.proof !== 'object' ||
+      typeof (reply.proof as NativeDeviceHttpProof).challengeId !== 'string' ||
+      typeof (reply.proof as NativeDeviceHttpProof).signature !== 'string') {
+    throw new Error('Android Keystore did not return a memory request proof.');
+  }
+  return reply.proof as NativeDeviceHttpProof;
 }
