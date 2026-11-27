@@ -87,7 +87,7 @@ export async function analyzeImageWithModelFallback(options: VisionAnalysisOptio
           `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(route.model)}:generateContent`,
           { 'content-type': 'application/json', 'x-goog-api-key': key },
           { contents: [{ role: 'user', parts: [{ inlineData: { mimeType: options.mimeType, data: options.base64Data } }, { text: prompt }] }] },
-          timeoutMs, fetchImpl, options.signal
+          timeoutMs, fetchImpl, options.signal, options.ownerUid
         );
       } else if (route.provider === 'openai') {
         const key = options.configuration.openai?.apiKey;
