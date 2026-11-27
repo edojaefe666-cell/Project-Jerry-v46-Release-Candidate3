@@ -114,11 +114,12 @@ export async function withConsumedDeviceHttpRequestChallenge<T>(
         eq(deviceRegistrations.userId, user.id),
         eq(deviceRegistrations.status, 'active'),
       )).limit(1).for('update');
-    if (!row || !row.device.signingPublicKey ||
-        row.device.signingPublicKey.kty !== expectedSigningPublicKey.kty ||
-        row.device.signingPublicKey.crv !== expectedSigningPublicKey.crv ||
-        row.device.signingPublicKey.x !== expectedSigningPublicKey.x ||
-        row.device.signingPublicKey.y !== expectedSigningPublicKey.y) return null;
+    const currentPublicKey = row?.device.signingPublicKey as unknown as StoredDeviceHttpRequestChallenge['signingPublicKey'] | null;
+    if (!row || !currentPublicKey ||
+        currentPublicKey.kty !== expectedSigningPublicKey.kty ||
+        currentPublicKey.crv !== expectedSigningPublicKey.crv ||
+        currentPublicKey.x !== expectedSigningPublicKey.x ||
+        currentPublicKey.y !== expectedSigningPublicKey.y) return null;
     const consumed = await tx.update(deviceHttpRequestChallenges)
       .set({ consumedAt: new Date() })
       .where(and(
