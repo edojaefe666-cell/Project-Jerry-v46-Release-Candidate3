@@ -9,6 +9,22 @@ const jsonResponse = (value: unknown, status = 200) => new Response(JSON.stringi
   status, headers: { 'content-type': 'application/json' },
 });
 
+test('does not send hosted model requests while pre-revenue spending is disabled', async () => {
+  const previous = process.env.JERRY_PAID_SERVICES_ENABLED;
+  let called = false;
+  try {
+    process.env.JERRY_PAID_SERVICES_ENABLED = '0';
+    await assert.rejects(() => generateWithModelFallback({
+      task: 'chat', prompt: 'must not be sent',
+      configuration: { google: { apiKey: 'test-key', model: 'gemini-test' } },
+      fetchImpl: async () => { called = true; return jsonResponse({}); },
+    }), /Hosted provider spending is disabled/);
+    assert.equal(called, false);
+  } finally {
+    process.env.JERRY_PAID_SERVICES_ENABLED = previous ?? '1';
+  }
+});
+
 test('calls the configured Google provider and returns provider-neutral output', async () => {
   let requested = '';
   let headers: HeadersInit | undefined;
