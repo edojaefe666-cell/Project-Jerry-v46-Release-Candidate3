@@ -269,6 +269,7 @@ test('Jerry chat, goal planning and business assessment cancel provider work on 
     ['/api/jerry/chat', '\n  // Jerry Goal Engine'],
     ['/api/jerry/plan-goal', '\n  // Jerry Business: model-assisted opportunity assessment'],
     ['/api/jerry/assess-opportunity', '\n  // Vision and Voice use the shared execution registry'],
+    ['/api/jerry/self-program', '\n  // Persist a generated self-upgrade proposal'],
   ] as const;
   for (const [routePath, endMarker] of routes) {
     const start = server.indexOf(\`app.post('\${routePath}'\`);
