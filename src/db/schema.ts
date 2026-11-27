@@ -115,6 +115,24 @@ export const storageObjects = pgTable('storage_objects', {
   ownerCreatedIndex: index('storage_objects_user_created_idx').on(table.userId, table.createdAt),
 }));
 
+
+export const deviceRegistrations = pgTable('device_registrations', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  deviceId: text('device_id').notNull(),
+  deviceName: text('device_name').notNull(),
+  platform: text('platform').notNull(),
+  exchangePublicKey: jsonb('exchange_public_key').notNull(),
+  status: text('status').notNull().default('pending'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+}, (table) => ({
+  ownerDeviceUnique: uniqueIndex('device_registrations_owner_device_unique').on(table.userId, table.deviceId),
+  ownerCreatedIndex: index('device_registrations_owner_created_idx').on(table.userId, table.createdAt),
+}));
+
 export const memoryEntries = pgTable('memory_entries', {
   id: text('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
@@ -143,6 +161,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   taskExecutions: many(taskExecutions),
   memoryEntries: many(memoryEntries),
   storageObjects: many(storageObjects),
+  deviceRegistrations: many(deviceRegistrations),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ one }) => ({
@@ -176,4 +195,8 @@ export const dailySummaryReportsRelations = relations(dailySummaryReports, ({ on
 
 export const storageObjectsRelations = relations(storageObjects, ({ one }) => ({
   owner: one(users, { fields: [storageObjects.userId], references: [users.id] }),
+}));
+
+export const deviceRegistrationsRelations = relations(deviceRegistrations, ({ one }) => ({
+  owner: one(users, { fields: [deviceRegistrations.userId], references: [users.id] }),
 }));
