@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, KeyRound, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 import { apiJson } from '../lib/apiClient';
-import { getNativeDeviceSigningPublicKey } from '../lib/nativeDeviceSigning';
 import { bootstrapFirstJerryOwnerDevice, requestAndroidDeviceEnrollment, approvePendingJerryDevice } from '../lib/deviceEnrollmentApi';
-import { getOrCreateJerryDeviceId, getOrCreatePersistentExchangeKeyPair } from '../lib/deviceIdentity';
+import { getOrCreateJerryDeviceId } from '../lib/deviceIdentity';
 
 interface DeviceRecord {
   id: string;
@@ -15,15 +14,6 @@ interface DeviceRecord {
   approvedAt: string | null;
   revokedAt: string | null;
   lastSeenAt: string | null;
-}
-
-interface DeviceChallenge {
-  challengeId: string;
-  nonce: string;
-  ownerUid: string;
-  approverDeviceId: string;
-  targetRegistrationId: string;
-  expiresAt: string;
 }
 
 function isAndroidNativeBridgeAvailable(): boolean {
