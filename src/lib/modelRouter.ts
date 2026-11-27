@@ -1,12 +1,19 @@
 /**
  * Provider-neutral model routing policy.
  *
- * This module selects only providers whose server-side credentials are present.
- * It never exposes credential values and never implies a model call occurred.
- * Provider adapters are registered separately by the server integration layer.
+ * The catalogue is the single source of truth for provider identity, default
+ * model and task capabilities. Credentials remain server-side; this module
+ * returns routes only and never exposes credential values.
  */
-export type ModelProvider = 'google' | 'openai' | 'anthropic' | 'local';
-export type ModelTask = 'chat' | 'planning' | 'research' | 'coding' | 'vision' | 'speech' | 'transcription';
+import {
+  MODEL_PROVIDER_REGISTRY,
+  providerSupportsTask,
+  type ModelProvider,
+  type RegisteredModelTask,
+} from './providerRegistry';
+
+export type { ModelProvider } from './providerRegistry';
+export type ModelTask = RegisteredModelTask;
 
 export interface ProviderConfiguration {
   google?: { apiKey?: string; model?: string };
@@ -31,28 +38,22 @@ const TASK_PREFERENCE: Record<ModelTask, ModelProvider[]> = {
   transcription: ['google', 'openai'],
 };
 
-const DEFAULT_MODELS: Record<ModelProvider, string> = {
-  google: 'gemini-2.5-flash',
-  openai: 'gpt-4.1-mini',
-  anthropic: 'claude-sonnet',
-  local: 'local-default',
-};
-
 function configuredModel(
   provider: ModelProvider,
   configuration: ProviderConfiguration
 ): string | null {
+  const defaults = MODEL_PROVIDER_REGISTRY[provider];
   if (provider === 'google') {
     const value = configuration.google;
-    return value?.apiKey?.trim() ? (value.model?.trim() || DEFAULT_MODELS.google) : null;
+    return value?.apiKey?.trim() ? (value.model?.trim() || defaults.defaultModel) : null;
   }
   if (provider === 'openai') {
     const value = configuration.openai;
-    return value?.apiKey?.trim() ? (value.model?.trim() || DEFAULT_MODELS.openai) : null;
+    return value?.apiKey?.trim() ? (value.model?.trim() || defaults.defaultModel) : null;
   }
   if (provider === 'anthropic') {
     const value = configuration.anthropic;
-    return value?.apiKey?.trim() ? (value.model?.trim() || DEFAULT_MODELS.anthropic) : null;
+    return value?.apiKey?.trim() ? (value.model?.trim() || defaults.defaultModel) : null;
   }
   const value = configuration.local;
   if (!value?.enabled || !value.baseUrl?.trim()) return null;
@@ -63,7 +64,7 @@ function configuredModel(
   } catch {
     return null;
   }
-  return value.model?.trim() || DEFAULT_MODELS.local;
+  return value.model?.trim() || defaults.defaultModel;
 }
 
 export function resolveModelRoute(
@@ -71,7 +72,7 @@ export function resolveModelRoute(
   configuration: ProviderConfiguration,
   preferredProvider?: ModelProvider
 ): ModelRoute[] {
-  const preference = TASK_PREFERENCE[task];
+  const preference = TASK_PREFERENCE[task].filter((provider) => providerSupportsTask(provider, task));
   const order = preferredProvider && preference.includes(preferredProvider)
     ? [preferredProvider, ...preference.filter((provider) => provider !== preferredProvider)]
     : preference;
