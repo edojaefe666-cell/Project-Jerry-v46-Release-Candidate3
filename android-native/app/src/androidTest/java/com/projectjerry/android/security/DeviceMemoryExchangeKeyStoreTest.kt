@@ -183,6 +183,40 @@ class DeviceMemoryExchangeKeyStoreTest {
 
             assertEquals(true, store.unwrapAndStoreMemoryKey(envelope.toString(), ownerUid, deviceId, keyVersion))
             assertEquals(true, store.hasInstalledMemoryKey(ownerUid, deviceId, keyVersion))
+
+            // Validate native record ciphertext against the exact TypeScript AAD contract.
+            val recordId = "memory_record_12345"
+            val revision = 1
+            val payloadJson = """{"schemaVersion":1,"id":"$recordId","category":"lesson","area":"knowledge_experience","title":"Native crypto test","content":"Cross-runtime authenticated encryption","tags":["test"],"createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z","deleted":false}"""
+            val encryptedRecord = store.encryptMemoryRecordPayload(
+                ownerUid, deviceId, keyVersion, recordId, revision, payloadJson
+            )
+            val recordIv = android.util.Base64.decode(encryptedRecord.iv, android.util.Base64.URL_SAFE)
+            val recordCiphertext = android.util.Base64.decode(encryptedRecord.ciphertext, android.util.Base64.URL_SAFE)
+            val recordAad = """{"purpose":"jerry-memory-record-v1","ownerUid":"$ownerUid","recordId":"$recordId","keyVersion":$keyVersion,"revision":$revision,"schemaVersion":1}"""
+                .toByteArray(Charsets.UTF_8)
+            val webCryptoCompatible = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            webCryptoCompatible.init(
+                javax.crypto.Cipher.DECRYPT_MODE,
+                javax.crypto.spec.SecretKeySpec(rawKey, "AES"),
+                javax.crypto.spec.GCMParameterSpec(128, recordIv),
+            )
+            webCryptoCompatible.updateAAD(recordAad)
+            assertEquals(payloadJson, webCryptoCompatible.doFinal(recordCiphertext).toString(Charsets.UTF_8))
+            assertEquals(
+                payloadJson,
+                store.decryptMemoryRecordPayload(
+                    ownerUid, deviceId, keyVersion, recordId, revision,
+                    encryptedRecord.iv, encryptedRecord.ciphertext,
+                ),
+            )
+            assertThrows(Exception::class.java) {
+                store.decryptMemoryRecordPayload(
+                    ownerUid, deviceId, keyVersion, recordId, revision + 1,
+                    encryptedRecord.iv, encryptedRecord.ciphertext,
+                )
+            }
+
             assertThrows(IllegalArgumentException::class.java) {
                 store.unwrapAndStoreMemoryKey(envelope.toString(), ownerUid, "device_other_123456789", keyVersion)
             }
