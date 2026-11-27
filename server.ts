@@ -1846,7 +1846,7 @@ async function startServer() {
         req.user!.email ?? 'owner@jerry.workspace',
         entry,
       ));
-      if (!execution.signal.aborted && !isEmergencyStopActive()) res.status(200).json({
+      await deliverWithSharedExecutionLease(execution, res, () => res.status(200).json({
         entry: persisted,
         persisted: true,
         enhancementStatus,
@@ -1854,7 +1854,7 @@ async function startServer() {
         summary: enhancementStatus === 'enhanced'
           ? 'The owner-provided knowledge was organized and saved to persistent memory.'
           : 'The original owner-provided knowledge was saved to persistent memory without AI enhancement.',
-      });
+      }));
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       if (/emergency stop is engaged/i.test(message) || execution.signal.aborted || isEmergencyStopActive()) {
