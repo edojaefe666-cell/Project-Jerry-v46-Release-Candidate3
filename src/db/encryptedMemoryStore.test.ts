@@ -16,6 +16,8 @@ test('accepts the minimal ciphertext-only transport envelope', () => {
 });
 test('rejects plaintext metadata and malformed crypto envelope fields', () => {
   for (const invalid of [
+    { ...valid, unexpected: 'plaintext' },
+    { ...valid, createdAt: '2026-11-27T12:00:00.000Z' },
     { ...valid, title: 'plaintext title' },
     { ...valid, content: 'plaintext content' },
     { ...valid, tags: ['plaintext tag'] },
