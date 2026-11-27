@@ -13,7 +13,7 @@ import { validateIncomingBitcoinPayment } from './src/lib/bitcoinSettlement.ts';
 import { resolveSettlementApprovalStatus } from './src/lib/settlementApproval.ts';
 import { requireAuth, type AuthRequest } from './src/middleware/auth.ts';
 import { createNeonStoragePresignedUrl } from './src/lib/neonStorageSigning.ts';
-import { getStorageObjectForUser, listStorageObjectsForUser, recordStorageObjectForUser } from './src/db/storageStore.ts';
+import { deleteStorageObjectForUser, getStorageObjectByIdForUser, getStorageObjectForUser, listStorageObjectsForUser, recordStorageObjectForUser } from './src/db/storageStore.ts';
 import { adminAuth } from './src/lib/firebase-admin.ts';
 import { SecurityStore } from './src/lib/securityStore.ts';
 import {
@@ -486,6 +486,50 @@ async function startServer() {
       res.json({ url: signed.url, expiresAt: signed.expiresAt });
     } catch {
       res.status(503).json({ error: 'Private file access is unavailable.' });
+    }
+  });
+
+  app.delete('/api/storage/files/:id', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
+    try {
+      const objectId = req.params.id;
+      if (typeof objectId !== 'string' || !/^[0-9a-f-]{36}$/i.test(objectId)) {
+        res.status(404).json({ error: 'File not found.' });
+        return;
+      }
+      const ownerUid = req.user!.uid;
+      const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+      const metadata = await getStorageObjectByIdForUser(ownerUid, ownerEmail, objectId);
+      if (!metadata) {
+        res.status(404).json({ error: 'File not found.' });
+        return;
+      }
+
+      // Hold the shared execution lease across external deletion and metadata
+      // removal so an emergency stop cannot race this destructive operation.
+      await withSharedExecutionLease(async () => {
+        const signed = createNeonStoragePresignedUrl({
+          method: 'DELETE',
+          bucket: storageBucket,
+          objectKey: metadata.objectKey,
+          expiresInSeconds: 120,
+        });
+        const removed = await fetch(signed.url, {
+          method: 'DELETE',
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!removed.ok) {
+          throw new Error('Private storage did not confirm file deletion.');
+        }
+        // If this database step fails, the owner-scoped row remains; retrying
+        // the DELETE is safe because S3-compatible object deletion is idempotent.
+        const metadataRemoved = await deleteStorageObjectForUser(ownerUid, ownerEmail, objectId);
+        if (!metadataRemoved) {
+          throw new Error('Private file metadata could not be removed.');
+        }
+      });
+      res.json({ deleted: true });
+    } catch {
+      res.status(503).json({ error: 'Private file deletion could not be confirmed. Refresh and retry if the file remains listed.' });
     }
   });
 
