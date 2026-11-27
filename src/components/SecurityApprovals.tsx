@@ -3,12 +3,13 @@ import { AlertTriangle, Check, Clock3, Download, FileKey2, KeyRound, LockKeyhole
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
 import { apiJson } from '../lib/apiClient';
 import { auth } from '../lib/firebase';
+import { DeviceManagement } from './DeviceManagement';
 
 interface ApprovalRequest { id: string; action: string; summary: string; amountUsd?: number; scope?: Record<string, unknown>; scopeHash?: string; status: 'pending' | 'approved' | 'rejected'; createdAt: string; decidedAt?: string; decidedBy?: string; }
 interface Contact { id: string; name: string; email: string; purpose: string; status: 'active' | 'revoked'; createdAt: string; updatedAt: string; }
 interface AuditEntry { seq: number; actorUid?: string; event: string; details: unknown; createdAt: string; previousHash: string; entryHash: string; }
 
-type Panel = 'approvals' | 'backup' | 'contacts' | 'sessions' | 'audit' | 'provider-usage';
+type Panel = 'approvals' | 'backup' | 'contacts' | 'sessions' | 'audit' | 'provider-usage' | 'devices';
 
 export function SecurityApprovals() {
   const [panel, setPanel] = useState<Panel>('approvals');
@@ -85,6 +86,7 @@ export function SecurityApprovals() {
 
   const panels: Array<[Panel, string, ReactNode]> = [
     ['approvals', 'Approvals', <ShieldCheck className="h-4 w-4" />],
+    ['devices', 'Trusted Devices', <Users className="h-4 w-4" />],
     ['backup', 'Backup & Recovery', <LockKeyhole className="h-4 w-4" />],
     ['contacts', 'Approved Contacts', <Users className="h-4 w-4" />],
     ['sessions', 'Sessions & Credential', <KeyRound className="h-4 w-4" />],
@@ -99,6 +101,7 @@ export function SecurityApprovals() {
     <div className="flex flex-wrap gap-2">{panels.map(([id, label, icon]) => <button key={id} onClick={() => setPanel(id)} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${panel === id ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30' : 'bg-slate-900 text-slate-400 hover:text-slate-200'}`}>{icon}{label}</button>)}</div>
     {error && <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">{error}</div>}
 
+    {panel === 'devices' && <DeviceManagement />}
     {panel === 'approvals' && <div className="space-y-5">
       <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-5"><div className="mb-4"><h2 className="text-sm font-semibold text-white">Request owner approval</h2><p className="mt-1 text-xs text-slate-500">Create a durable approval before Jerry performs a high-impact action. The resulting approval ID is the authorization token passed to the execution boundary.</p></div><div className="grid gap-3 md:grid-cols-[180px_1fr_140px_auto]"><select value={action} onChange={e => setAction(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"><option value="financial_commitment">Financial commitment</option><option value="bitcoin_transfer">Bitcoin transfer</option><option value="outgoing_payment">Outgoing payment</option><option value="purchase">Purchase</option><option value="subscription">Subscription</option><option value="contract">Contract</option><option value="confidential_external_share">Confidential share</option><option value="high_impact_change">High-impact change</option></select><input value={summary} onChange={e => setSummary(e.target.value)} placeholder="What exactly is Jerry asking permission to do?" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"/><input value={amountUsd} onChange={e => setAmountUsd(e.target.value)} inputMode="decimal" placeholder="USD amount" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"/>{action === 'bitcoin_transfer' && <><input value={btcScope.destination} onChange={e => setBtcScope({...btcScope,destination:e.target.value})} placeholder="Bitcoin destination address" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"/><input value={btcScope.amount} onChange={e => setBtcScope({...btcScope,amount:e.target.value})} inputMode="decimal" placeholder="BTC amount" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"/><input value={btcScope.fee} onChange={e => setBtcScope({...btcScope,fee:e.target.value})} inputMode="decimal" placeholder="BTC fee" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"/></>}<button disabled={!summary.trim() || creating} onClick={() => void createApproval()} className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-40">{creating ? 'Creating…' : 'Request approval'}</button></div></div>
       <div className="flex flex-wrap gap-2">{(['pending','approved','rejected','all'] as const).map(v => <button key={v} onClick={() => setStatus(v)} className={`rounded-lg px-4 py-2 text-xs font-medium ${status === v ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30' : 'bg-slate-900 text-slate-400'}`}>{v[0].toUpperCase()+v.slice(1)}</button>)}</div>

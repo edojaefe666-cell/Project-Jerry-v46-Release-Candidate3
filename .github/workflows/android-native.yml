@@ -151,23 +151,5 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -memory 2048 -cores 2 -wipe-data
           emulator-boot-timeout: 900
           disable-animations: true
-          script: |
-            adb wait-for-device
-            for attempt in $(seq 1 60); do boot_completed="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"; if [ "$boot_completed" = "1" ]; then break; fi; sleep 2; done
-            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
-            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "29"
-            # Android 10 can report boot_completed before PackageManager is
-            # registered with system_server. Wait for the actual binder service,
-            # not merely a successful adb shell invocation.
-            package_manager_ready=false
-            for attempt in $(seq 1 120); do if adb shell service check package 2>/dev/null | grep -q "found"; then package_manager_ready=true; break; fi; sleep 3; done
-            test "$package_manager_ready" = "true"
-            adb shell cmd package list packages >/dev/null
-            gradle --no-daemon -p android-native :app:assembleDebugAndroidTest
-            adb install -r android-native/app/build/outputs/apk/debug/app-debug.apk
-            adb install -r android-native/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-            adb shell am instrument -w com.projectjerry.android.test/androidx.test.runner.AndroidJUnitRunner
-            adb shell am start -W -n com.projectjerry.android/.ui.MainActivity
-            sleep 5
-            adb shell pidof com.projectjerry.android
+          script: bash scripts/android-emulator-smoke.sh
 

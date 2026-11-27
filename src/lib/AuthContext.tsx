@@ -18,7 +18,10 @@ import { auth, googleAuthProvider } from './firebase';
 
 declare global {
   interface Window {
-    JerryNativeAuth?: { postMessage: (message: string) => void };
+    JerryNativeAuth?: {
+      postMessage: (message: string) => void;
+      onmessage: ((event: MessageEvent<string>) => void) | null;
+    };
   }
 }
 
