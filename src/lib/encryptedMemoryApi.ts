@@ -1,7 +1,13 @@
 import { apiFetch, apiJson } from './apiClient.ts';
 import { digestDeviceHttpBody, type DeviceHttpRequestChallenge } from './deviceHttpRequestProof.ts';
 import { getOrCreateJerryDeviceId } from './deviceIdentity.ts';
-import { signNativeDeviceMemoryRequestChallenge, unwrapNativeDeviceMemoryKeyEnvelope } from './nativeDeviceSigning.ts';
+import {
+  signNativeDeviceMemoryRequestChallenge,
+  unwrapNativeDeviceMemoryKeyEnvelope,
+  createNativeInitialDeviceMemoryKey,
+  wrapNativeMemoryKeyForApprovedDevice,
+} from './nativeDeviceSigning.ts';
+import type { DevicePublicKey } from './memoryKeyEnvelope.ts';
 import type { EncryptedMemoryRecord } from './encryptedMemoryRecord.ts';
 import type { DeviceKeyEnvelope } from './memoryKeyEnvelope.ts';
 
@@ -131,4 +137,43 @@ export async function fetchAndInstallDeviceMemoryKeyEnvelope(
     deviceId,
     keyVersion,
   });
+}
+
+/** Initializes a local memory key after an explicit native owner confirmation. */
+export async function initializeAndroidMemoryKey(
+  ownerUid: string,
+  keyVersion = 1,
+): Promise<void> {
+  if (typeof ownerUid !== 'string' || !ownerUid.trim() || ownerUid.length > 160 ||
+      !Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+    throw new Error('Memory-key owner or version is invalid.');
+  }
+  await createNativeInitialDeviceMemoryKey(ownerUid, getOrCreateJerryDeviceId(), keyVersion);
+}
+
+/**
+ * Creates and uploads an envelope for a target device. Android confirms the
+ * recipient before wrapping; the authenticated server independently verifies
+ * that both sender and recipient registrations are active and owner-approved.
+ */
+export async function shareAndroidMemoryKeyWithApprovedDevice(
+  ownerUid: string,
+  recipientDeviceId: string,
+  recipientPublicKey: DevicePublicKey,
+  keyVersion = 1,
+): Promise<void> {
+  if (typeof ownerUid !== 'string' || !ownerUid.trim() || ownerUid.length > 160 ||
+      !Number.isSafeInteger(keyVersion) || keyVersion < 1 ||
+      !/^[A-Za-z0-9_-]{16,128}$/.test(recipientDeviceId)) {
+    throw new Error('Memory-key recipient or context is invalid.');
+  }
+  const senderDeviceId = getOrCreateJerryDeviceId();
+  const envelope = await wrapNativeMemoryKeyForApprovedDevice(
+    ownerUid, senderDeviceId, recipientDeviceId, keyVersion, recipientPublicKey,
+  );
+  await signedEncryptedMemoryRequest<{ stored: boolean }>(
+    'POST',
+    '/api/memory/key-envelopes',
+    { recipientDeviceId, envelope },
+  );
 }
