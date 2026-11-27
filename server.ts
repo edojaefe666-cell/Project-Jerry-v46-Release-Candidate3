@@ -631,15 +631,15 @@ async function startServer() {
   // during emergency stop because it cannot initiate external execution.
   app.get('/api/provider-usage', requireAuth, async (req: AuthRequest, res) => {
     try {
-      const rawLimit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 30;
-      if (!Number.isSafeInteger(rawLimit) || rawLimit < 1 || rawLimit > 100) {
-        res.status(400).json({ error: 'Provider usage ledger page size must be between 1 and 100.' });
+      const rawDays = typeof req.query.days === 'string' ? Number(req.query.days) : 30;
+      if (!Number.isSafeInteger(rawDays) || rawDays < 1 || rawDays > 90) {
+        res.status(400).json({ error: 'Provider usage ledger history must be between 1 and 90 days.' });
         return;
       }
       const uid = req.user!.uid;
       const [tokens, costs] = await Promise.all([
-        getProviderUsageLedgerSnapshot(uid, rawLimit),
-        getProviderCostLedgerSnapshot(uid, rawLimit),
+        getProviderUsageAudit(uid, rawDays),
+        getProviderCostAudit(uid, rawDays),
       ]);
       res.setHeader('Cache-Control', 'no-store');
       res.json({
