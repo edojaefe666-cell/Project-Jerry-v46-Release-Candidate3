@@ -1964,7 +1964,7 @@ async function startServer() {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
-      const result = await recoverStaleTaskExecutions(uid, email);
+      const result = await withSharedExecutionLease(() => recoverStaleTaskExecutions(uid, email));
       res.json({ recoveredCount: result.recoveredCount, tasks: result.state.tasks });
     } catch (error) {
       console.error('Internal server error:', error);
