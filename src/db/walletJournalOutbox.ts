@@ -67,25 +67,28 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
   let failed = 0;
 
   try {
-    const picked = await client.query(
-      `WITH picked AS (
-         SELECT o.id FROM wallet_journal_outbox o
-         JOIN users u ON u.id = o.user_id
-         WHERE (
-             (o.status = 'pending' AND o.available_at <= now())
-             OR (o.status = 'processing' AND o.updated_at < now() - interval '5 minutes')
-           )
-           ${uid ? 'AND u.uid = $1' : ''}
-         ORDER BY o.id
-         FOR UPDATE SKIP LOCKED
-         LIMIT $${uid ? 2 : 1}
-       )
-       UPDATE wallet_journal_outbox o
-          SET status = 'processing', claim_token = $${uid ? 3 : 2}, attempts = attempts + 1, updated_at = now()
-        WHERE o.id IN (SELECT id FROM picked)
-       RETURNING o.id, o.user_id, o.event_key, o.tx_ref, o.payload_json, o.claim_token`,
-      uid ? [uid, limit, claimToken] : [limit, claimToken],
-    );
+    const picked = await withSharedExecutionLease(async () => {
+      if (signal?.aborted) throw new Error('Jerry emergency stop interrupted the outbox before claiming work.');
+      return client.query(
+        `WITH picked AS (
+           SELECT o.id FROM wallet_journal_outbox o
+           JOIN users u ON u.id = o.user_id
+           WHERE (
+               (o.status = 'pending' AND o.available_at <= now())
+               OR (o.status = 'processing' AND o.updated_at < now() - interval '5 minutes')
+             )
+             ${uid ? 'AND u.uid = $1' : ''}
+           ORDER BY o.id
+           FOR UPDATE SKIP LOCKED
+           LIMIT ${uid ? 2 : 1}
+         )
+         UPDATE wallet_journal_outbox o
+            SET status = 'processing', claim_token = ${uid ? 3 : 2}, attempts = attempts + 1, updated_at = now()
+          WHERE o.id IN (SELECT id FROM picked)
+         RETURNING o.id, o.user_id, o.event_key, o.tx_ref, o.payload_json, o.claim_token`,
+        uid ? [uid, limit, claimToken] : [limit, claimToken],
+      );
+    });
 
     const claimedRows = picked.rows as Array<{
       id: number;
