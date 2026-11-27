@@ -130,6 +130,7 @@ test('reserves a shared operation slot before every provider fallback attempt', 
     }),
     settleTokens: async () => {},
     reserveOperation: async (ownerUid) => { events.push(`reserve:${ownerUid}`); },
+    withExecutionLease: async (work) => { events.push('lease:acquire'); try { return await work(); } finally { events.push('lease:release'); } },
     fetchImpl: async (input) => {
       attempt += 1;
       events.push(`fetch:${String(input).includes('generativelanguage') ? 'google' : 'openai'}`);
@@ -139,10 +140,14 @@ test('reserves a shared operation slot before every provider fallback attempt', 
   });
   assert.equal(result.provider, 'openai');
   assert.deepEqual(events, [
+    'lease:acquire',
     'reserve:owner-123',
     'fetch:google',
+    'lease:release',
+    'lease:acquire',
     'reserve:owner-123',
     'fetch:openai',
+    'lease:release',
   ]);
 });
 
