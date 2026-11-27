@@ -229,7 +229,7 @@ export interface StoredOwnerMemoryRecoveryEnvelope extends OwnerMemoryRecoveryEn
 }
 
 function assertOwnerMemoryRecoveryEnvelope(
-  envelope: StoredOwnerMemoryRecoveryEnvelope,
+  envelope: OwnerMemoryRecoveryEnvelopePayload,
   ownerUid: string,
   keyVersion: number,
 ): void {
@@ -297,12 +297,20 @@ function assertStoredOwnerMemoryRecoveryEnvelope(
   ownerUid: string,
   keyVersion: number,
 ): void {
-  assertOwnerMemoryRecoveryEnvelope(envelope, ownerUid, keyVersion);
-  if (typeof envelope.id !== 'string' || !envelope.id ||
+  if (!envelope || typeof envelope !== 'object' ||
+      typeof envelope.id !== 'string' || !envelope.id ||
       typeof envelope.createdAt !== 'string' || !Number.isFinite(Date.parse(envelope.createdAt)) ||
       Object.keys(envelope).some((key) =>
         !['id', 'createdAt', 'version', 'algorithm', 'context', 'salt', 'iv', 'ciphertext'].includes(key),
       )) {
     throw new Error('Jerry returned an invalid stored owner memory recovery record.');
   }
+  assertOwnerMemoryRecoveryEnvelope({
+    version: envelope.version,
+    algorithm: envelope.algorithm,
+    context: envelope.context,
+    salt: envelope.salt,
+    iv: envelope.iv,
+    ciphertext: envelope.ciphertext,
+  }, ownerUid, keyVersion);
 }
