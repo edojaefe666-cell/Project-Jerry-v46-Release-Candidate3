@@ -897,3 +897,50 @@ test('cross-instance owner recovery reconciles the local SQLite latch before exe
     'each instance must reconcile its local durable stop mirror from shared owner state before setting its execution latch');
   assert.match(poller, /catch \{\s*executionRegistry\.setStopped\(true/);
 });
+
+
+test('every wallet mutation or external verification route is owner-stop guarded and lease protected', () => {
+  const routeCases = [
+    {
+      name: 'incoming settlement recording',
+      start: "app.post('/api/wallet/commands/record-income'",
+      end: "app.post('/api/wallet/commands/submit-transfer'",
+    },
+    {
+      name: 'outgoing transfer staging',
+      start: "app.post('/api/wallet/commands/submit-transfer'",
+      end: 'async function fetchLiveSpotPrices()',
+    },
+    {
+      name: 'on-chain wallet synchronization',
+      start: "app.post('/api/wallet/sync-onchain'",
+      end: "app.post('/api/wallet/verify-tx'",
+    },
+    {
+      name: 'external transaction verification',
+      start: "app.post('/api/wallet/verify-tx'",
+      end: "app.get('/api/wallet/financial-truth'",
+    },
+    {
+      name: 'financial journal backfill',
+      start: "app.post('/api/wallet/financial-truth/backfill'",
+      end: "app.post('/api/wallet/commands/reconcile-tx'",
+    },
+    {
+      name: 'transaction reconciliation',
+      start: "app.post('/api/wallet/commands/reconcile-tx'",
+      end: "app.post('/api/jerry/chat'",
+    },
+  ];
+
+  for (const item of routeCases) {
+    const start = server.indexOf(item.start);
+    const end = server.indexOf(item.end, start + item.start.length);
+    assert.ok(start >= 0 && end > start, `${item.name} route boundaries must exist`);
+    const route = server.slice(start, end);
+    assert.match(route.slice(0, route.indexOf('{')), /requireExecutionEnabled/,
+      `${item.name} must reject work when the owner emergency stop is active`);
+    assert.match(route, /withSharedExecutionLease\(/,
+      `${item.name} must hold a durable cross-instance execution lease`);
+  }
+});
