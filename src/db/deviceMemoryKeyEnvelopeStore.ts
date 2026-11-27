@@ -91,10 +91,6 @@ export async function createDeviceMemoryKeyEnvelopeForUser(
   if (envelope.context.ownerUid !== uid || envelope.context.deviceId !== recipientDeviceId) {
     throw new Error('Envelope context does not match the authenticated owner and recipient device.');
   }
-  if (recipientDeviceId === authorizedByDeviceId) {
-    // A device may wrap its own key only after an existing owner-approved flow
-    // has explicitly authorized this operation; API route enforces that proof.
-  }
   const user = await getOrCreateUser(uid, email);
   return db.transaction(async (tx) => {
     const [recipient] = await tx.select().from(deviceRegistrations).where(and(
