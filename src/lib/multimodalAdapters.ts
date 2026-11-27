@@ -107,7 +107,7 @@ export interface SpeechSynthesisOptions {
 }
 export interface AudioTranscriptionOptions {
   audioBase64: string; mimeType: string; configuration: ProviderConfiguration;
-  googleModel?: string; openaiModel?: string; timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal;
+  googleModel?: string; openaiModel?: string; timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal; ownerUid?: string;
 }
 export interface AudioResult { audioBase64: string; mimeType: string; provider: ModelProvider; model: string }
 export interface TranscriptionResult { transcript: string; provider: ModelProvider; model: string }
