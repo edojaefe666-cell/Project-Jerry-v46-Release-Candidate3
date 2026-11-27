@@ -18,6 +18,7 @@ const providerCostStore = fs.readFileSync(path.join(root, 'src/db/providerCostSt
 const apiClient = fs.readFileSync(path.join(root, 'src/lib/apiClient.ts'), 'utf8');
 const androidManifest = fs.readFileSync(path.join(root, 'android-native/app/src/main/AndroidManifest.xml'), 'utf8');
 const androidPermissionManager = fs.readFileSync(path.join(root, 'android-native/app/src/main/java/com/projectjerry/android/permissions/JerryPermissionManager.kt'), 'utf8');
+const androidMainActivity = fs.readFileSync(path.join(root, 'android-native/app/src/main/java/com/projectjerry/android/ui/MainActivity.kt'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -71,6 +72,17 @@ test('container liveness and readiness probes are public, bounded, and non-discl
   assert.match(readiness[0], /readSharedExecutionControl/);
   assert.match(readiness[0], /status\(503\)\.json\(\{ status: 'not_ready' \}\)/);
   assert.doesNotMatch(readiness[0], /error\.message|SQL_HOST|JERRY_OWNER_UID.*json/);
+});
+
+test('Android WebView grants microphone only to Jerry local origin after runtime approval', () => {
+  assert.match(androidMainActivity, /origin\.scheme == "https"/);
+  assert.match(androidMainActivity, /origin\.host == "localhost"/);
+  assert.match(androidMainActivity, /request\.resources\.all/);
+  assert.match(androidMainActivity, /RESOURCE_AUDIO_CAPTURE/);
+  assert.match(androidMainActivity, /audioPermissionLauncher\.launch\(Manifest\.permission\.RECORD_AUDIO\)/);
+  assert.match(androidMainActivity, /request\.deny\(\)/);
+  assert.match(androidMainActivity, /onPermissionRequestCanceled/);
+  assert.match(androidMainActivity, /pendingAudioPermission\?\.deny\(\)/);
 });
 
 test('Android requests only currently justified runtime permissions', () => {
