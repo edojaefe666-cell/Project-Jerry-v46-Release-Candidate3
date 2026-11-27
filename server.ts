@@ -992,7 +992,7 @@ async function startServer() {
         settlementMode: 'on_chain', approvalId: approval.id,
       };
       const command = `wallet-record-income:${JSON.stringify({ amount: input.amount, counterparty: input.counterparty, note: input.note, txHash: cleanHash ?? null, asset: 'BTC', network: 'Bitcoin Mainnet' })}`;
-      const result = await withSharedExecutionLease(() => runIdempotentWorkspaceCommand(uid, email, key, command, async (current) => {
+      const result = await runIdempotentWorkspaceCommand(uid, email, key, command, async (current) => {
         const currentReceivingAddresses = (current.walletAssets ?? [])
           .filter((asset) => asset.symbol === 'BTC' && asset.network === 'Bitcoin Mainnet' && typeof asset.address === 'string')
           .map((asset) => asset.address!.trim());
