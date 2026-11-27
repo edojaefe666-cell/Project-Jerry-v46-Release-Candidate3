@@ -2006,7 +2006,7 @@ async function startServer() {
       const upgradeId = String(req.params.id);
       const key = String(req.header('Idempotency-Key') ?? '').trim();
       if (!key) { res.status(400).json({ error: 'Idempotency-Key header is required.' }); return; }
-      const result = await runIdempotentWorkspaceCommand(uid, email, key, `self-upgrade-verify:${upgradeId}`, async (current) => {
+      const result = await withSharedExecutionLease(() => runIdempotentWorkspaceCommand(uid, email, key, `self-upgrade-verify:${upgradeId}`, async (current) => {
         const proposal = current.selfUpgrades?.find((item) => item.id === upgradeId);
         if (!proposal) throw new Error('Self-upgrade proposal not found.');
         const audit = auditSelfProgrammedCode(proposal.code);
@@ -2030,7 +2030,7 @@ async function startServer() {
         const updated = { ...proposal, securityAuditPassed, securityAuditNotes, testStatus, testReport, approvalStatus: 'awaiting_permission' as const };
         const state = { ...current, selfUpgrades: (current.selfUpgrades ?? []).map((item) => item.id === upgradeId ? updated : item) };
         return { state, response: { proposal: updated, state } };
-      });
+      }));
       res.json({ ...result.response, replayed: result.replayed });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to verify self-upgrade.';
