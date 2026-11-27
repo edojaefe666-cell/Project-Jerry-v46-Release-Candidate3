@@ -34,22 +34,27 @@ function createRequestAbort(signal: AbortSignal | undefined, timeoutMs: number) 
 }
 async function postJson(url:string,headers:Record<string,string>,body:unknown,timeoutMs:number,fetchImpl:typeof fetch,parentSignal?:AbortSignal,ownerUid?:string) {
  throwIfAborted(parentSignal);const request=createRequestAbort(parentSignal,timeoutMs);
- try {const response=await fetchUnderOwnerLease(ownerUid, () => fetchImpl(url,{method:'POST',headers,body:JSON.stringify(body),signal:request.signal}));
-    if (request.signal.aborted) {
-      try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
-      throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
-    }
-    if (!response.ok) {
-      try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
-      throw new Error(`Provider returned HTTP ${response.status}.`);
-    }
-    const value: unknown = await response.json();
-    if (request.signal.aborted) {
-      throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
-    }
-    throwIfAborted(parentSignal);
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Provider returned an invalid response.');
-    return value as Record<string, any>;
+ try {
+   // Hold the shared execution lease until the complete response body is consumed
+   // and validated. Releasing it at response headers leaves a stop/parse race.
+   return await fetchUnderOwnerLease(ownerUid, async () => {
+     const response=await fetchImpl(url,{method:'POST',headers,body:JSON.stringify(body),signal:request.signal});
+     if (request.signal.aborted) {
+       try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
+       throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
+     }
+     if (!response.ok) {
+       try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
+       throw new Error(`Provider returned HTTP ${response.status}.`);
+     }
+     const value: unknown = await response.json();
+     if (request.signal.aborted) {
+       throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
+     }
+     throwIfAborted(parentSignal);
+     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Provider returned an invalid response.');
+     return value as Record<string, any>;
+   });
   } finally { request.cleanup(); }
 }
 
@@ -148,25 +153,27 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
         const model = options.openaiModel || 'gpt-4o-mini-tts';
         const request = createRequestAbort(options.signal, timeoutMs);
         try {
-          const response = await fetchUnderOwnerLease(options.ownerUid, () => fetchImpl('https://api.openai.com/v1/audio/speech', {
-            method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ model, input: text, voice: ['alloy','ash','ballad','coral','echo','fable','onyx','nova','sage','shimmer','verse','marin','cedar'].includes(options.voice || '') ? options.voice : 'onyx', instructions: options.style || 'Speak clearly in a calm, warm, confident tone.', response_format: 'mp3' }),
-            signal: request.signal,
-          }));
-          if (request.signal.aborted) {
-            try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
-            throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
-          }
-          if (!response.ok) {
-            try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
-            throw new Error(`Provider returned HTTP ${response.status}.`);
-          }
-          const bytes = new Uint8Array(await response.arrayBuffer());
-          if (request.signal.aborted) throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
-          if (!bytes.length || bytes.length > 15_000_000) throw new Error('Provider returned empty or oversized audio.');
-          let binary = '';
-          for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-          return { audioBase64: btoa(binary), mimeType: 'audio/mpeg', provider: 'openai', model };
+          return await fetchUnderOwnerLease(options.ownerUid, async () => {
+            const response = await fetchImpl('https://api.openai.com/v1/audio/speech', {
+              method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+              body: JSON.stringify({ model, input: text, voice: ['alloy','ash','ballad','coral','echo','fable','onyx','nova','sage','shimmer','verse','marin','cedar'].includes(options.voice || '') ? options.voice : 'onyx', instructions: options.style || 'Speak clearly in a calm, warm, confident tone.', response_format: 'mp3' }),
+              signal: request.signal,
+            });
+            if (request.signal.aborted) {
+              try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
+              throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
+            }
+            if (!response.ok) {
+              try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
+              throw new Error(`Provider returned HTTP ${response.status}.`);
+            }
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            if (request.signal.aborted) throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
+            if (!bytes.length || bytes.length > 15_000_000) throw new Error('Provider returned empty or oversized audio.');
+            let binary = '';
+            for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+            return { audioBase64: btoa(binary), mimeType: 'audio/mpeg', provider: 'openai', model };
+          });
         } finally { request.cleanup(); }
       }
       if (route.provider === 'google') {
@@ -228,23 +235,25 @@ export async function transcribeAudioWithModelFallback(options: AudioTranscripti
         form.append('file', new Blob([bytes], { type: options.mimeType }), `recording.${extension}`);
         const request = createRequestAbort(options.signal, timeoutMs);
         try {
-          const response = await fetchUnderOwnerLease(options.ownerUid, () => fetchImpl('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form, signal: request.signal }));
-          if (request.signal.aborted) {
-            try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
-            throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
-          }
-          if (!response.ok) {
-            try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
-            throw new Error(`Provider returned HTTP ${response.status}.`);
-          }
-          const body: unknown = await response.json();
-          if (request.signal.aborted) {
-            throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
-          }
-          throwIfAborted(options.signal);
-          const transcript = body && typeof body === 'object' ? (body as any).text : undefined;
-          if (typeof transcript !== 'string' || !transcript.trim()) throw new Error('Provider returned no transcript.');
-          return { transcript: transcript.trim(), provider: 'openai', model };
+          return await fetchUnderOwnerLease(options.ownerUid, async () => {
+            const response = await fetchImpl('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form, signal: request.signal });
+            if (request.signal.aborted) {
+              try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
+              throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
+            }
+            if (!response.ok) {
+              try { await response.body?.cancel(); } catch { /* best-effort stream cleanup */ }
+              throw new Error(`Provider returned HTTP ${response.status}.`);
+            }
+            const body: unknown = await response.json();
+            if (request.signal.aborted) {
+              throw request.signal.reason instanceof Error ? request.signal.reason : new Error('Provider request cancelled.');
+            }
+            throwIfAborted(options.signal);
+            const transcript = body && typeof body === 'object' ? (body as any).text : undefined;
+            if (typeof transcript !== 'string' || !transcript.trim()) throw new Error('Provider returned no transcript.');
+            return { transcript: transcript.trim(), provider: 'openai', model };
+          });
         } finally { request.cleanup(); }
       }
     } catch (error) { throwIfAborted(options.signal); failures.push(`${route.provider}: ${error instanceof Error ? error.message : 'request failed'}`); }
