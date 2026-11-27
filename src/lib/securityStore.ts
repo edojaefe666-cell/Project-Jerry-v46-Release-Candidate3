@@ -159,10 +159,11 @@ export class SecurityStore {
         stopped INTEGER NOT NULL CHECK(stopped IN (0,1)),
         reason TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        owner_uid TEXT NOT NULL
+        owner_uid TEXT NOT NULL,
+        shared_epoch INTEGER NOT NULL DEFAULT 0 CHECK(shared_epoch >= 0)
       );
-      INSERT OR IGNORE INTO emergency_control(id, stopped, reason, updated_at, owner_uid)
-        VALUES(1, 1, 'Emergency stop engaged by secure first-boot default', strftime('%Y-%m-%dT%H:%M:%fZ','now'), 'system');
+      INSERT OR IGNORE INTO emergency_control(id, stopped, reason, updated_at, owner_uid, shared_epoch)
+        VALUES(1, 1, 'Emergency stop engaged by secure first-boot default', strftime('%Y-%m-%dT%H:%M:%fZ','now'), 'system', 0);
       CREATE TABLE IF NOT EXISTS idempotency (
         idempotency_key TEXT PRIMARY KEY,
         actor_uid TEXT NOT NULL,
@@ -181,6 +182,7 @@ export class SecurityStore {
     try { this.db.exec('ALTER TABLE approvals ADD COLUMN reservation_id TEXT'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE approvals ADD COLUMN reserved_at TEXT'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE approvals ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
+    try { this.db.exec('ALTER TABLE emergency_control ADD COLUMN shared_epoch INTEGER NOT NULL DEFAULT 0 CHECK(shared_epoch >= 0)'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE approved_contacts ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
     try { this.db.exec('ALTER TABLE audit_log ADD COLUMN owner_uid TEXT'); } catch { /* already migrated */ }
     // A legacy unclaimed system seed must never silently enable execution.
@@ -190,32 +192,70 @@ export class SecurityStore {
     ).run(now());
   }
 
-  getEmergencyStop(): { stopped: boolean; reason: string; updatedAt: string; ownerUid: string } {
+  getEmergencyStop(): { stopped: boolean; reason: string; updatedAt: string; ownerUid: string; sharedEpoch: number } {
     const row = this.db.prepare(
-      'SELECT stopped, reason, updated_at AS updatedAt, owner_uid AS ownerUid FROM emergency_control WHERE id=1'
-    ).get() as { stopped: number; reason: string; updatedAt: string; ownerUid: string } | undefined;
+      'SELECT stopped, reason, updated_at AS updatedAt, owner_uid AS ownerUid, shared_epoch AS sharedEpoch FROM emergency_control WHERE id=1'
+    ).get() as { stopped: number; reason: string; updatedAt: string; ownerUid: string; sharedEpoch: number } | undefined;
     if (!row) throw new Error('Emergency-stop control record is missing.');
-    return { stopped: row.stopped === 1, reason: row.reason, updatedAt: row.updatedAt, ownerUid: row.ownerUid };
+    return { stopped: row.stopped === 1, reason: row.reason, updatedAt: row.updatedAt, ownerUid: row.ownerUid, sharedEpoch: Number(row.sharedEpoch) };
   }
 
-  setEmergencyStop(stopped: boolean, ownerUid: string, reason: string): { stopped: boolean; reason: string; updatedAt: string; ownerUid: string } {
+  setEmergencyStop(stopped: boolean, ownerUid: string, reason: string, sharedEpoch?: number): ReturnType<SecurityStore['getEmergencyStop']> {
     const cleanReason = reason.trim().slice(0, 1000);
     if (!ownerUid.trim() || cleanReason.length < 5) throw new Error('Owner UID and a meaningful emergency-control reason are required.');
+    if (sharedEpoch !== undefined && (!Number.isSafeInteger(sharedEpoch) || sharedEpoch < 1)) throw new Error('Shared emergency-control epoch is invalid.');
     const updatedAt = now();
-    // The local latch and its audit event are one durable SQLite transition.
-    // Never leave a changed stop state without its corresponding evidence.
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const result = this.db.prepare(
-        'UPDATE emergency_control SET stopped=?, reason=?, updated_at=?, owner_uid=? WHERE id=1'
-      ).run(stopped ? 1 : 0, cleanReason, updatedAt, ownerUid);
-      if (Number(result.changes ?? 0) !== 1) {
-        throw new Error('Emergency-stop control row is missing; local state was not changed.');
-      }
-      this.audit(ownerUid, stopped ? 'emergency_stop.engaged' : 'emergency_stop.released', { reason: cleanReason, updatedAt });
+        'UPDATE emergency_control SET stopped=?, reason=?, updated_at=?, owner_uid=?, shared_epoch=CASE WHEN ? IS NULL THEN shared_epoch ELSE MAX(shared_epoch, ?) END WHERE id=1'
+      ).run(stopped ? 1 : 0, cleanReason, updatedAt, ownerUid, sharedEpoch ?? null, sharedEpoch ?? null);
+      if (Number(result.changes ?? 0) !== 1) throw new Error('Emergency-stop control row is missing; local state was not changed.');
+      this.audit(ownerUid, stopped ? 'emergency_stop.engaged' : 'emergency_stop.released', { reason: cleanReason, updatedAt, sharedEpoch });
       this.db.exec('COMMIT');
     } catch (error) {
       try { this.db.exec('ROLLBACK'); } catch { /* preserve original failure */ }
+      throw error;
+    }
+    return this.getEmergencyStop();
+  }
+
+  /**
+   * Apply a shared snapshot only when its epoch is newer than the local mirror.
+   * BEGIN IMMEDIATE serializes concurrent pollers; a delayed older snapshot can
+   * never overwrite a stop/resume transition already applied at a higher epoch.
+   */
+  synchronizeEmergencyStop(
+    stopped: boolean,
+    ownerUid: string,
+    reason: string,
+    sharedEpoch: number,
+  ): ReturnType<SecurityStore['getEmergencyStop']> {
+    const cleanReason = reason.trim().slice(0, 1000);
+    if (!ownerUid.trim() || cleanReason.length < 5 || !Number.isSafeInteger(sharedEpoch) || sharedEpoch < 1) {
+      throw new Error('A valid owner, reason and shared emergency-control epoch are required.');
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const current = this.getEmergencyStop();
+      if (sharedEpoch < current.sharedEpoch) {
+        this.db.exec('COMMIT');
+        return current;
+      }
+      if (sharedEpoch === current.sharedEpoch) {
+        if (current.stopped !== stopped) throw new Error('Conflicting emergency-stop state for the same shared epoch.');
+        this.db.exec('COMMIT');
+        return current;
+      }
+      const updatedAt = now();
+      const result = this.db.prepare(
+        'UPDATE emergency_control SET stopped=?, reason=?, updated_at=?, owner_uid=?, shared_epoch=? WHERE id=1 AND shared_epoch < ?'
+      ).run(stopped ? 1 : 0, cleanReason, updatedAt, ownerUid, sharedEpoch, sharedEpoch);
+      if (Number(result.changes ?? 0) !== 1) throw new Error('Emergency-stop mirror changed unexpectedly during synchronization.');
+      this.audit(ownerUid, stopped ? 'emergency_stop.shared_engaged' : 'emergency_stop.shared_released', { reason: cleanReason, updatedAt, sharedEpoch });
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original error */ }
       throw error;
     }
     return this.getEmergencyStop();
