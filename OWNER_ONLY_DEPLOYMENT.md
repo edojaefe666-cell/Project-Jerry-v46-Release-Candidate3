@@ -7,6 +7,14 @@ Configure the server-side secret `JERRY_OWNER_UID` with the sole owner's Firebas
 
 With `NODE_ENV=production`, requests fail closed with HTTP 503 if the owner UID is absent. A valid Firebase identity with a different UID receives HTTP 403. Firebase token revocation checking remains enabled. Whenever an owner UID is configured, it is enforced in every environment.
 
+## Zero-paid-services pre-revenue policy
+
+- Hosted billable model providers (Google, OpenAI, Anthropic), hosted multimodal generation, speech, transcription, and Tavily live research are blocked unless `JERRY_PAID_SERVICES_ENABLED=1`.
+- The default is disabled. Do not enable paid services until Jerry has generated independently verified revenue and the owner explicitly approves the spending arrangement.
+- Local loopback model execution and public endpoints that do not require a paid account remain available subject to their own security controls. A provider's advertised free quota is not treated as proof that the account cannot incur charges.
+- Token, operation, and USD budgets remain additional safeguards; they do not override this pre-revenue spending gate.
+- Do not place provider credentials in the Android app. Hosted credentials remain server-side only.
+
 ## Container health and readiness
 
 - `GET /healthz` is a public liveness probe. It only confirms that the HTTP process is responding; it does not claim PostgreSQL or owner authentication is ready.
