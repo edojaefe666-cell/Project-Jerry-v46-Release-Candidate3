@@ -37,7 +37,7 @@ function base64Url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
 }
 function fromBase64Url(value: string): Uint8Array {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(value)) throw new Error('Device request proof encoding is invalid.');
+  if (!/^[A-Za-z0-9_-]{86}$/.test(value)) throw new Error('Device request proof encoding is invalid.');
   const base64 = value.replace(/-/g, '+').replace(/_/g, '/') + '=';
   return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
 }
