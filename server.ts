@@ -13,6 +13,7 @@ import { validateIncomingBitcoinPayment } from './src/lib/bitcoinSettlement.ts';
 import { resolveSettlementApprovalStatus } from './src/lib/settlementApproval.ts';
 import { requireAuth, type AuthRequest } from './src/middleware/auth.ts';
 import { createNeonStoragePresignedUrl } from './src/lib/neonStorageSigning.ts';
+import { getStorageObjectForUser, listStorageObjectsForUser, recordStorageObjectForUser } from './src/db/storageStore.ts';
 import { adminAuth } from './src/lib/firebase-admin.ts';
 import { SecurityStore } from './src/lib/securityStore.ts';
 import {
@@ -399,7 +400,8 @@ async function startServer() {
           res.status(415).json({ error: 'This file type is not supported.' });
           return;
         }
-        const objectKey = `${storageOwnerPrefix(req.user!.uid)}${randomUUID()}`;
+        const objectId = randomUUID();
+        const objectKey = `${storageOwnerPrefix(req.user!.uid)}${objectId}`;
         const signed = createNeonStoragePresignedUrl({
           method: 'PUT',
           bucket: storageBucket,
@@ -417,17 +419,31 @@ async function startServer() {
           res.status(502).json({ error: 'Private file storage rejected the upload.' });
           return;
         }
-        res.status(201).json({
-          objectKey,
-          contentType,
-          bytes: req.body.length,
-          stored: true,
-        });
+        const metadata = await recordStorageObjectForUser(
+          req.user!.uid,
+          req.user!.email ?? 'owner@jerry.local',
+          { id: objectId, objectKey, contentType, byteSize: req.body.length },
+        );
+        res.status(201).json({ ...metadata, stored: true });
       } catch {
         res.status(503).json({ error: 'Private file storage is unavailable; the upload was not confirmed.' });
       }
     },
   );
+
+  app.get('/api/storage/files', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const limitValue = Number(req.query.limit ?? 50);
+      const files = await listStorageObjectsForUser(
+        req.user!.uid,
+        req.user!.email ?? 'owner@jerry.local',
+        Number.isFinite(limitValue) ? limitValue : 50,
+      );
+      res.json({ files });
+    } catch {
+      res.status(503).json({ error: 'Private file metadata is unavailable.' });
+    }
+  });
 
   app.post('/api/storage/download-url', requireAuth, async (req: AuthRequest, res) => {
     try {
@@ -436,10 +452,19 @@ async function startServer() {
         res.status(404).json({ error: 'File not found.' });
         return;
       }
+      const metadata = await getStorageObjectForUser(
+        req.user!.uid,
+        req.user!.email ?? 'owner@jerry.local',
+        objectKey,
+      );
+      if (!metadata) {
+        res.status(404).json({ error: 'File not found.' });
+        return;
+      }
       const signed = createNeonStoragePresignedUrl({
         method: 'GET',
         bucket: storageBucket,
-        objectKey,
+        objectKey: metadata.objectKey,
         expiresInSeconds: 120,
       });
       res.json({ url: signed.url, expiresAt: signed.expiresAt });
