@@ -385,7 +385,7 @@ async function startServer() {
   ]);
   const sanitizeStorageFileName = (value: unknown): string => {
     const candidate = typeof value === 'string' ? value : 'file';
-    const safe = candidate.normalize('NFKC').replace(/[\\/\\\\\\u0000-\\u001f\\u007f]/g, '_').trim().slice(0, 180);
+    const safe = candidate.normalize('NFKC').replace(/[\/\\\x00-\x1F\x7F]/g, '_').trim().slice(0, 180);
     return safe || 'file';
   };
 
