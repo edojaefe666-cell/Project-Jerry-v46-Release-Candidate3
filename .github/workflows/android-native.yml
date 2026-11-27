@@ -154,6 +154,7 @@ jobs:
           script: |
             adb wait-for-device
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "29"
+            gradle --no-daemon -p android-native :app:connectedDebugAndroidTest
             adb install -r android-native/app/build/outputs/apk/debug/app-debug.apk
             adb shell am start -W -n com.projectjerry.android/.ui.MainActivity
             sleep 5
