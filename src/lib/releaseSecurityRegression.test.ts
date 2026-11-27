@@ -827,6 +827,16 @@ test('provider result delivery holds the durable shared execution lease through 
     ["app.post('/api/jerry/chat'", "app.post('/api/jerry/plan-goal'"],
     ["app.post('/api/jerry/plan-goal'", "app.post('/api/jerry/assess-opportunity'"],
     ["app.post('/api/jerry/assess-opportunity'", "app.post('/api/jerry/vision'"],
+    ["app.post('/api/jerry/vision'", "app.post('/api/jerry/tts'"],
+    ["app.post('/api/jerry/tts'", "app.post('/api/jerry/transcribe'"],
+    ["app.post('/api/jerry/transcribe'", "app.post('/api/jerry/scan-opportunities'"],
+    ["app.post('/api/jerry/scan-opportunities'", "app.post('/api/jerry/teach'"],
+    ["app.post('/api/jerry/teach'", "app.post('/api/jerry/self-program'"],
+    ["app.post('/api/jerry/self-program'", "app.post('/api/jerry/verify-upgrade'"],
+    ["app.post('/api/jerry/discover-daily-ways'", "app.post('/api/jerry/learn-human-insight'"],
+    ["app.post('/api/jerry/learn-human-insight'", "app.post('/api/jerry/learn-internet-growth'"],
+    ["app.post('/api/jerry/learn-internet-growth'", "app.post('/api/jerry/daily-summary'"],
+    ["app.post('/api/brain/generate'", "app.get('/api/state'"],
   ]) {
     const start = server.indexOf(route);
     const end = server.indexOf(next, start + route.length);
