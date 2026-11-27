@@ -19,6 +19,8 @@ const apiClient = fs.readFileSync(path.join(root, 'src/lib/apiClient.ts'), 'utf8
 const androidManifest = fs.readFileSync(path.join(root, 'android-native/app/src/main/AndroidManifest.xml'), 'utf8');
 const androidPermissionManager = fs.readFileSync(path.join(root, 'android-native/app/src/main/java/com/projectjerry/android/permissions/JerryPermissionManager.kt'), 'utf8');
 const androidMainActivity = fs.readFileSync(path.join(root, 'android-native/app/src/main/java/com/projectjerry/android/ui/MainActivity.kt'), 'utf8');
+const authContext = fs.readFileSync(path.join(root, 'src/lib/AuthContext.tsx'), 'utf8');
+const androidAuthClient = fs.readFileSync(path.join(root, 'android-native/app/src/main/res/values/strings.xml'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -72,6 +74,20 @@ test('container liveness and readiness probes are public, bounded, and non-discl
   assert.match(readiness[0], /readSharedExecutionControl/);
   assert.match(readiness[0], /status\(503\)\.json\(\{ status: 'not_ready' \}\)/);
   assert.doesNotMatch(readiness[0], /error\.message|SQL_HOST|JERRY_OWNER_UID.*json/);
+});
+
+test('Android app uses native Google identity and exchanges the ID token with Firebase Auth', () => {
+  assert.match(androidMainActivity, /CredentialManager\.create/);
+  assert.match(androidMainActivity, /GetGoogleIdOption\.Builder/);
+  assert.match(androidMainActivity, /default_web_client_id/);
+  assert.match(androidMainActivity, /@JavascriptInterface/);
+  assert.match(androidMainActivity, /jerry-native-auth-result/);
+  assert.match(androidAuthClient, /default_web_client_id/);
+  assert.match(authContext, /signInWithCredential/);
+  assert.match(authContext, /GoogleAuthProvider\.credential\(idToken\)/);
+  assert.match(authContext, /window\.JerryNativeAuth\?\.signInWithGoogle/);
+  assert.ok(authContext.indexOf('window.JerryNativeAuth?.signInWithGoogle') < authContext.indexOf('signInWithPopup'),
+    'Android must use native Credential Manager rather than popup auth');
 });
 
 test('Android WebView grants microphone only to Jerry local origin after runtime approval', () => {
