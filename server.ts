@@ -2183,6 +2183,13 @@ async function startServer() {
     };
 
     const ai = getGeminiClient();
+    const execution = executionRegistry.register();
+    const cancelOnDisconnect = () => {
+      if (!res.writableEnded && !execution.signal.aborted) {
+        execution.cancel('Human insight generation client disconnected');
+      }
+    };
+    res.once('close', cancelOnDisconnect);
     if (!ai) {
       res.json({
         insight: buildOfflineInsight(),
@@ -2192,6 +2199,10 @@ async function startServer() {
     }
 
     try {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
+        return;
+      }
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
         contents:
@@ -2211,9 +2222,14 @@ async function startServer() {
               clarityScoreGain: { type: Type.NUMBER },
             },
           },
+          abortSignal: execution.signal,
         },
       });
 
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
+        return;
+      }
       const parsed = JSON.parse((response.text ?? '{}').trim()) as Partial<HumanUnderstandingInsight>;
       const allowedDomains = new Set([
         'Buyer Psychology',
@@ -2236,10 +2252,19 @@ async function startServer() {
       };
       res.json({ insight, modelUsed: 'gemini-4-hydrogen' });
     } catch {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.writableEnded) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
+        }
+        return;
+      }
       res.json({
         insight: buildOfflineInsight(),
         modelUsed: 'Jerry Empathy & Learning Engine (Local fallback)',
       });
+    } finally {
+      res.off('close', cancelOnDisconnect);
+      execution.release();
     }
   });
 
@@ -2293,6 +2318,13 @@ async function startServer() {
     };
 
     const ai = getGeminiClient();
+    const execution = executionRegistry.register();
+    const cancelOnDisconnect = () => {
+      if (!res.writableEnded && !execution.signal.aborted) {
+        execution.cancel('Internet growth generation client disconnected');
+      }
+    };
+    res.once('close', cancelOnDisconnect);
     if (!ai) {
       res.json({
         playbook: buildOfflinePlaybook(),
@@ -2302,6 +2334,10 @@ async function startServer() {
     }
 
     try {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
+        return;
+      }
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
         contents:
@@ -2321,9 +2357,14 @@ async function startServer() {
               authorityGainPts: { type: Type.NUMBER },
             },
           },
+          abortSignal: execution.signal,
         },
       });
 
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
+        return;
+      }
       const parsed = JSON.parse((response.text ?? '{}').trim()) as Partial<InternetDominanceInsight>;
       const allowedPillars = new Set([
         'SEO & Organic Reach',
@@ -2345,10 +2386,19 @@ async function startServer() {
       };
       res.json({ playbook, modelUsed: 'gemini-4-hydrogen' });
     } catch {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.writableEnded) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
+        }
+        return;
+      }
       res.json({
         playbook: buildOfflinePlaybook(),
         modelUsed: 'Jerry Internet Mastery Engine (Local fallback)',
       });
+    } finally {
+      res.off('close', cancelOnDisconnect);
+      execution.release();
     }
   });
 
