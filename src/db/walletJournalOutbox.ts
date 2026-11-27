@@ -80,10 +80,10 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
              ${uid ? 'AND u.uid = $1' : ''}
            ORDER BY o.id
            FOR UPDATE SKIP LOCKED
-           LIMIT ${uid ? 2 : 1}
+           LIMIT $${uid ? 2 : 1}
          )
          UPDATE wallet_journal_outbox o
-            SET status = 'processing', claim_token = ${uid ? 3 : 2}, attempts = attempts + 1, updated_at = now()
+            SET status = 'processing', claim_token = $${uid ? 3 : 2}, attempts = attempts + 1, updated_at = now()
           WHERE o.id IN (SELECT id FROM picked)
          RETURNING o.id, o.user_id, o.event_key, o.tx_ref, o.payload_json, o.claim_token`,
         uid ? [uid, limit, claimToken] : [limit, claimToken],
