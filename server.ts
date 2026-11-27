@@ -775,7 +775,7 @@ async function startServer() {
         const approval: ApprovalRequest = { ...payload, id: `approval-${crypto.randomUUID()}`, requestedAt: new Date().toISOString(), decision: 'pending' };
         const state = { ...current, approvals: [approval, ...(current.approvals ?? [])] };
         return { state, response: { approval, state } };
-      });
+      }));
       res.status(result.replayed ? 200 : 201).json({ ...result.response, replayed: result.replayed });
     } catch (error) {
       console.error('Internal server error:', error);
@@ -930,7 +930,7 @@ async function startServer() {
         }
         const state = { ...current, approvals: [approval, ...(current.approvals ?? [])], transactions: [tx, ...(current.transactions ?? [])] };
         return { state, response: { transaction: tx, approval, state } };
-      }));
+      });
       res.status(result.replayed ? 200 : 201).json({ ...result.response, replayed: result.replayed });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to submit settlement evidence.';
@@ -991,7 +991,9 @@ async function startServer() {
         };
         const state = { ...current, transactions: [submitted, ...(current.transactions ?? [])] };
         return { state, response: { transaction: submitted, approval, state } };
-        });
+      });
+      databaseCommitted = true;
+      });
         databaseCommitted = true;
         const finalizedApproval = securityStore.finalizeApprovalReservation(approvalId, uid, reservationId);
         if (!finalizedApproval) {
@@ -999,8 +1001,6 @@ async function startServer() {
         }
         return { ...commandResult, finalizedApproval };
       });
-      // Finalize the SQLite authorization only after PostgreSQL has durably committed
-      // the idempotent transfer command. Replays also retry finalization after a crash.
       res.status(result.replayed ? 200 : 201).json({ ...result.response, approval: result.finalizedApproval, replayed: result.replayed });
     } catch (error) {
       if (approvalReserved && !databaseCommitted) securityStore.releaseApprovalReservation(approvalId, req.user!.uid, reservationId);
