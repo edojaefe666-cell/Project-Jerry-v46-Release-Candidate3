@@ -640,8 +640,8 @@ test('standalone upgrade verification holds the shared stop lease during the ext
 });
 
 test('on-chain wallet sync holds the shared stop lease across external reads and workspace persistence', () => {
-  const start = server.indexOf("app.post('/api/wallet/sync-onchain'");
-  const end = server.indexOf("app.post('/api/wallet/verify-tx'", start);
+  const start = server.indexOf(`app.post('/api/wallet/sync-onchain'`);
+  const end = server.indexOf(`app.post('/api/wallet/verify-tx'`, start);
   const route = server.slice(start, end);
   assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
   const lease = route.indexOf('withSharedExecutionLease(async () =>');
@@ -1072,7 +1072,7 @@ test('direct Coinbase and Blockstream requests reserve shared owner operations b
       new RegExp(`reserveExternalServiceOperations\\((?:uid|req\\.user!\\.uid), ${route.count}\\)`));
   }
   assert.match(server, /async function fetchLiveSpotPrices\(ownerUid: string\)/);
-  const priceHelper = server.slice(server.indexOf('async function fetchLiveSpotPrices'), server.indexOf("app.post('/api/wallet/sync-onchain'"));
+  const priceHelper = server.slice(server.indexOf('async function fetchLiveSpotPrices'), server.indexOf(`app.post('/api/wallet/sync-onchain'`));
   assert.ok(priceHelper.indexOf('reserveExternalServiceOperations(ownerUid, 1)') <
     priceHelper.indexOf("fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot'"),
     'the standalone Coinbase helper must reserve before its request');
