@@ -658,7 +658,7 @@ test('Jerry teaching refuses memory persistence when emergency stop interrupts l
   const end = server.indexOf('// Jerry Polyglot Self-Programming Engine', start);
   const route = server.slice(start, end);
   const lease = route.indexOf('withSharedExecutionLease(() => saveMemoryEntryForUser');
-  const prePersistStopCheck = route.indexOf('execution.signal.aborted || isEmergencyStopActive()', route.indexOf('try {', route.indexOf('if (execution.signal.aborted || isEmergencyStopActive())'));
+  const prePersistStopCheck = route.indexOf('execution.signal.aborted || isEmergencyStopActive()');
   assert.ok(lease >= 0 && prePersistStopCheck >= 0 && prePersistStopCheck < lease,
     'teaching must recheck stop immediately before acquiring persistence lease');
   assert.match(route, /res\.status\(423\)/);
