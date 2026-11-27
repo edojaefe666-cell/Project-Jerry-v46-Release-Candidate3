@@ -16,6 +16,7 @@ export interface LiveResearchOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   maxResults?: number;
+  signal?: AbortSignal;
 }
 
 function normalizeSourceUrl(value: unknown): string | null {
@@ -46,8 +47,12 @@ export async function searchLiveResearch(options: LiveResearchOptions): Promise<
   const timeoutMs = Math.min(15_000, Math.max(1_000, options.timeoutMs ?? 10_000));
   const maxResults = Math.min(5, Math.max(1, Math.floor(options.maxResults ?? 5)));
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromParent = () => controller.abort(options.signal?.reason ?? new Error('Research request cancelled.'));
+  if (options.signal?.aborted) abortFromParent();
+  else options.signal?.addEventListener('abort', abortFromParent, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error('Research request timed out.')), timeoutMs);
   try {
+    if (controller.signal.aborted) throw options.signal?.reason instanceof Error ? options.signal.reason : new Error('Research request cancelled.');
     const response = await fetchImpl('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -86,5 +91,6 @@ export async function searchLiveResearch(options: LiveResearchOptions): Promise<
     return { query, sources };
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener('abort', abortFromParent);
   }
 }
