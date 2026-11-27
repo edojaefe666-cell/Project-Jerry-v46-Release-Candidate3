@@ -252,3 +252,32 @@ test('daily opportunity discovery aborts Gemini generation on emergency stop or 
   assert.match(route, /execution\.release\(\)/);
   assert.match(route, /isEmergencyStopActive\(\)/);
 });
+
+
+test('financial workspace mutations hold the shared stop lease through durable state changes', () => {
+  const decisionStart = server.indexOf("app.post('/api/approvals/:id/decision'");
+  const decisionEnd = server.indexOf("app.post('/api/wallet/commands/record-income'", decisionStart);
+  const decisionRoute = server.slice(decisionStart, decisionEnd);
+  assert.match(decisionRoute.split('=>')[0], /requireExecutionEnabled/);
+  assert.match(decisionRoute, /withSharedExecutionLease\(\(\) => runIdempotentWorkspaceCommand/);
+
+  const incomeStart = server.indexOf("app.post('/api/wallet/commands/record-income'");
+  const transferStart = server.indexOf("app.post('/api/wallet/commands/submit-transfer'", incomeStart);
+  const incomeRoute = server.slice(incomeStart, transferStart);
+  assert.match(incomeRoute, /withSharedExecutionLease\(\(\) => runIdempotentWorkspaceCommand/);
+
+  const transferEnd = server.indexOf('// Real Live Bitcoin Market Price', transferStart);
+  const transferRoute = server.slice(transferStart, transferEnd);
+  const leaseStart = transferRoute.indexOf('withSharedExecutionLease(async () =>');
+  const finalize = transferRoute.indexOf('securityStore.finalizeApprovalReservation', leaseStart);
+  const leaseClose = transferRoute.indexOf('return { ...commandResult, finalizedApproval };', leaseStart);
+  assert.ok(leaseStart >= 0 && finalize > leaseStart && leaseClose > finalize,
+    'transfer reservation finalization must remain inside the shared execution lease');
+
+  const reconcileStart = server.indexOf("app.post('/api/wallet/commands/reconcile-tx'");
+  const reconcileEnd = server.indexOf("app.post('/api/jerry/chat'", reconcileStart);
+  const reconcileRoute = server.slice(reconcileStart, reconcileEnd);
+  assert.match(reconcileRoute, /withSharedExecutionLease\(async \(\) =>/);
+  assert.ok(reconcileRoute.indexOf('ensureWalletTransactionJournaled') > reconcileRoute.indexOf('withSharedExecutionLease'),
+    'journal synchronization must complete before releasing the reconciliation lease');
+});
