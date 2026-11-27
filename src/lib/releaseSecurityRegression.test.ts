@@ -13,6 +13,8 @@ const sharedRateLimitStore = fs.readFileSync(path.join(root, 'src/db/rateLimitSt
 const sharedProviderOperationStore = fs.readFileSync(path.join(root, 'src/db/providerOperationStore.ts'), 'utf8');
 const multimodalAdapters = fs.readFileSync(path.join(root, 'src/lib/multimodalAdapters.ts'), 'utf8');
 const opportunityRadar = fs.readFileSync(path.join(root, 'src/lib/opportunityRadar.ts'), 'utf8');
+const providerUsageStore = fs.readFileSync(path.join(root, 'src/db/providerUsageStore.ts'), 'utf8');
+const providerCostStore = fs.readFileSync(path.join(root, 'src/db/providerCostStore.ts'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -1209,4 +1211,23 @@ test('provider budget audit is owner-authenticated, read-only, bounded and disab
   assert.match(route, /rawDays < 1 \|\| rawDays > 90/);
   assert.match(route, /Cache-Control', 'no-store'/);
   assert.doesNotMatch(route, /reserveProvider|settleProvider|DELETE FROM|UPDATE jerry_provider/);
+});
+
+
+test('provider token and USD settlements only claim reservations after the daily budget update succeeds', () => {
+  for (const [name, source, budgetTable, ledgerTable] of [
+    ['token', providerUsageStore, 'jerry_provider_daily_usage', 'jerry_provider_token_reservations'],
+    ['USD', providerCostStore, 'jerry_provider_daily_cost', 'jerry_provider_cost_reservations'],
+  ] as const) {
+    const start = source.indexOf('WITH candidate AS MATERIALIZED');
+    const end = source.indexOf('SELECT reservation_id FROM claimed', start);
+    const sql = source.slice(start, end);
+    assert.ok(start >= 0 && end > start, name + ' settlement SQL must expose its ordered CTE pipeline');
+    assert.match(sql, new RegExp('FROM ' + ledgerTable));
+    assert.match(sql, /FOR UPDATE/);
+    assert.ok(sql.indexOf('), budget AS (') > sql.indexOf('FOR UPDATE'));
+    assert.ok(sql.indexOf('UPDATE ' + budgetTable) > sql.indexOf('), budget AS ('));
+    assert.ok(sql.indexOf('), claimed AS (') > sql.indexOf('RETURNING candidate.reservation_id'));
+    assert.ok(sql.indexOf('UPDATE ' + ledgerTable + ' AS reservation') > sql.indexOf('), claimed AS ('));
+  }
 });
