@@ -262,6 +262,23 @@ test('Opportunity Radar and Learning cancel provider work on emergency stop or c
 });
 
 
+
+test('human insight and internet growth Gemini calls abort on emergency stop or client disconnect', () => {
+  for (const routePath of ['/api/jerry/learn-human-insight', '/api/jerry/learn-internet-growth']) {
+    const start = server.indexOf(`app.post('${routePath}'`);
+    const end = server.indexOf('    } finally {', start);
+    const route = server.slice(start, end > start ? end + 180 : server.length);
+    assert.ok(start >= 0, `missing learning route: ${routePath}`);
+    assert.match(route, /executionRegistry\.register\(\)/);
+    assert.match(route, /abortSignal: execution\.signal/);
+    assert.match(route, /res\.once\('close', cancelOnDisconnect\)/);
+    assert.match(route, /execution\.cancel\(/);
+    assert.match(route, /execution\.signal\.aborted \|\| isEmergencyStopActive\(\)/);
+    assert.match(route, /execution\.release\(\)/);
+  }
+});
+
+
 test('daily opportunity discovery aborts Gemini generation on emergency stop or client disconnect', () => {
   const start = server.indexOf("app.post('/api/jerry/discover-daily-ways'");
   const end = server.indexOf('\n  // Jerry Daily Human Understanding:', start);
