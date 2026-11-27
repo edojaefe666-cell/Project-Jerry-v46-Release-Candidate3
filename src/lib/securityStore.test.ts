@@ -481,3 +481,46 @@ test('approval consumption and reservation release roll back when audit persiste
     store.close();
   }
 });
+
+
+test('expired reserved approval can only resume with its original idempotency reservation', () => {
+  const filename = tempDb('approval-reservation-recovery');
+  const ownerUid = 'owner-approval-recovery';
+  const store = new SecurityStore(filename);
+  try {
+    store.setEmergencyStop(false, ownerUid, 'Test owner recovery for approval reservation retry');
+    const scope = { operation: 'workspace_reset' };
+    const approval = store.createApproval({
+      action: 'high_impact_change',
+      summary: 'Recover interrupted workspace reset',
+      scope,
+      ownerUid,
+    });
+    assert.ok(store.decideApproval(approval.id, 'approved', ownerUid));
+    const originalReservation = '1'.repeat(64);
+    assert.ok(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, originalReservation, scope));
+
+    const maintenance = new DatabaseSync(filename);
+    try {
+      maintenance.prepare('UPDATE approvals SET created_at=? WHERE id=?').run('2000-01-01T00:00:00.000Z', approval.id);
+    } finally {
+      maintenance.close();
+    }
+
+    assert.equal(
+      store.reserveApproval(approval.id, 'high_impact_change', ownerUid, '2'.repeat(64), scope),
+      null,
+      'An expired reservation must not be reassigned to a different operation.',
+    );
+    assert.ok(
+      store.reserveApproval(approval.id, 'high_impact_change', ownerUid, originalReservation, scope),
+      'The original idempotent operation must be able to resume after a crash.',
+    );
+    assert.ok(store.finalizeApprovalReservation(approval.id, ownerUid, originalReservation)?.consumedAt);
+    assert.equal(store.reserveApproval(approval.id, 'high_impact_change', ownerUid, originalReservation, scope), null);
+    assert.equal(store.verifyAuditChain(ownerUid).ok, true);
+  } finally {
+    store.close();
+    rmSync(path.dirname(filename), { recursive: true, force: true });
+  }
+});
