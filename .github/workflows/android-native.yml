@@ -76,14 +76,21 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build debug APK, run unit tests and lint
+      - name: Build debug and unsigned release APKs, run unit tests and lint
         working-directory: android-native
-        run: gradle --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+        run: |
+          gradle --no-daemon :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:lintDebug :app:lintRelease
+          sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/app-debug.apk.sha256
+          sha256sum app/build/outputs/apk/release/app-release-unsigned.apk > app/build/outputs/apk/release/app-release-unsigned.apk.sha256
 
-      - name: Publish debug APK artifact
+      - name: Publish Android build candidates and SHA-256 checksums
         uses: actions/upload-artifact@v4
         with:
-          name: jerry-debug-apk-${{ github.sha }}
-          path: android-native/app/build/outputs/apk/debug/app-debug.apk
+          name: jerry-android-candidates-${{ github.sha }}
+          path: |
+            android-native/app/build/outputs/apk/debug/app-debug.apk
+            android-native/app/build/outputs/apk/debug/app-debug.apk.sha256
+            android-native/app/build/outputs/apk/release/app-release-unsigned.apk
+            android-native/app/build/outputs/apk/release/app-release-unsigned.apk.sha256
           if-no-files-found: error
           retention-days: 14
