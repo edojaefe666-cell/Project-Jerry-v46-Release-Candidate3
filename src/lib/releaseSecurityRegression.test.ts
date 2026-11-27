@@ -16,6 +16,7 @@ const opportunityRadar = fs.readFileSync(path.join(root, 'src/lib/opportunityRad
 const providerUsageStore = fs.readFileSync(path.join(root, 'src/db/providerUsageStore.ts'), 'utf8');
 const providerCostStore = fs.readFileSync(path.join(root, 'src/db/providerCostStore.ts'), 'utf8');
 const apiClient = fs.readFileSync(path.join(root, 'src/lib/apiClient.ts'), 'utf8');
+const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
 const androidManifest = fs.readFileSync(path.join(root, 'android-native/app/src/main/AndroidManifest.xml'), 'utf8');
 const androidPermissionManager = fs.readFileSync(path.join(root, 'android-native/app/src/main/java/com/projectjerry/android/permissions/JerryPermissionManager.kt'), 'utf8');
 const androidMainActivity = fs.readFileSync(path.join(root, 'android-native/app/src/main/java/com/projectjerry/android/ui/MainActivity.kt'), 'utf8');
@@ -113,6 +114,14 @@ test('Android requests only currently justified runtime permissions', () => {
   assert.match(androidManifest, /android\.permission\.RECORD_AUDIO/);
   assert.match(androidPermissionManager, /Manifest\.permission\.RECORD_AUDIO/);
   assert.match(androidPermissionManager, /Build\.VERSION\.SDK_INT <= 30/);
+});
+
+test('Jerry workspace is gated behind a valid authenticated owner session', () => {
+  assert.match(appSource, /loading: authLoading/);
+  assert.match(appSource, /if \(authLoading\)/);
+  assert.match(appSource, /if \(!user \|\| !idToken\)/);
+  assert.match(appSource, /Sign in securely with Google/);
+  assert.match(appSource, /Workspace data and protected actions are unavailable until authentication succeeds/);
 });
 
 test('Android API client refuses the placeholder backend instead of silently targeting an invalid host', () => {
