@@ -144,7 +144,10 @@ async function startServer() {
 
   // Track in-flight requests and synchronize stop state across instances.
   const executionRegistry = new ExecutionRegistry(isEmergencyStopActive());
+  let executionControlSyncInFlight = false;
   const synchronizeSharedExecutionControl = async (): Promise<void> => {
+    if (executionControlSyncInFlight) return;
+    executionControlSyncInFlight = true;
     try {
       const sharedControl = await readSharedExecutionControl();
       executionRegistry.setStopped(
@@ -153,11 +156,15 @@ async function startServer() {
       );
     } catch {
       executionRegistry.setStopped(true, 'Shared execution-control read failed; fail closed');
+    } finally {
+      executionControlSyncInFlight = false;
     }
   };
+  // Keep cross-instance cancellation latency bounded while preventing slow
+  // database reads from accumulating overlapping poll operations.
   const executionControlPoller = setInterval(() => {
     void synchronizeSharedExecutionControl();
-  }, 2_000);
+  }, 250);
   executionControlPoller.unref();
   void synchronizeSharedExecutionControl();
   const runIsolatedTestsWithStop = async (input: { language: string; source: string; testCode: string }) => {
