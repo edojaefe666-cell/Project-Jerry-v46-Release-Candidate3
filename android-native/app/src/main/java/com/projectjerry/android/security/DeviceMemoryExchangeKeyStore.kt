@@ -138,6 +138,101 @@ class DeviceMemoryExchangeKeyStore(
         }
     }
 
+    /** Creates the first local memory data key only after explicit owner confirmation. */
+    @Synchronized
+    fun createInitialMemoryDataKey(ownerUid: String, deviceId: String, keyVersion: Int): Boolean {
+        val contextJson = canonicalContextJson(ownerUid, deviceId, keyVersion)
+        if (hasInstalledMemoryKey(ownerUid, deviceId, keyVersion)) return false
+        val rawKey = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        try {
+            persistMemoryDataKey(rawKey, contextJson)
+            return true
+        } finally {
+            rawKey.fill(0)
+        }
+    }
+
+    /**
+     * Wraps an already-installed local data key for an owner-approved recipient.
+     * The key is loaded and used entirely in native code; only its ECDH envelope
+     * is returned. The caller must upload it through the authenticated API,
+     * which independently checks both device registrations are active.
+     */
+    @Synchronized
+    fun wrapInstalledMemoryKeyForDevice(
+        ownerUid: String,
+        senderDeviceId: String,
+        recipientDeviceId: String,
+        keyVersion: Int,
+        recipientPublicKey: PublicJwk,
+    ): JSONObject {
+        require(recipientDeviceId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) {
+            "Recipient device ID is invalid."
+        }
+        require(recipientPublicKey.kty == "EC" && recipientPublicKey.crv == "P-256") {
+            "Recipient exchange key must be P-256."
+        }
+        val senderContext = canonicalContextJson(ownerUid, senderDeviceId, keyVersion)
+        val recipientContext = canonicalContextJson(ownerUid, recipientDeviceId, keyVersion)
+        val rawKey = loadMemoryDataKey(senderContext)
+        val salt = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val iv = ByteArray(GCM_IV_BYTES).also { java.security.SecureRandom().nextBytes(it) }
+        val contextBytes = recipientContext.toByteArray(Charsets.UTF_8)
+        val xBytes = decodeCoordinate(recipientPublicKey.x)
+        val yBytes = decodeCoordinate(recipientPublicKey.y)
+        var sharedSecret: ByteArray? = null
+        var wrappingKey: ByteArray? = null
+        var ciphertext: ByteArray? = null
+        try {
+            val parameters = AlgorithmParameters.getInstance("EC").apply {
+                init(ECGenParameterSpec(CURVE))
+            }.getParameterSpec(java.security.spec.ECParameterSpec::class.java)
+            val recipient = KeyFactory.getInstance("EC").generatePublic(
+                ECPublicKeySpec(ECPoint(BigInteger(1, xBytes), BigInteger(1, yBytes)), parameters),
+            )
+            val generator = KeyPairGenerator.getInstance("EC")
+            generator.initialize(ECGenParameterSpec(CURVE))
+            val ephemeral = generator.generateKeyPair()
+            val agreement = KeyAgreement.getInstance("ECDH")
+            agreement.init(ephemeral.private)
+            agreement.doPhase(recipient, true)
+            sharedSecret = agreement.generateSecret()
+            val info = ("Jerry memory key envelope v1\u0000" + recipientContext).toByteArray(Charsets.UTF_8)
+            wrappingKey = hkdfSha256(sharedSecret, salt, info, 32)
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(wrappingKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.updateAAD(contextBytes)
+            ciphertext = cipher.doFinal(rawKey)
+            val ephemeralPublic = ephemeral.public as java.security.interfaces.ECPublicKey
+            val ephemeralJwk = JSONObject()
+                .put("kty", "EC")
+                .put("crv", "P-256")
+                .put("x", encodeCoordinate(ephemeralPublic.w.affineX))
+                .put("y", encodeCoordinate(ephemeralPublic.w.affineY))
+            return JSONObject()
+                .put("version", 1)
+                .put("algorithm", "ECDH-P256-HKDF-SHA256-AES-256-GCM")
+                .put("context", JSONObject()
+                    .put("ownerUid", ownerUid)
+                    .put("deviceId", recipientDeviceId)
+                    .put("keyVersion", keyVersion))
+                .put("ephemeralPublicKey", ephemeralJwk)
+                .put("salt", encode(salt))
+                .put("iv", encode(iv))
+                .put("ciphertext", encode(ciphertext))
+        } finally {
+            rawKey.fill(0)
+            salt.fill(0)
+            iv.fill(0)
+            contextBytes.fill(0)
+            xBytes.fill(0)
+            yBytes.fill(0)
+            sharedSecret?.fill(0)
+            wrappingKey?.fill(0)
+            ciphertext?.fill(0)
+        }
+    }
+
     /**
      * Decrypts a WebCrypto-compatible v1 envelope entirely inside the native
      * security boundary, then persists the recovered AES-256 data key only as
