@@ -324,14 +324,35 @@ class DeviceMemoryExchangeKeyStore(
     }
 
     private fun persistMemoryDataKey(rawKey: ByteArray, contextJson: String) {
+        val suffix = contextStorageId(contextJson)
+        val ivName = DATA_KEY_IV_PREFIX + suffix
+        val ciphertextName = DATA_KEY_CIPHERTEXT_PREFIX + suffix
+        val existingIv = preferences.getString(ivName, null)?.let { Base64.decode(it, BASE64_FLAGS) }
+        val existingCiphertext = preferences.getString(ciphertextName, null)?.let { Base64.decode(it, BASE64_FLAGS) }
+        if (existingIv != null || existingCiphertext != null) {
+            require(existingIv != null && existingCiphertext != null &&
+                existingIv.size == GCM_IV_BYTES && existingCiphertext.size == 48) {
+                "Existing protected memory data key storage is incomplete or malformed."
+            }
+            val existingKey = decryptPersistedMemoryKey(existingIv, existingCiphertext, contextJson)
+            try {
+                require(MessageDigest.isEqual(existingKey, rawKey)) {
+                    "A different memory data key is already installed for this key version."
+                }
+                return
+            } finally {
+                existingKey.fill(0)
+                existingIv.fill(0)
+                existingCiphertext.fill(0)
+            }
+        }
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateWrappingKey())
         cipher.updateAAD(("Jerry local memory data key v1\u0000" + contextJson).toByteArray(Charsets.UTF_8))
         val encrypted = cipher.doFinal(rawKey)
-        val suffix = contextStorageId(contextJson)
         val saved = preferences.edit()
-            .putString(DATA_KEY_IV_PREFIX + suffix, encode(cipher.iv))
-            .putString(DATA_KEY_CIPHERTEXT_PREFIX + suffix, encode(encrypted))
+            .putString(ivName, encode(cipher.iv))
+            .putString(ciphertextName, encode(encrypted))
             .commit()
         check(saved) { "Unable to persist the protected Jerry memory data key." }
         encrypted.fill(0)
