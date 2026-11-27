@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, KeyRound, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 import { apiJson } from '../lib/apiClient';
-import { getNativeDeviceSigningPublicKey, signNativeDeviceApprovalChallenge } from '../lib/nativeDeviceSigning';
+import { getNativeDeviceSigningPublicKey } from '../lib/nativeDeviceSigning';
+import { bootstrapFirstJerryOwnerDevice, requestAndroidDeviceEnrollment, approvePendingJerryDevice } from '../lib/deviceEnrollmentApi';
 import { getOrCreateJerryDeviceId, getOrCreatePersistentExchangeKeyPair } from '../lib/deviceIdentity';
 
 interface DeviceRecord {
@@ -66,24 +67,27 @@ export function DeviceManagement() {
     setError(null);
     setMessage(null);
     try {
-      const [exchange, signingPublicKey] = await Promise.all([
-        getOrCreatePersistentExchangeKeyPair(currentDeviceId),
-        getNativeDeviceSigningPublicKey(),
-      ]);
-      const result = await apiJson<{ registration: DeviceRecord }>('/api/devices/register', {
-        method: 'POST',
-        body: JSON.stringify({
-          deviceId: currentDeviceId,
-          deviceName: deviceName.trim() || 'Jerry Android phone',
-          platform: 'android',
-          exchangePublicKey: exchange.publicKey,
-          signingPublicKey,
-        }),
-      });
-      setMessage(`This device was registered as pending (registration ${result.registration.id}). Approve it from another already-active Jerry device.`);
+      const registration = await requestAndroidDeviceEnrollment(deviceName.trim() || 'Jerry Android phone');
+      setMessage(`This phone is registered as pending (registration ${registration.id}). If it is the first trusted device, complete the owner-confirmed first-device setup below.`);
       await loadDevices();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Device registration failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const bootstrapFirstDevice = async () => {
+    if (!currentRecord || currentRecord.status !== 'pending') return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await bootstrapFirstJerryOwnerDevice(currentRecord.id);
+      setMessage('This phone is now Jerry’s first trusted owner device. The server verified recent owner authentication and the Android Keystore confirmation.');
+      await loadDevices();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'First-device trust could not be established.');
     } finally {
       setBusy(false);
     }
@@ -98,16 +102,8 @@ export function DeviceManagement() {
     setError(null);
     setMessage(null);
     try {
-      const { challenge } = await apiJson<{ challenge: DeviceChallenge }>(
-        `/api/devices/${encodeURIComponent(target.id)}/approval-challenge`,
-        { method: 'POST', body: JSON.stringify({ approverDeviceId: currentDeviceId }) },
-      );
-      const proof = await signNativeDeviceApprovalChallenge(challenge);
-      await apiJson('/api/devices/approval/complete', {
-        method: 'POST',
-        body: JSON.stringify({ challengeId: proof.challengeId, signature: proof.signature }),
-      });
-      setMessage(`${target.deviceName} is now approved. The server verified the active device's Keystore signature.`);
+      await approvePendingJerryDevice(target.id);
+      setMessage(`${target.deviceName} is now approved. The server verified this active device’s Keystore signature.`);
       await loadDevices();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Device approval failed.');
@@ -131,11 +127,16 @@ export function DeviceManagement() {
         </div>
         {!nativeAvailable && <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">The Android Keystore bridge is not available here. View existing registrations, but enroll and approve only from the Jerry Android app.</p>}
         {currentRecord && <p className="mt-4 rounded-lg border border-slate-700 p-3 text-xs text-slate-300">This phone: <strong>{currentRecord.status}</strong> · Device ID <span className="font-mono">{currentRecord.deviceId}</span></p>}
+        {currentRecord?.status === 'pending' && !devices.some((device) => device.status === 'active') && <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+          <p className="text-xs font-semibold text-amber-100">First trusted device setup</p>
+          <p className="mt-1 text-xs text-amber-200">No active owner device exists. After a recent Firebase sign-in, you can establish this phone as the first trusted device. Android will ask you to confirm explicitly.</p>
+          <button type="button" onClick={() => void bootstrapFirstDevice()} disabled={busy || !nativeAvailable} className="mt-3 rounded-lg bg-amber-300 px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-40">{busy ? 'Working…' : 'Trust this phone as first device'}</button>
+        </div>}
         {!currentRecord && currentDeviceId && <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
           <input value={deviceName} onChange={(event) => setDeviceName(event.target.value)} maxLength={80} aria-label="Device name" placeholder="Device name" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-100" />
           <button type="button" onClick={() => void registerThisDevice()} disabled={busy || !nativeAvailable} className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-40">{busy ? 'Working…' : 'Enroll this phone'}</button>
         </div>}
-        <p className="mt-3 text-[11px] text-slate-500">Enrollment stores only public keys on Jerry's server. The ECDH private key remains in local IndexedDB as a non-extractable CryptoKey; the signing private key remains in Android Keystore.</p>
+        <p className="mt-3 text-[11px] text-slate-500">Enrollment stores only public keys on Jerry’s server. Android signing keys remain in Android Keystore; the Android 10 exchange private key is locally encrypted using an Android Keystore-protected AES key.</p>
       </div>
 
       {error && <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">{error}</p>}
