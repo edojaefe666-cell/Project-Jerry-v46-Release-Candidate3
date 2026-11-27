@@ -80,7 +80,7 @@ const NAV_ITEMS: Array<{ id: WorkspaceTab; label: string; icon: typeof LayoutDas
 ];
 
 export default function App() {
-  const { user, idToken, signInWithGoogle, signOutUser } = useAuth();
+  const { user, idToken, authError, signInWithGoogle, signOutUser } = useAuth();
   const [state, setState] = useState<JerryState>(INITIAL_JERRY_STATE);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -1084,6 +1084,11 @@ export default function App() {
         </header>
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1280px] w-full mx-auto">
+          {authError && (
+            <div role="alert" className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+              {authError}
+            </div>
+          )}
           {!loaded ? (
             <div className="bg-white border border-slate-200 rounded-xl p-8 text-sm text-slate-500">
               Loading Jerry workspace memory...
