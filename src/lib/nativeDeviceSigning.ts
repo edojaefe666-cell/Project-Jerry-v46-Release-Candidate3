@@ -30,7 +30,9 @@ type NativeBridgeReply = {
   installed?: boolean;
   iv?: string;
   ciphertext?: string;
-  plaintextJson?: string;\n  created?: boolean;\n  envelope?: DeviceKeyEnvelope;
+  plaintextJson?: string;
+  created?: boolean;
+  envelope?: DeviceKeyEnvelope;
 };
 
 type NativeBridge = {
