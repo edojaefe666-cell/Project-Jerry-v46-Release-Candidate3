@@ -201,3 +201,17 @@ test('emergency stop blocks model-provider and financial mutation routes', () =>
     assert.match(declaration, /requireExecutionEnabled/, 'emergency stop must guard: ' + route);
   }
 });
+
+test('Vision, TTS, and transcription provider calls are cancellable on stop and disconnect', () => {
+  for (const routePath of ['/api/jerry/vision','/api/jerry/tts','/api/jerry/transcribe']) {
+    const start=server.indexOf(`app.post('${routePath}'`);
+    const end=server.indexOf('  // Jerry Proactive Opportunity Radar.',start);
+    const route=server.slice(start,end);
+    assert.ok(start>=0,`missing route ${routePath}`);
+    assert.match(route,/executionRegistry\\.register\\(\\)/);
+    assert.match(route,/signal:execution\\.signal/);
+    assert.match(route,/res\\.once\\('close',cancelOnDisconnect\\)/);
+    assert.match(route,/execution\\.cancel\\(/);
+    assert.match(route,/execution\\.release\\(\\)/);
+  }
+});
