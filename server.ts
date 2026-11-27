@@ -34,7 +34,7 @@ import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } f
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { reserveConfiguredProviderOperation } from './src/db/providerOperationStore.ts';
 import { reserveProviderTokens, settleProviderTokens, type ProviderUsageReservation } from './src/db/providerUsageStore.ts';
-import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, type ProviderCostReservation, type ProviderModelPricing } from './src/db/providerCostStore.ts';
+import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, type ProviderCostReservation } from './src/db/providerCostStore.ts';
 import { parseProviderPricingFromEnvironment } from './src/lib/providerAdapters.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
