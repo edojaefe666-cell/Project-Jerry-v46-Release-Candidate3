@@ -576,3 +576,15 @@ test('workspace initialization and self-upgrade proposal creation cannot bypass 
   assert.match(upgradeRoute.split('=>')[0], /requireAuth, requireExecutionEnabled/);
   assert.match(upgradeRoute, /withSharedExecutionLease\(\(\) => runIdempotentWorkspaceCommand/);
 });
+
+test('self-upgrade verification holds the shared stop lease through proposal persistence', () => {
+  const start = server.indexOf("app.post('/api/jerry/self-upgrades/:id/verify'");
+  const end = server.indexOf("app.post('/api/jerry/verify-upgrade'", start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  const lease = route.indexOf('withSharedExecutionLease(() => runIdempotentWorkspaceCommand');
+  const mutation = route.indexOf('runIdempotentWorkspaceCommand', lease);
+  const response = route.indexOf('res.json({ ...result.response', mutation);
+  assert.ok(lease >= 0 && mutation > lease && response > mutation,
+    'verification and persisted proposal update must remain inside the shared execution lease');
+});
