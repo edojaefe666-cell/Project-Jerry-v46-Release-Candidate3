@@ -1946,7 +1946,21 @@ async function startServer() {
       return;
     }
 
+    const execution = executionRegistry.register();
+    const cancelOnDisconnect = () => {
+      if (!res.writableEnded && !execution.signal.aborted) {
+        execution.cancel('Daily opportunity discovery client disconnected');
+      }
+    };
+    res.once('close', cancelOnDisconnect);
     try {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({
+          error: 'Jerry emergency stop interrupted daily opportunity discovery. No result was accepted.',
+          status: 'cancelled',
+        });
+        return;
+      }
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
         contents:
@@ -1954,11 +1968,19 @@ async function startServer() {
           (focusHint ? `Owner focus hint: "${focusHint}". ` : '') +
           `Avoid repeating these titles: ${existingTitles.slice(0, 12).join('; ') || 'none'}. ` +
           'Return ONLY a valid JSON array of up to 3 methods with keys: title, methodCategory (one of "Automation Template", "Productized Service", "AI Micro-Tool", "Retainer Upsell", "Data & API Feed"), whyEasierAndFaster, executionShortcut, estimatedHoursSavedPerWeek (number), estimatedDailyProfitUsd (number), startupCapitalUsd (number). Explain pricing, volume, cost and capacity assumptions for any nonzero financial scenario. Prefer estimatedDailyProfitUsd 0 when assumptions cannot be substantiated.',
-        config: { tools: [{ googleSearch: {} }] },
+        config: { tools: [{ googleSearch: {} }], abortSignal: execution.signal },
       });
 
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({
+          error: 'Jerry emergency stop interrupted daily opportunity discovery. No result was accepted.',
+          status: 'cancelled',
+        });
+        return;
+      }
+
       const rawText = (response.text ?? '').trim();
-      const jsonMatch = rawText.match(/\[[\s\S]*\]/);
+      const jsonMatch = rawText.match(/\\[[\\s\\S]*\\]/);
       if (!jsonMatch) {
         res.status(502).json({ error: 'Research provider returned no valid opportunity list.', status: 'not_generated' });
         return;
@@ -2011,6 +2033,13 @@ async function startServer() {
           };
         });
 
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        res.status(423).json({
+          error: 'Jerry emergency stop interrupted daily opportunity discovery. No result was accepted.',
+          status: 'cancelled',
+        });
+        return;
+      }
       res.json({
         discoveries,
         modelUsed: 'gemini-4-hydrogen + Google Search',
@@ -2018,11 +2047,25 @@ async function startServer() {
         executionStatus: 'ideas_only_no_external_actions',
       });
     } catch (error) {
+      if (execution.signal.aborted || isEmergencyStopActive()) {
+        if (!res.headersSent && !res.writableEnded) {
+          res.status(423).json({
+            error: 'Jerry emergency stop interrupted daily opportunity discovery. No result was accepted.',
+            status: 'cancelled',
+          });
+        }
+        return;
+      }
       console.error('Daily opportunity research failed:', error);
-      res.status(502).json({
-        error: 'Opportunity research failed validation or the provider was unavailable. No fallback figures were generated.',
-        status: 'not_generated',
-      });
+      if (!res.headersSent && !res.writableEnded) {
+        res.status(502).json({
+          error: 'Opportunity research failed validation or the provider was unavailable. No fallback figures were generated.',
+          status: 'not_generated',
+        });
+      }
+    } finally {
+      res.off('close', cancelOnDisconnect);
+      execution.release();
     }
   });
 
