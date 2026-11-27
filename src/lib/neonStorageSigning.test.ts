@@ -5,7 +5,7 @@ import { createNeonStoragePresignedUrl } from './neonStorageSigning.ts';
 const environment = {
   AWS_ACCESS_KEY_ID: 'neon_test_access',
   AWS_SECRET_ACCESS_KEY: 'neon_test_secret',
-  AWS_ENDPOINT_URL_S3: 'https://storage.example.neon.tech',
+  AWS_ENDPOINT_URL_S3: 'https://br-test.storage.c-10.eu-central-1.aws.neon.tech',
   AWS_REGION: 'eu-central-1',
 };
 
@@ -66,5 +66,13 @@ testRunner('fails closed when storage credentials or HTTPS endpoint are missing'
 
   assert.throws(() => createNeonStoragePresignedUrl({
     method: 'GET', bucket: 'jerry-private-storage', objectKey: 'owner/a/file.txt', now: fixedTime,
-  }, { ...environment, AWS_ENDPOINT_URL_S3: 'http://storage.example.neon.tech' }), /HTTPS/);
+  }, { ...environment, AWS_ENDPOINT_URL_S3: 'http://br-test.storage.c-10.eu-central-1.aws.neon.tech' }), /HTTPS/);
+
+  assert.throws(() => createNeonStoragePresignedUrl({
+    method: 'GET', bucket: 'jerry-private-storage', objectKey: 'owner/a/file.txt', now: fixedTime,
+  }, { ...environment, AWS_ENDPOINT_URL_S3: 'https://storage.attacker.example' }), /branch region/);
+
+  assert.throws(() => createNeonStoragePresignedUrl({
+    method: 'GET', bucket: 'jerry-private-storage', objectKey: 'owner/a/file.txt', now: fixedTime,
+  }, { ...environment, AWS_REGION: 'us-east-1' }), /branch region/);
 });
