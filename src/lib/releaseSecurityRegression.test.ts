@@ -101,7 +101,9 @@ test('security backup restore consumes its scoped approval and commits the repla
   const start = server.indexOf("app.post('/api/security/restore'");
   const end = server.indexOf("app.get('/api/health'", start);
   const route = server.slice(start, end);
-  assert.match(route, /restoreSnapshotWithApproval\(/);
+  assert.match(route, /securityStore\.validateSnapshot\(snapshot\)/);
+  assert.match(route, /await restoreSharedSecuritySnapshot\(snapshot/);
+  assert.doesNotMatch(route, /restoreSnapshotWithApproval\(/);
   assert.doesNotMatch(route, /consumeApproval\(/);
   assert.doesNotMatch(route, /importSnapshot\(/);
 });
@@ -559,7 +561,7 @@ test('security backup restore holds the shared emergency-stop lease through the 
   assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
   assert.match(route, /await withSharedExecutionLease\(async \(\) =>/);
   assert.ok(route.indexOf('withSharedExecutionLease') < route.indexOf('decryptSecurityBackup'));
-  assert.ok(route.indexOf('decryptSecurityBackup') < route.indexOf('restoreSnapshotWithApproval'));
+  assert.ok(route.indexOf('decryptSecurityBackup') < route.indexOf('restoreSharedSecuritySnapshot'));
   assert.match(route, /res\.status\(423\)/);
   assert.match(route, /Security restore was not started/);
 });
@@ -1022,4 +1024,12 @@ test('shared approval authority commits state transitions and hash-linked audit 
   assert.match(sharedApprovalStore, /entry_hash/);
   assert.match(sharedApprovalStore, /reservation_id IS NULL OR reservation_id=\$1/);
   assert.match(sharedApprovalStore, /consumed_at IS NULL/);
+});
+
+test('shared backup restore never revives historical spending approvals and archives legacy audit evidence', () => {
+  assert.match(sharedApprovalStore, /legacyAuditArchive\?\./);
+  assert.match(sharedApprovalStore, /jerry_security_legacy_audit_archive/);
+  assert.match(sharedApprovalStore, /status=CASE WHEN status='pending' THEN 'rejected'/);
+  assert.match(sharedApprovalStore, /consumed_at=CASE WHEN status='approved' THEN COALESCE\(consumed_at,now\(\)\)/);
+  assert.match(sharedApprovalStore, /ON CONFLICT\(id\) DO NOTHING/);
 });
