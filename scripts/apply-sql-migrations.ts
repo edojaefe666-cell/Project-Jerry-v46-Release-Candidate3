@@ -1,11 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPool } from '../src/db/index.ts';
+import { createMigrationPool } from '../src/db/index.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationDirectory = path.resolve(here, '../drizzle');
-const pool = createPool();
+const pool = createMigrationPool();
 
 try {
   await pool.query(`CREATE TABLE IF NOT EXISTS app_sql_migrations (
