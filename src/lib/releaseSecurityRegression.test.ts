@@ -1189,10 +1189,10 @@ test('provider usage ledger endpoint is authenticated, owner-scoped, read-only a
   const route = server.slice(start, end);
   assert.match(route, /requireAuth/);
   assert.doesNotMatch(route.split('\n')[0], /requireExecutionEnabled/);
-  assert.match(route, /getProviderUsageLedgerSnapshot\(uid, rawLimit\)/);
-  assert.match(route, /getProviderCostLedgerSnapshot\(uid, rawLimit\)/);
+  assert.match(route, /getProviderUsageAudit\(uid, rawDays\)/);
+  assert.match(route, /getProviderCostAudit\(uid, rawDays\)/);
   assert.match(route, /Cache-Control', 'no-store'/);
   assert.match(route, /reserved: 'Unsettled reservation/);
   assert.match(route, /settled: 'Provider usage or cost was reconciled/);
-  assert.match(route, /rawLimit > 100/);
+  assert.match(route, /rawDays > 90/);
 });
