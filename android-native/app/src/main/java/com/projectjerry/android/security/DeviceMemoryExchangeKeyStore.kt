@@ -415,7 +415,7 @@ class DeviceMemoryExchangeKeyStore(
     private fun canonicalRecoveryContextJson(ownerUid: String, keyVersion: Int): String {
         require(ownerUid.isNotBlank() && ownerUid.length <= 160) { "Memory recovery owner is invalid." }
         require(keyVersion in 1..999_999_999) { "Memory recovery key version is invalid." }
-        return "{\\"ownerUid\\":${JSONObject.quote(ownerUid)},\\"keyVersion\\":$keyVersion}"
+        return "{\"ownerUid\":${JSONObject.quote(ownerUid)},\"keyVersion\":$keyVersion}"
     }
 
     data class EncryptedPayload(val iv: String, val ciphertext: String)
