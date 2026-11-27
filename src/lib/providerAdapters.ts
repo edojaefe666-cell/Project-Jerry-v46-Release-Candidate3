@@ -208,7 +208,7 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
             });
           }
         }
-                const generated = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl, options.signal);
+        const generated = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl, options.signal);
         if (costReservation && generated.inputTokens !== undefined && generated.outputTokens !== undefined) {
           const pricing = options.pricing ?? parseProviderPricingFromEnvironment(process.env.JERRY_PROVIDER_MODEL_PRICING_JSON);
           const modelPricing = pricing[`${route.provider}/${route.model}`];
@@ -217,7 +217,7 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
             try { await (options.settleCost ?? settleProviderCost)(costReservation, actualMicroUsd); } catch { /* reservation remains charged */ }
           }
         }
-                if (reservation && generated.usageTokens !== undefined) {
+        if (reservation && generated.usageTokens !== undefined) {
           try { await (options.settleTokens ?? settleProviderTokens)(reservation, generated.usageTokens); } catch { /* reservation remains charged */ }
         }
         return { text: generated.text, provider: route.provider, model: route.model };
@@ -248,7 +248,7 @@ export function parseProviderPricingFromEnvironment(raw: string | undefined): Re
   }
   const result: Record<string, ProviderModelPricing> = {};
   for (const [key, value] of Object.entries(parsed)) {
-    if (!/^(google|openai|anthropic)\\/[^\\s]+$/.test(key) || !value || typeof value !== 'object' || Array.isArray(value)) {
+    if (!/^(google|openai|anthropic)\/[^\s]+$/.test(key) || !value || typeof value !== 'object' || Array.isArray(value)) {
       throw new Error('Provider pricing entries must use exact hosted provider/model keys.');
     }
     const item = value as Record<string, unknown>;
