@@ -673,3 +673,25 @@ test('distributed emergency-stop polling is serialized and bounded to 250ms', ()
   assert.match(server, /void synchronizeSharedExecutionControl\(\);\s*\}, 250\)/);
   assert.match(server, /catch \{\s*executionRegistry\.setStopped\(true, 'Shared execution-control read failed; fail closed'\)/);
 });
+
+test('offline learning fallbacks recheck shared emergency stop and fail closed when control is unavailable', () => {
+  const humanStart = server.indexOf("app.post('/api/jerry/learn-human-insight'");
+  const growthStart = server.indexOf("app.post('/api/jerry/learn-internet-growth'");
+  const summaryStart = server.indexOf("app.post('/api/jerry/daily-summary'", growthStart);
+  const humanRoute = server.slice(humanStart, growthStart);
+  const growthRoute = server.slice(growthStart, summaryStart);
+  for (const [name, route, fallback] of [
+    ['human insight', humanRoute, 'buildOfflineInsight()'],
+    ['internet growth', growthRoute, 'buildOfflinePlaybook()'],
+  ] as const) {
+    const noProvider = route.indexOf('if (!ai)');
+    const sharedRead = route.indexOf('readSharedExecutionControl()', noProvider);
+    const stoppedCheck = route.indexOf('sharedControl.stopped || isEmergencyStopActive()', sharedRead);
+    const fallbackResponse = route.indexOf(fallback, stoppedCheck);
+    assert.ok(noProvider >= 0 && sharedRead > noProvider && stoppedCheck > sharedRead && fallbackResponse > stoppedCheck,
+      `${name} offline fallback must recheck shared stop before responding`);
+    assert.match(route.slice(noProvider, fallbackResponse), /res\.status\(423\)/);
+    assert.match(route.slice(noProvider, fallbackResponse), /res\.status\(503\)/);
+    assert.match(route.slice(noProvider, fallbackResponse), /executionRegistry\.setStopped\(true/);
+  }
+});
