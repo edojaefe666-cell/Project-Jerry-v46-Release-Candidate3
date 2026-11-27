@@ -158,7 +158,9 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
           throw new Error('JERRY_DAILY_PROVIDER_TOKEN_LIMIT must be configured as a positive integer before Jerry can call external model providers.');
         }
         const maxOutputTokens = 2048;
-        const inputEstimate = Math.max(1, Math.ceil((prompt.length + (options.systemInstruction?.length ?? 0)) / 3));
+        // UTF-8 byte count is a conservative tokenizer-independent input upper bound;
+        // include framing overhead before reserving the hard per-attempt ceiling.
+        const inputEstimate = Buffer.byteLength(prompt + (options.systemInstruction ?? ''), 'utf8') + 512;
         reservation = await reserveProviderTokens({
           ownerUid: options.ownerUid,
           reserveTokens: inputEstimate + maxOutputTokens,
