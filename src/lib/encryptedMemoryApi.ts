@@ -1,11 +1,9 @@
 import { apiFetch, apiJson } from './apiClient.ts';
 import { digestDeviceHttpBody, type DeviceHttpRequestChallenge } from './deviceHttpRequestProof.ts';
 import { getOrCreateJerryDeviceId } from './deviceIdentity.ts';
-import { signNativeDeviceMemoryRequestChallenge } from './nativeDeviceSigning.ts';
+import { signNativeDeviceMemoryRequestChallenge, unwrapNativeDeviceMemoryKeyEnvelope } from './nativeDeviceSigning.ts';
 import type { EncryptedMemoryRecord } from './encryptedMemoryRecord.ts';
 import type { DeviceKeyEnvelope } from './memoryKeyEnvelope.ts';
-import { getOrCreateJerryDeviceId } from './deviceIdentity.ts';
-import { unwrapNativeDeviceMemoryKeyEnvelope } from './nativeDeviceSigning.ts';
 
 export interface StoredEncryptedMemoryRecord extends EncryptedMemoryRecord {
   createdAt: string;
