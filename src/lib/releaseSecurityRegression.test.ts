@@ -1196,3 +1196,17 @@ test('provider usage ledger endpoint is authenticated, owner-scoped, read-only a
   assert.match(route, /settled: 'Provider usage or cost was reconciled/);
   assert.match(route, /rawDays > 90/);
 });
+
+
+test('provider budget audit is owner-authenticated, read-only, bounded and disables caching', () => {
+  const start = server.indexOf("app.get('/api/security/provider-usage'");
+  const end = server.indexOf('// Dedicated owner-scoped persistent memory API.', start);
+  const route = server.slice(start, end);
+  assert.ok(start >= 0 && end > start, 'provider usage audit route must exist');
+  assert.match(route.split('=>')[0], /requireAuth/);
+  assert.match(route, /getProviderUsageAudit\(req\.user!\.uid, rawDays\)/);
+  assert.match(route, /getProviderCostAudit\(req\.user!\.uid, rawDays\)/);
+  assert.match(route, /rawDays < 1 \|\| rawDays > 90/);
+  assert.match(route, /Cache-Control', 'no-store'/);
+  assert.doesNotMatch(route, /reserveProvider|settleProvider|DELETE FROM|UPDATE jerry_provider/);
+});
