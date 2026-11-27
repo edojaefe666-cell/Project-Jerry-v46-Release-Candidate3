@@ -743,24 +743,31 @@ async function startServer() {
     let resetCommitted = false;
     try {
       const resetResult = await withSharedExecutionLease(async () => {
+        // The workspace mutation and its idempotency receipt commit in the
+        // same PostgreSQL transaction. If the process crashes before the
+        // SQLite approval is finalized, retrying this exact approval returns
+        // the original reset result instead of resetting newer workspace data.
         const current = await getWorkspaceForUser(uid, email);
-        let resetState: JerryState;
         if (!current) {
           await saveWorkspaceForUser(uid, email, INITIAL_JERRY_STATE);
-          resetState = INITIAL_JERRY_STATE;
-        } else {
-          // Preserve server-owned financial/security records and the durable ledger.
-          resetState = await updateWorkspaceForUserAtomic(uid, email, (latest) =>
-            mergeClientWorkspaceState(latest, INITIAL_JERRY_STATE)
-          );
         }
+        const commandResult = await runIdempotentWorkspaceCommand(
+          uid,
+          email,
+          `workspace-reset:${approvalId}`,
+          'workspace-reset:v1',
+          async (latest) => {
+            const resetState = mergeClientWorkspaceState(latest, INITIAL_JERRY_STATE);
+            return { state: resetState, response: resetState };
+          },
+        );
         resetCommitted = true;
         const consumed = securityStore.finalizeApprovalReservation(approvalId, uid, reservationId);
-        return { resetState, consumed };
+        return { resetState: commandResult.response, consumed, replayed: commandResult.replayed };
       });
       if (!resetResult.consumed) {
         // The workspace reset is durable; never pretend the approval was consumed.
-        res.status(503).json({ error: 'Workspace reset completed, but authorization finalization is pending. Contact the owner administrator before retrying.' });
+        res.status(503).json({ error: 'Workspace reset completed, but authorization finalization is pending. Retry the same approved reset request.' });
         return;
       }
       res.json(resetResult.resetState);
