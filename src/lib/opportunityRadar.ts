@@ -2,6 +2,7 @@ import type { ProviderConfiguration } from './modelRouter';
 import { searchLiveResearch, type LiveResearchResult } from './liveResearch';
 import { generateWithModelFallback, type ModelGenerationResult } from './providerAdapters';
 import { parseOpportunityScan } from './opportunityScan';
+import { reserveConfiguredProviderOperation } from '../db/providerOperationStore.ts';
 import type { OpportunityAlert } from './types';
 
 export class OpportunityRadarError extends Error {
@@ -19,6 +20,7 @@ export interface OpportunityRadarOptions {
   interests: string[];
   availableCapitalUsd: number;
   researchApiKey?: string;
+  ownerUid?: string;
   configuration: ProviderConfiguration;
   search?: (options: { query: string; apiKey: string; maxResults: number; signal?: AbortSignal }) => Promise<LiveResearchResult>;
   generate?: (options: {
@@ -53,6 +55,8 @@ export async function runOpportunityRadar(options: OpportunityRadarOptions): Pro
 
   const search = options.search ?? searchLiveResearch;
   const generate = options.generate ?? generateWithModelFallback;
+  if (options.ownerUid) await reserveConfiguredProviderOperation(options.ownerUid);
+  else if (process.env.NODE_ENV === 'production') throw new OpportunityRadarError('Authenticated owner identity is required for research provider budgeting.',503,'OWNER_BUDGET_IDENTITY_REQUIRED');
   const research = await search({
     query: `Current market demand, customer problems, competitors, pricing and legitimate business opportunities related to: ${interests.join('; ')}. Prioritize evidence relevant to Nigeria and the available capital of USD ${availableCapitalUsd}.`,
     apiKey,
