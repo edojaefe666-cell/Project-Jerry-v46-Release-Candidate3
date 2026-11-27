@@ -601,8 +601,12 @@ async function startServer() {
       const email = req.user!.email ?? 'owner@jerry.workspace';
       let state = await getWorkspaceForUser(uid, email);
       if (!state) {
-        await saveWorkspaceForUser(uid, email, INITIAL_JERRY_STATE);
-        state = INITIAL_JERRY_STATE;
+        state = await withSharedExecutionLease(async () => {
+          const latest = await getWorkspaceForUser(uid, email);
+          if (latest) return latest;
+          await saveWorkspaceForUser(uid, email, INITIAL_JERRY_STATE);
+          return INITIAL_JERRY_STATE;
+        });
       }
       const authoritativeBtcSatoshis = await getAuthoritativeWalletBtcSatoshis(uid);
       const authoritativeBtc = Number(authoritativeBtcSatoshis) / 100_000_000;
@@ -711,8 +715,13 @@ async function startServer() {
         res.json({ state: existing, source: 'cloudsql' });
         return;
       }
-      await saveWorkspaceForUser(uid, email, INITIAL_JERRY_STATE);
-      res.json({ state: INITIAL_JERRY_STATE, source: 'cloudsql-initialized' });
+      const initialized = await withSharedExecutionLease(async () => {
+        const latest = await getWorkspaceForUser(uid, email);
+        if (latest) return latest;
+        await saveWorkspaceForUser(uid, email, INITIAL_JERRY_STATE);
+        return INITIAL_JERRY_STATE;
+      });
+      res.json({ state: initialized, source: 'cloudsql-initialized' });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to fetch Cloud SQL workspace';
       console.error('Internal server error:', error);
@@ -766,7 +775,7 @@ async function startServer() {
   // Server-owned approval and financial command boundary.
   // The client may request a financial action, but it cannot authoritatively
   // append, approve, settle, or verify a ledger transaction by writing workspace state.
-  app.post('/api/approvals', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/approvals', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -1943,7 +1952,7 @@ async function startServer() {
 
   // Persist a generated self-upgrade proposal through the server-owned control plane.
   // The client may draft the proposal, but it cannot directly write selfUpgrades.
-  app.post('/api/jerry/self-upgrades', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/jerry/self-upgrades', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
@@ -1976,13 +1985,13 @@ async function startServer() {
         approvalStatus: 'awaiting_permission',
         createdAt: String(proposal.createdAt ?? new Date().toISOString()),
       };
-      const result = await runIdempotentWorkspaceCommand(uid, email, key, `self-upgrade-create:${canonical.id}`, async (current) => {
+      const result = await withSharedExecutionLease(() => runIdempotentWorkspaceCommand(uid, email, key, `self-upgrade-create:${canonical.id}`, async (current) => {
         if (current.selfUpgrades?.some((item) => item.id === canonical.id)) {
           return { state: current, response: { proposal: current.selfUpgrades.find((item) => item.id === canonical.id)!, state: current } };
         }
         const state = { ...current, selfUpgrades: [canonical, ...(current.selfUpgrades ?? [])] };
         return { state, response: { proposal: canonical, state } };
-      });
+      }));
       res.status(result.replayed ? 200 : 201).json({ ...result.response, replayed: result.replayed });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to persist self-upgrade proposal.' });
