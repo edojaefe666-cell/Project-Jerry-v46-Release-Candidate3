@@ -207,7 +207,7 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
           break;
         }
 
-        await client.query(
+        const retry = await client.query(
           `UPDATE wallet_journal_outbox
               SET status = 'pending', claim_token = NULL,
                   last_error = $3,
@@ -217,8 +217,11 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
           [row.id, claimToken, message],
         );
 
-        failed++;
-        retried++;
+        // Do not report a retry for a stale worker whose claim was replaced.
+        if (retry.rowCount === 1) {
+          failed++;
+          retried++;
+        }
       }
     }
   } finally {
