@@ -58,6 +58,29 @@ async function signedEncryptedMemoryRequest<T>(
   return payload as T;
 }
 
+/** Revokes another active device through a one-time signed owner-device command. */
+export async function revokeApprovedJerryDevice(registrationId: string): Promise<{
+  revoked: true;
+  deviceName: string;
+  revokedKeyEnvelopeCount: number;
+  recordsPreserved: true;
+}> {
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(registrationId)) {
+    throw new Error('Jerry device registration ID is invalid.');
+  }
+  const result = await signedEncryptedMemoryRequest<{
+    revoked: true;
+    deviceName: string;
+    revokedKeyEnvelopeCount: number;
+    recordsPreserved: true;
+  }>('POST', '/api/devices/revoke', { registrationId });
+  if (result.revoked !== true || result.recordsPreserved !== true ||
+      typeof result.revokedKeyEnvelopeCount !== 'number') {
+    throw new Error('Jerry did not confirm the complete device revocation.');
+  }
+  return result;
+}
+
 /** Fetches opaque ciphertext envelopes; decryption and search stay on-device. */
 export async function listEncryptedMemoryRecords(): Promise<StoredEncryptedMemoryRecord[]> {
   const result = await signedEncryptedMemoryRequest<{ records: StoredEncryptedMemoryRecord[] }>(
