@@ -231,4 +231,66 @@ class DeviceMemoryExchangeKeyStoreTest {
             context.getSharedPreferences(prefs, Context.MODE_PRIVATE).edit().clear().commit()
         }
     }
+
+    @Test
+    fun senderWrapsMemoryKeyForRecipientAndRecipientDecryptsSenderRecord() {
+        val suffix = System.nanoTime().toString()
+        val senderAlias = "jerry-test-sender-$suffix"
+        val recipientAlias = "jerry-test-recipient-$suffix"
+        val senderPrefs = "jerry-test-sender-prefs-$suffix"
+        val recipientPrefs = "jerry-test-recipient-prefs-$suffix"
+        val sender = DeviceMemoryExchangeKeyStore(context, senderAlias, senderPrefs)
+        val recipient = DeviceMemoryExchangeKeyStore(context, recipientAlias, recipientPrefs)
+        val ownerUid = "owner-test-123"
+        val senderDeviceId = "sender_device_123456"
+        val recipientDeviceId = "recipient_device_123456"
+        val keyVersion = 1
+        val recordId = "memory_record_e2e_123"
+        val payloadJson = """{"schemaVersion":1,"id":"$recordId","category":"lesson","area":"knowledge_experience","title":"Sender to recipient test","content":"A device-shared encrypted memory record","tags":["e2e"],"createdAt":"2026-11-27T00:00:00.000Z","updatedAt":"2026-11-27T00:00:00.000Z","deleted":false}"""
+        try {
+            sender.createOrGetPublicKey()
+            val recipientPublicKey = recipient.createOrGetPublicKey()
+            assertEquals(true, sender.createInitialMemoryDataKey(ownerUid, senderDeviceId, keyVersion))
+            assertEquals(true, sender.hasInstalledMemoryKey(ownerUid, senderDeviceId, keyVersion))
+
+            val envelope = sender.wrapInstalledMemoryKeyForDevice(
+                ownerUid, senderDeviceId, recipientDeviceId, keyVersion, recipientPublicKey,
+            )
+            assertEquals(recipientDeviceId, envelope.getJSONObject("context").getString("deviceId"))
+            assertEquals(ownerUid, envelope.getJSONObject("context").getString("ownerUid"))
+            assertEquals(keyVersion, envelope.getJSONObject("context").getInt("keyVersion"))
+
+            assertEquals(
+                true,
+                recipient.unwrapAndStoreMemoryKey(envelope.toString(), ownerUid, recipientDeviceId, keyVersion),
+            )
+            assertEquals(true, recipient.hasInstalledMemoryKey(ownerUid, recipientDeviceId, keyVersion))
+
+            val encrypted = sender.encryptMemoryRecordPayload(
+                ownerUid, senderDeviceId, keyVersion, recordId, 1, payloadJson,
+            )
+            val decryptedByRecipient = recipient.decryptMemoryRecordPayload(
+                ownerUid, recipientDeviceId, keyVersion, recordId, 1, encrypted.iv, encrypted.ciphertext,
+            )
+            assertEquals(payloadJson, decryptedByRecipient)
+
+            assertThrows(Exception::class.java) {
+                recipient.decryptMemoryRecordPayload(
+                    ownerUid, "other_device_123456789", keyVersion, recordId, 1,
+                    encrypted.iv, encrypted.ciphertext,
+                )
+            }
+            assertThrows(Exception::class.java) {
+                recipient.unwrapAndStoreMemoryKey(
+                    envelope.toString(), ownerUid, "wrong_recipient_12345", keyVersion,
+                )
+            }
+        } finally {
+            sender.deleteKey()
+            recipient.deleteKey()
+            context.getSharedPreferences(senderPrefs, Context.MODE_PRIVATE).edit().clear().commit()
+            context.getSharedPreferences(recipientPrefs, Context.MODE_PRIVATE).edit().clear().commit()
+        }
+    }
+
 }
