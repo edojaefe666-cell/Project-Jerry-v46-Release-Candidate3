@@ -14,6 +14,7 @@ import { resolveSettlementApprovalStatus } from './src/lib/settlementApproval.ts
 import { requireAuth, type AuthRequest } from './src/middleware/auth.ts';
 import { adminAuth } from './src/lib/firebase-admin.ts';
 import { SecurityStore } from './src/lib/securityStore.ts';
+import { synchronizeLocalEmergencyControl } from './src/lib/emergencyStopSync.ts';
 import { ExecutionRegistry } from './src/lib/executionRegistry.ts';
 import { db } from './src/db/index.ts';
 import { readSharedExecutionControl, updateSharedExecutionControl, withSharedExecutionLease } from './src/db/executionControl.ts';
@@ -206,9 +207,13 @@ async function startServer() {
     executionControlSyncInFlight = true;
     try {
       const sharedControl = await readSharedExecutionControl();
+      // PostgreSQL is the canonical cross-instance owner latch. Reconcile this
+      // node's SQLite mirror before consulting it, otherwise a stop written on
+      // another instance could remain stuck locally after owner recovery.
+      synchronizeLocalEmergencyControl(sharedControl, securityStore);
       executionRegistry.setStopped(
         sharedControl.stopped || isEmergencyStopActive(),
-        sharedControl.stopped ? 'Shared owner emergency stop propagated to this instance' : 'Local emergency stop remains active',
+        sharedControl.stopped ? 'Shared owner emergency stop propagated to this instance' : 'Shared owner recovery propagated to this instance',
       );
     } catch {
       executionRegistry.setStopped(true, 'Shared execution-control read failed; fail closed');
