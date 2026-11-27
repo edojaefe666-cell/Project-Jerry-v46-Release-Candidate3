@@ -309,49 +309,68 @@ export class SecurityStore {
     const expectedHash = hashScope(expectedScope);
     const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
     const leaseCutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
-    const result = this.db.prepare(
-      "UPDATE approvals SET reservation_id=?, reserved_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND created_at>=? AND (? IS NULL OR scope_hash=?) AND (reservation_id IS NULL OR reserved_at IS NULL OR reserved_at<? OR reservation_id=?) AND EXISTS (SELECT 1 FROM emergency_control WHERE id=1 AND stopped=0)"
-    ).run(reservationId, reservedAt, id, actorUid, action, cutoff, expectedHash ?? null, expectedHash ?? null, leaseCutoff, reservationId);
-    if (Number(result.changes ?? 0) !== 1) return null;
-    const reserved = this.getApproval(id, actorUid);
-    if (reserved) this.audit(actorUid, 'approval.reserved', { id, action, reservationId, reservedAt });
-    return reserved;
+
+    // Reservation and its audit evidence are one SQLite commit. A crash or
+    // audit-write failure must never leave an unaudited live reservation.
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(
+        "UPDATE approvals SET reservation_id=?, reserved_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND created_at>=? AND (? IS NULL OR scope_hash=?) AND (reservation_id IS NULL OR reserved_at IS NULL OR reserved_at<? OR reservation_id=?) AND EXISTS (SELECT 1 FROM emergency_control WHERE id=1 AND stopped=0)"
+      ).run(reservationId, reservedAt, id, actorUid, action, cutoff, expectedHash ?? null, expectedHash ?? null, leaseCutoff, reservationId);
+      if (Number(result.changes ?? 0) !== 1) {
+        this.db.exec('COMMIT');
+        return null;
+      }
+      const reserved = this.getApproval(id, actorUid);
+      if (!reserved) throw new Error('Reserved approval could not be reloaded.');
+      this.audit(actorUid, 'approval.reserved', { id, action, reservationId, reservedAt });
+      this.db.exec('COMMIT');
+      return reserved;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
   }
 
   finalizeApprovalReservation(id: string, actorUid: string, reservationId: string): ApprovalRequest | null {
     const consumedAt = now();
-    const result = this.db.prepare(
-      "UPDATE approvals SET consumed_at=?, reservation_id=NULL, reserved_at=NULL WHERE id=? AND owner_uid=? AND status='approved' AND consumed_at IS NULL AND reservation_id=?"
-    ).run(consumedAt, id, actorUid, reservationId);
-    if (Number(result.changes ?? 0) !== 1) {
-      const existing = this.getApproval(id, actorUid);
-      return existing?.consumedAt ? existing : null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(
+        "UPDATE approvals SET consumed_at=?, reservation_id=NULL, reserved_at=NULL WHERE id=? AND owner_uid=? AND status='approved' AND consumed_at IS NULL AND reservation_id=?"
+      ).run(consumedAt, id, actorUid, reservationId);
+      if (Number(result.changes ?? 0) !== 1) {
+        const existing = this.getApproval(id, actorUid);
+        this.db.exec('COMMIT');
+        return existing?.consumedAt ? existing : null;
+      }
+      const reservedApproval = this.getApproval(id, actorUid);
+      if (!reservedApproval) throw new Error('Consumed approval could not be reloaded.');
+      this.audit(actorUid, 'approval.consumed', { id, action: reservedApproval.action, consumedAt, reservationId });
+      const consumed = this.getApproval(id, actorUid);
+      this.db.exec('COMMIT');
+      return consumed;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
     }
-    const reservedApproval = this.getApproval(id, actorUid);
-    this.audit(actorUid, 'approval.consumed', { id, action: reservedApproval?.action ?? 'unknown', consumedAt, reservationId });
-    return this.getApproval(id, actorUid);
   }
 
   releaseApprovalReservation(id: string, actorUid: string, reservationId: string): boolean {
-    const result = this.db.prepare(
-      "UPDATE approvals SET reservation_id=NULL, reserved_at=NULL WHERE id=? AND owner_uid=? AND consumed_at IS NULL AND reservation_id=?"
-    ).run(id, actorUid, reservationId);
-    if (Number(result.changes ?? 0) === 1) this.audit(actorUid, 'approval.reservation_released', { id, reservationId });
-    return Number(result.changes ?? 0) === 1;
-  }
-
-  consumeApproval(id: string, action: HighImpactAction, actorUid: string, expectedScope?: Record<string, unknown>): ApprovalRequest | null {
-    const consumedAt = now();
-    const expectedHash = hashScope(expectedScope);
-    const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
-    const result = this.db.prepare(
-      "UPDATE approvals SET consumed_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND reservation_id IS NULL AND created_at>=? AND (? IS NULL OR scope_hash=?)"
-    ).run(consumedAt, id, actorUid, action, cutoff, expectedHash ?? null, expectedHash ?? null);
-    if (Number(result.changes ?? 0) !== 1) return null;
-    const consumed = this.getApproval(id, actorUid);
-    if (!consumed) return null;
-    this.audit(actorUid, 'approval.consumed', { id, action, consumedAt });
-    return consumed;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(
+        "UPDATE approvals SET reservation_id=NULL, reserved_at=NULL WHERE id=? AND owner_uid=? AND consumed_at IS NULL AND reservation_id=?"
+      ).run(id, actorUid, reservationId);
+      if (Number(result.changes ?? 0) === 1) {
+        this.audit(actorUid, 'approval.reservation_released', { id, reservationId });
+      }
+      this.db.exec('COMMIT');
+      return Number(result.changes ?? 0) === 1;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
   }
 
   getApproval(id: string, ownerUid: string): ApprovalRequest | null {
