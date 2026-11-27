@@ -27,6 +27,7 @@ import androidx.webkit.WebMessageCompat
 import androidx.webkit.JavaScriptReplyProxy
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.projectjerry.android.security.DeviceSigningKeyStore
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -38,6 +39,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private val credentialManager by lazy { CredentialManager.create(this) }
     private val authRequestInProgress = AtomicBoolean(false)
+    private val deviceSigningKeyStore by lazy { DeviceSigningKeyStore() }
     private var pendingAudioPermission: PermissionRequest? = null
 
     // Ask for microphone access only when Jerry's trusted local UI requests audio.
@@ -97,6 +99,52 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {
             authRequestInProgress.set(false)
             dispatchNativeAuthError()
+        }
+    }
+
+    /**
+     * Device-key commands are accepted only through the trusted main-frame
+     * WebMessageListener registered for https://localhost.
+     */
+    private fun handleNativeDeviceSigningMessage(
+        messageData: String,
+        replyProxy: JavaScriptReplyProxy
+    ): Boolean {
+        return try {
+            val message = JSONObject(messageData)
+            when (message.optString("type")) {
+                "getDeviceSigningPublicKey" -> {
+                    val key = deviceSigningKeyStore.createOrGetPublicKey()
+                    replyProxy.postMessage(
+                        JSONObject().put("ok", true).put(
+                            "publicKey",
+                            JSONObject().put("kty", key.kty).put("crv", key.crv).put("x", key.x).put("y", key.y)
+                        ).toString()
+                    )
+                    true
+                }
+                "signDeviceApprovalChallenge" -> {
+                    val challenge = message.optJSONObject("challenge")
+                        ?: throw IllegalArgumentException("Approval challenge is required.")
+                    val result = deviceSigningKeyStore.signApprovalChallenge(challenge.toString())
+                    replyProxy.postMessage(JSONObject().put("ok", true).put("proof", result).toString())
+                    true
+                }
+                "deleteDeviceSigningKey" -> {
+                    deviceSigningKeyStore.deleteKey()
+                    replyProxy.postMessage(JSONObject().put("ok", true).toString())
+                    true
+                }
+                else -> false
+            }
+        } catch (error: Exception) {
+            replyProxy.postMessage(
+                JSONObject().put("ok", false).put(
+                    "error",
+                    error.message ?: "Native device signing operation failed."
+                ).toString()
+            )
+            true
         }
     }
 
