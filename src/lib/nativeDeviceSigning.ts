@@ -243,6 +243,23 @@ export async function decryptNativeMemoryRecordPayload(
   return JSON.parse(reply.plaintextJson) as unknown;
 }
 
+/** Checks whether this exact owner/device/key-version context has a valid local key. */
+export async function hasNativeInstalledDeviceMemoryKey(
+  ownerUid: string,
+  deviceId: string,
+  keyVersion: number,
+): Promise<boolean> {
+  const reply = await requestNative<NativeBridgeReply>('hasInstalledDeviceMemoryKey', {
+    ownerUid,
+    deviceId,
+    keyVersion,
+  });
+  if (typeof reply.installed !== 'boolean') {
+    throw new Error('Android did not confirm local memory-key availability.');
+  }
+  return reply.installed;
+}
+
 /** Creates the first local memory data key after native owner confirmation. */
 export async function createNativeInitialDeviceMemoryKey(
   ownerUid: string,
