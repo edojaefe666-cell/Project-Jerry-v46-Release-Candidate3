@@ -283,6 +283,14 @@ test('financial workspace mutations hold the shared stop lease through durable s
 });
 
 
+test('stale task recovery holds the shared execution lease through its durable state repair', () => {
+  const start = server.indexOf("app.post('/api/jerry/tasks/recover'");
+  const end = server.indexOf("app.post('/api/jerry/discover-daily-ways'", start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  assert.match(route, /withSharedExecutionLease\(\(\) => recoverStaleTaskExecutions\(uid, email\)\)/);
+});
+
 test('approved destructive workspace reset cannot race the shared emergency stop', () => {
   const start = server.indexOf("app.post('/api/state/reset'");
   const end = server.indexOf('// Cloud SQL PostgreSQL Protected Routes', start);
