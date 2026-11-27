@@ -754,7 +754,7 @@ async function startServer() {
       const resetResult = await withSharedExecutionLease(async () => {
         // The workspace mutation and its idempotency receipt commit in the
         // same PostgreSQL transaction. If the process crashes before the
-        // SQLite approval is finalized, retrying this exact approval returns
+        // PostgreSQL approval is finalized, retrying this exact approval returns
         // the original reset result instead of resetting newer workspace data.
         const current = await getWorkspaceForUser(uid, email);
         if (!current) {
