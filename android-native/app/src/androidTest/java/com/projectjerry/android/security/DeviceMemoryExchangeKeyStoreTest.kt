@@ -292,5 +292,82 @@ class DeviceMemoryExchangeKeyStoreTest {
             context.getSharedPreferences(recipientPrefs, Context.MODE_PRIVATE).edit().clear().commit()
         }
     }
+    @Test
+    fun ownerHeldRecoverySecretRestoresMemoryKeyOnReplacementDevice() {
+        val suffix = System.nanoTime().toString()
+        val sourceAlias = "jerry-test-recovery-source-$suffix"
+        val targetAlias = "jerry-test-recovery-target-$suffix"
+        val sourcePrefs = "jerry-test-recovery-source-prefs-$suffix"
+        val targetPrefs = "jerry-test-recovery-target-prefs-$suffix"
+        val source = DeviceMemoryExchangeKeyStore(context, sourceAlias, sourcePrefs)
+        val target = DeviceMemoryExchangeKeyStore(context, targetAlias, targetPrefs)
+        val ownerUid = "owner-recovery-test-123"
+        val sourceDeviceId = "source_device_recovery_123"
+        val targetDeviceId = "target_device_recovery_123"
+        val keyVersion = 3
+        val recordId = "memory_recovery_record_123"
+        val payloadJson = """{"schemaVersion":1,"id":"$recordId","category":"lesson","area":"knowledge_experience","title":"Recovery round trip","content":"Restored only with the owner-held recovery secret","tags":["recovery"],"createdAt":"2026-11-28T00:00:00.000Z","updatedAt":"2026-11-28T00:00:00.000Z","deleted":false}"""
+        try {
+            source.createOrGetPublicKey()
+            assertEquals(true, source.createInitialMemoryDataKey(ownerUid, sourceDeviceId, keyVersion))
+            val originalRecord = source.encryptMemoryRecordPayload(
+                ownerUid, sourceDeviceId, keyVersion, recordId, 1, payloadJson,
+            )
+
+            val recovery = source.createOwnerRecoveryEnvelope(ownerUid, sourceDeviceId, keyVersion)
+            val recoveryKey = recovery.getString("recoveryKey")
+            val envelope = recovery.getJSONObject("envelope")
+            assertEquals(true, recoveryKey.matches(Regex("[A-Za-z0-9_-]{43}")))
+            assertEquals(1, envelope.getInt("version"))
+            assertEquals("HKDF-SHA256-AES-256-GCM", envelope.getString("algorithm"))
+            assertEquals(ownerUid, envelope.getJSONObject("context").getString("ownerUid"))
+            assertEquals(keyVersion, envelope.getJSONObject("context").getInt("keyVersion"))
+            assertEquals(false, envelope.toString().contains(recoveryKey))
+
+            assertEquals(
+                true,
+                target.restoreMemoryKeyFromOwnerRecoveryEnvelope(
+                    envelope.toString(), recoveryKey, ownerUid, targetDeviceId, keyVersion,
+                ),
+            )
+            assertEquals(true, target.hasInstalledMemoryKey(ownerUid, targetDeviceId, keyVersion))
+            assertEquals(
+                payloadJson,
+                target.decryptMemoryRecordPayload(
+                    ownerUid, targetDeviceId, keyVersion, recordId, 1,
+                    originalRecord.iv, originalRecord.ciphertext,
+                ),
+            )
+
+            assertThrows(Exception::class.java) {
+                target.restoreMemoryKeyFromOwnerRecoveryEnvelope(
+                    envelope.toString(), "A".repeat(43), ownerUid, "another_device_recovery_123", keyVersion,
+                )
+            }
+            assertThrows(Exception::class.java) {
+                target.restoreMemoryKeyFromOwnerRecoveryEnvelope(
+                    envelope.toString(), recoveryKey, "another-owner", "another_device_recovery_123", keyVersion,
+                )
+            }
+            assertThrows(Exception::class.java) {
+                target.restoreMemoryKeyFromOwnerRecoveryEnvelope(
+                    envelope.toString(), recoveryKey, ownerUid, "another_device_recovery_123", keyVersion + 1,
+                )
+            }
+            val tampered = JSONObject(envelope.toString())
+            val ciphertext = tampered.getString("ciphertext")
+            tampered.put("ciphertext", ciphertext.dropLast(1) + if (ciphertext.last() == 'A') "B" else "A")
+            assertThrows(Exception::class.java) {
+                target.restoreMemoryKeyFromOwnerRecoveryEnvelope(
+                    tampered.toString(), recoveryKey, ownerUid, "another_device_recovery_123", keyVersion,
+                )
+            }
+        } finally {
+            source.deleteKey()
+            target.deleteKey()
+            context.getSharedPreferences(sourcePrefs, Context.MODE_PRIVATE).edit().clear().commit()
+            context.getSharedPreferences(targetPrefs, Context.MODE_PRIVATE).edit().clear().commit()
+        }
+    }
 
 }
