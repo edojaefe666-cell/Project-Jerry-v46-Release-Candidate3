@@ -11,6 +11,8 @@ const API_BASE = (() => {
   return parsed.origin;
 })();
 
+const API_BASE_IS_PLACEHOLDER = API_BASE !== '' && new URL(API_BASE).hostname.endsWith('.invalid');
+
 function resolveApiInput(input: RequestInfo | URL): RequestInfo | URL {
   if (!API_BASE) return input;
   const raw = typeof input === 'string'
@@ -19,6 +21,10 @@ function resolveApiInput(input: RequestInfo | URL): RequestInfo | URL {
       ? input.toString()
       : input.url;
   if (!raw.startsWith('/api/')) return input;
+  if (API_BASE_IS_PLACEHOLDER) {
+    throw new Error('Jerry backend is not connected. Configure a verified HTTPS JERRY_BACKEND_ORIGIN and rebuild the Android app.');
+  }
+  if (!API_BASE) return input;
   return `${API_BASE}${raw}`;
 }
 
