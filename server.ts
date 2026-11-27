@@ -1361,8 +1361,8 @@ async function startServer() {
       });
     } catch (error) {
       if (execution.signal.aborted || isEmergencyStopActive()) {
-        if (!res.headersSent && !res.writableEnded) {
-          res.status(423).json({ error: 'Jerry emergency stop interrupted jerry chat.', status: 'cancelled' });
+        if (!res.headersSent && !res.writableEnded && !res.destroyed) {
+          res.status(423).json({ error: 'Jerry emergency stop interrupted Jerry chat.', status: 'cancelled' });
         }
         return;
       }
@@ -1489,7 +1489,7 @@ async function startServer() {
       res.json({ goal, modelUsed: `${result.provider}:${result.model}`, evidenceStatus: 'model_generated_not_independently_verified' });
     } catch (error) {
       if (execution.signal.aborted || isEmergencyStopActive()) {
-        if (!res.headersSent && !res.writableEnded) {
+        if (!res.headersSent && !res.writableEnded && !res.destroyed) {
           res.status(423).json({ error: 'Jerry emergency stop interrupted goal planning.', status: 'cancelled' });
         }
         return;
@@ -1556,7 +1556,7 @@ async function startServer() {
       res.json({ opportunity, modelUsed: `${result.provider}:${result.model}`, evidenceStatus: 'model_estimate_no_live_sources' });
     } catch (error) {
       if (execution.signal.aborted || isEmergencyStopActive()) {
-        if (!res.headersSent && !res.writableEnded) {
+        if (!res.headersSent && !res.writableEnded && !res.destroyed) {
           res.status(423).json({ error: 'Jerry emergency stop interrupted business opportunity assessment.', status: 'cancelled' });
         }
         return;
