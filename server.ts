@@ -169,7 +169,12 @@ async function startServer() {
       if (execution.signal.aborted) {
         return { status: 'unavailable' as const, report: 'Emergency stop interrupted isolated verification before it started.' };
       }
-      const result = await runIsolatedSelfUpgradeTests(input, { signal: execution.signal });
+      const result = await withSharedExecutionLease(async () => {
+        if (execution.signal.aborted) {
+          return { status: 'unavailable' as const, report: 'Emergency stop interrupted isolated verification before the runner started.' };
+        }
+        return runIsolatedSelfUpgradeTests(input, { signal: execution.signal });
+      });
       if (execution.signal.aborted) {
         return { status: 'unavailable' as const, report: 'Emergency stop interrupted isolated verification; no verified test result was accepted.' };
       }
