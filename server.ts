@@ -1696,7 +1696,7 @@ async function startServer() {
     const {text,voiceName='Charon',voiceStyle='Calm, warm, confident adult male voice'}=req.body as {text?:string;voiceName?:string;voiceStyle?:string};
     if(typeof text!=='string'||!text.trim()||text.length>8000){res.status(400).json({error:'Text is required and must not exceed 8000 characters.'});return;}
     const configuration=providerConfigurationFromEnvironment(process.env);
-    if(!configuration.google?.apiKey&&!configuration.openai?.apiKey){res.json({fallback:'browser_speech',voiceName,voiceStyle,note:'No server speech provider is configured; use device speech synthesis.'});return;}
+    if(!configuration.google?.apiKey&&!configuration.openai?.apiKey){const fallbackExecution=executionRegistry.register();try{await deliverWithSharedExecutionLease(fallbackExecution,res,()=>res.json({fallback:'browser_speech',voiceName,voiceStyle,note:'No server speech provider is configured; use device speech synthesis.'}));}finally{fallbackExecution.release();}return;}
     const execution=executionRegistry.register(),cancelOnDisconnect=()=>{if(!res.writableEnded&&!execution.signal.aborted)execution.cancel('Jerry TTS client disconnected');};
     res.once('close',cancelOnDisconnect);
     try{
@@ -1950,11 +1950,16 @@ async function startServer() {
       configuration.anthropic?.apiKey || (configuration.local?.enabled && configuration.local.baseUrl),
     );
     if (!hasProvider) {
-      res.json({
-        proposal: buildPolyglotFallback(),
-        modelUsed: 'Jerry Polyglot Engine (offline template; no AI provider configured)',
-        evidenceStatus: 'template_not_model_generated',
-      });
+      const fallbackExecution = executionRegistry.register();
+      try {
+        await deliverWithSharedExecutionLease(fallbackExecution, res, () => res.json({
+          proposal: buildPolyglotFallback(),
+          modelUsed: 'Jerry Polyglot Engine (offline template; no AI provider configured)',
+          evidenceStatus: 'template_not_model_generated',
+        }));
+      } finally {
+        fallbackExecution.release();
+      }
       return;
     }
 
