@@ -110,3 +110,30 @@ export async function settleProviderTokens(
   );
   if (result.rowCount !== 1) throw new Error('Provider token settlement was already applied or its reservation could not be verified; budget remains fail-closed.');
 }
+
+
+export interface ProviderUsageLedgerSnapshot {
+  daily: Array<{ day: string; dailyLimitTokens: string; reservedTokens: string; actualTokens: string }>;
+  reservations: Array<{ reservationId: string; day: string; reservedTokens: string; status: 'reserved' | 'settled'; createdAt: string; settledAt: string | null }>;
+}
+
+/** Read-only owner-scoped audit view; unresolved reservations are never silently classified as refunds. */
+export async function getProviderUsageLedgerSnapshot(ownerUid: string, limit = 30, queryable: Queryable = pool): Promise<ProviderUsageLedgerSnapshot> {
+  const uid = ownerUid.trim();
+  if (!uid || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Provider usage ledger query is invalid.');
+  await ensureSchema(queryable);
+  const [daily, reservations] = await Promise.all([
+    queryable.query(
+      `SELECT usage_day::text AS day, daily_limit_tokens::text AS "dailyLimitTokens",
+              reserved_tokens::text AS "reservedTokens", actual_tokens::text AS "actualTokens"
+       FROM jerry_provider_daily_usage WHERE owner_uid=$1
+       ORDER BY usage_day DESC LIMIT $2`, [uid, limit]),
+    queryable.query(
+      `SELECT reservation_id AS "reservationId", usage_day::text AS day,
+              reserved_tokens::text AS "reservedTokens", status,
+              created_at::text AS "createdAt", settled_at::text AS "settledAt"
+       FROM jerry_provider_token_reservations WHERE owner_uid=$1
+       ORDER BY created_at DESC, reservation_id DESC LIMIT $2`, [uid, limit]),
+  ]);
+  return { daily: daily.rows as ProviderUsageLedgerSnapshot['daily'], reservations: reservations.rows as ProviderUsageLedgerSnapshot['reservations'] };
+}
