@@ -182,6 +182,20 @@ test('shared execution leases serialize owner stop with active ledger side effec
     'an emergency stop must immediately release the current and remaining claims instead of waiting for stale-claim recovery');
 });
 
+
+test('wallet outbox claims use fencing tokens so stale workers cannot finalize reclaimed rows', () => {
+  const outbox = fs.readFileSync(path.join(root, 'src/db/walletJournalOutbox.ts'), 'utf8');
+  const migration = fs.readFileSync(path.join(root, 'drizzle/0011_wallet_outbox_claim_fencing.sql'), 'utf8');
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS claim_token uuid/);
+  assert.match(outbox, /const claimToken = randomUUID\(\)/);
+  assert.match(outbox, /claim_token = \$\$\{uid \? 3 : 2\}/);
+  assert.match(outbox, /RETURNING[\s\S]*?o\.claim_token/);
+  assert.match(outbox, /WHERE id = \$1 AND status = 'processing' AND claim_token = \$2/);
+  assert.match(outbox, /if \(finalized\.rowCount === 1\) processed\+\+/);
+  assert.match(outbox, /SET status = 'processed', claim_token = NULL/);
+});
+
+
 test('AI-enhanced owner learning is persisted only inside the shared execution lease', () => {
   const start = server.indexOf("app.post('/api/jerry/teach'");
   const end = server.indexOf("app.post('/api/jerry/self-program'", start);
