@@ -486,3 +486,31 @@ test('a restarted application instance inherits the durable owner emergency stop
     }
   }
 });
+
+
+test('shared-control database read failure rolls back admission and never starts protected work', async () => {
+  const calls: string[] = [];
+  const client = {
+    query: async (query: string) => {
+      calls.push(query);
+      if (query.includes('SELECT stopped')) throw new Error('shared control database unavailable');
+      return { rows: [] };
+    },
+    release: () => { calls.push('RELEASE'); },
+  };
+  let workStarted = false;
+  const { withSharedExecutionLease } = await import('./executionControl.ts');
+
+  await assert.rejects(
+    withSharedExecutionLease(async () => {
+      workStarted = true;
+      return 'must not execute';
+    }, async () => client as unknown as PoolClient),
+    /shared control database unavailable/,
+  );
+
+  assert.equal(workStarted, false, 'Database outage must fail closed before external work starts.');
+  assert.ok(calls.includes('BEGIN'));
+  assert.ok(calls.includes('ROLLBACK'));
+  assert.equal(calls.at(-1), 'RELEASE');
+});
