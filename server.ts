@@ -1672,11 +1672,11 @@ async function startServer() {
     }
 
     try {
-      const persisted = await saveMemoryEntryForUser(
+      const persisted = await withSharedExecutionLease(() => saveMemoryEntryForUser(
         req.user!.uid,
         req.user!.email ?? 'owner@jerry.workspace',
         entry,
-      );
+      ));
       if (!execution.signal.aborted && !isEmergencyStopActive()) res.status(200).json({
         entry: persisted,
         persisted: true,
