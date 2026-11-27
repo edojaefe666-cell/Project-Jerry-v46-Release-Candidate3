@@ -174,7 +174,7 @@ class DeviceMemoryExchangeKeyStore(
 
     /** Authenticates the persisted public identity together with its private key ciphertext. */
     private fun publicKeyBinding(publicX: String, publicY: String): ByteArray =
-        "Jerry device memory exchange key v1\\u0000$publicX\\u0000$publicY".toByteArray(Charsets.UTF_8)
+        "Jerry device memory exchange key v1\u0000$publicX\u0000$publicY".toByteArray(Charsets.UTF_8)
 
     private fun getOrCreateWrappingKey(): java.security.Key {
         val store = keyStore()
