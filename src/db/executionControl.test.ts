@@ -19,6 +19,51 @@ test('shared execution control rejects an invalid epoch', async () => {
   );
 });
 
+test('execution lease holds a shared row lock until release', async () => {
+  const calls: string[] = [];
+  const client = {
+    query: async (query: string) => {
+      calls.push(query);
+      if (query.includes('SELECT stopped')) {
+        return { rows: [{ stopped: false, epoch: '4', reason: 'ready', updated_by: 'owner', updated_at: new Date().toISOString() }] };
+      }
+      return { rows: [] };
+    },
+    release: () => { calls.push('RELEASE'); },
+  };
+  const { acquireSharedExecutionLease } = await import('./executionControl.ts');
+  const lease = await acquireSharedExecutionLease(async () => client as unknown as PoolClient);
+  assert.equal(lease.epoch, 4);
+  assert.ok(calls.includes('BEGIN'));
+  assert.ok(calls.some((query) => query.includes('FOR SHARE')));
+  assert.equal(calls.includes('COMMIT'), false);
+  await lease.release();
+  await lease.release();
+  assert.equal(calls.filter((query) => query === 'COMMIT').length, 1);
+  assert.equal(calls.filter((query) => query === 'RELEASE').length, 1);
+});
+
+test('execution lease refuses stopped state and rolls back', async () => {
+  const calls: string[] = [];
+  const client = {
+    query: async (query: string) => {
+      calls.push(query);
+      if (query.includes('SELECT stopped')) {
+        return { rows: [{ stopped: true, epoch: '5', reason: 'owner stop', updated_by: 'owner', updated_at: new Date().toISOString() }] };
+      }
+      return { rows: [] };
+    },
+    release: () => { calls.push('RELEASE'); },
+  };
+  const { acquireSharedExecutionLease } = await import('./executionControl.ts');
+  await assert.rejects(
+    acquireSharedExecutionLease(async () => client as unknown as PoolClient),
+    /emergency stop is engaged/,
+  );
+  assert.ok(calls.includes('ROLLBACK'));
+  assert.equal(calls.at(-1), 'RELEASE');
+});
+
 test('owner resume increments the shared epoch and audits in one transaction', async () => {
   const calls: Array<{ query: string; values?: unknown[] }> = [];
   const client = {
