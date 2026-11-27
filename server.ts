@@ -2655,6 +2655,7 @@ async function startServer() {
           `Return ONLY JSON matching the schema with pillar ("SEO & Organic Reach" | "Autonomous Distribution" | "Viral Product Loops" | "Developer & API Ecosystem" | "Conversion & Monetization"), concise title, actionable tactic, expectedImpact, and authorityGainPts (3-5).`,
         config: {
           responseMimeType: 'application/json',
+          maxOutputTokens: 2048,
           responseSchema: {
             type: Type.OBJECT,
             properties: {
