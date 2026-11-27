@@ -3,6 +3,7 @@ import { searchLiveResearch, type LiveResearchResult } from './liveResearch';
 import { generateWithModelFallback, type ModelGenerationResult } from './providerAdapters';
 import { parseOpportunityScan } from './opportunityScan';
 import { reserveConfiguredProviderOperation } from '../db/providerOperationStore.ts';
+import { withSharedExecutionLease } from '../db/executionControl.ts';
 import type { OpportunityAlert } from './types';
 
 export class OpportunityRadarError extends Error {
@@ -57,7 +58,7 @@ export async function runOpportunityRadar(options: OpportunityRadarOptions): Pro
   const generate = options.generate ?? generateWithModelFallback;
   if (options.ownerUid) await reserveConfiguredProviderOperation(options.ownerUid);
   else if (process.env.NODE_ENV === 'production') throw new OpportunityRadarError('Authenticated owner identity is required for research provider budgeting.',503,'OWNER_BUDGET_IDENTITY_REQUIRED');
-  const research = await search({
+  const researchRequest = () => search({
     query: `Current market demand, customer problems, competitors, pricing and legitimate business opportunities related to: ${interests.join('; ')}. Prioritize evidence relevant to Nigeria and the available capital of USD ${availableCapitalUsd}.`,
     apiKey,
     maxResults: 5,
