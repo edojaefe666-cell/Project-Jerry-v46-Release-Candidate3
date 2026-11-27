@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS device_registrations (
   CONSTRAINT device_registrations_public_key_object_check CHECK (jsonb_typeof(exchange_public_key) = 'object'),
   CONSTRAINT device_registrations_public_key_curve_check CHECK (
     exchange_public_key->>'kty' = 'EC' AND exchange_public_key->>'crv' = 'P-256'
+    AND exchange_public_key ? 'x' AND exchange_public_key ? 'y'
+    AND jsonb_typeof(exchange_public_key->'x') = 'string'
+    AND jsonb_typeof(exchange_public_key->'y') = 'string'
     AND length(exchange_public_key->>'x') = 43 AND length(exchange_public_key->>'y') = 43
   ),
   CONSTRAINT device_registrations_approval_state_check CHECK (
