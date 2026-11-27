@@ -855,8 +855,8 @@ test('wallet outbox claims are serialized against the durable owner emergency st
   assert.match(claim, /if \(signal\?\.aborted\) throw/);
   assert.match(claim, /client\.query\(/);
   assert.match(claim, /UPDATE wallet_journal_outbox/);
-  assert.match(walletOutbox, /LIMIT \\$\\$\\{uid \\? 2 : 1\\}/, 'claim limit must remain a PostgreSQL bind parameter');
-  assert.match(walletOutbox, /claim_token = \\$\\$\\{uid \\? 3 : 2\\}/, 'UUID fencing token must remain a PostgreSQL bind parameter');
+  assert.ok(walletOutbox.includes('LIMIT $${uid ? 2 : 1}'), 'claim limit must remain a PostgreSQL bind parameter');
+  assert.ok(walletOutbox.includes('claim_token = $${uid ? 3 : 2}'), 'UUID fencing token must remain a PostgreSQL bind parameter');
 });
 
 
