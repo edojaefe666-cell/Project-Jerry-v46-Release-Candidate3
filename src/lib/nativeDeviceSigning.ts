@@ -131,3 +131,20 @@ export async function signNativeDeviceMemoryRequestChallenge(
   }
   return reply.proof as NativeDeviceHttpProof;
 }
+
+/** Public P-256 ECDH identity used only to receive owner-authorized memory-key envelopes. */
+export async function getNativeDeviceMemoryExchangePublicKey(): Promise<DeviceSigningPublicKey> {
+  const reply = await requestNative<NativeBridgeReply>('getDeviceMemoryExchangePublicKey');
+  if (!reply.publicKey || reply.publicKey.kty !== 'EC' || reply.publicKey.crv !== 'P-256' ||
+      !/^[A-Za-z0-9_-]{43}$/.test(reply.publicKey.x) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(reply.publicKey.y) ||
+      'd' in (reply.publicKey as unknown as Record<string, unknown>)) {
+    throw new Error('Android Keystore did not return a valid public memory-exchange key.');
+  }
+  return reply.publicKey;
+}
+
+/** Deletes the local ECDH identity; existing device envelopes will no longer be decryptable. */
+export async function deleteNativeDeviceMemoryExchangeKey(): Promise<void> {
+  await requestNative<NativeBridgeReply>('deleteDeviceMemoryExchangeKey');
+}
