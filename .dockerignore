@@ -1,0 +1,15 @@
+.git
+.github
+node_modules
+dist
+android-native
+coverage
+.cache
+.tmp
+*.apk
+*.aab
+*.zip
+*.log
+.env
+.env.*
+!.env.example
