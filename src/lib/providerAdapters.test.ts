@@ -161,3 +161,62 @@ test('loads provider credentials from server environment names only', () => {
   assert.equal(config.anthropic?.apiKey, 'a');
   assert.equal(config.local?.enabled, true);
 });
+
+test('reserves and reconciles exact configured model USD cost from provider input/output usage', async () => {
+  const previousLimit = process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD;
+  process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD = '1000000';
+  const events: string[] = [];
+  try {
+    const result = await generateWithModelFallback({
+      task: 'chat',
+      prompt: 'hello',
+      ownerUid: 'owner-cost-test',
+      configuration: { openai: { apiKey: 'test-key', model: 'gpt-cost-test' } },
+      pricing: {
+        'openai/gpt-cost-test': {
+          inputMicroUsdPerMillionTokens: 2_000_000,
+          outputMicroUsdPerMillionTokens: 8_000_000,
+        },
+      },
+      reserveTokens: async (input) => ({
+        ownerUid: input.ownerUid, day: '2026-11-27',
+        reservedTokens: input.reserveTokens, dailyLimitTokens: input.dailyLimitTokens,
+      }),
+      settleTokens: async () => {},
+      reserveOperation: async () => {},
+      reserveCost: async (input) => {
+        events.push(`reserve:${input.reserveMicroUsd}`);
+        return {
+          ownerUid: input.ownerUid, day: '2026-11-27',
+          reservedMicroUsd: input.reserveMicroUsd, dailyLimitMicroUsd: input.dailyLimitMicroUsd,
+        };
+      },
+      settleCost: async (_reservation, actual) => { events.push(`settle:${actual}`); },
+      withExecutionLease: async (work) => work(),
+      fetchImpl: async () => jsonResponse({
+        choices: [{ message: { content: 'cost-accounted response' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }),
+    });
+    assert.equal(result.text, 'cost-accounted response');
+    assert.equal(events.length, 2);
+    assert.match(events[0], /^reserve:/);
+    assert.equal(events[1], 'settle:60');
+  } finally {
+    if (previousLimit === undefined) delete process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD;
+    else process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD = previousLimit;
+  }
+});
+
+test('rejects malformed provider price configuration rather than guessing prices', async () => {
+  const { parseProviderPricingFromEnvironment } = await import('./providerAdapters');
+  assert.throws(() => parseProviderPricingFromEnvironment('{bad json'), /valid JSON/);
+  assert.throws(() => parseProviderPricingFromEnvironment(JSON.stringify({
+    'openai/gpt-test': { inputMicroUsdPerMillionTokens: 0, outputMicroUsdPerMillionTokens: 1 },
+  })), /positive integer/);
+  assert.deepEqual(parseProviderPricingFromEnvironment(JSON.stringify({
+    'openai/gpt-test': { inputMicroUsdPerMillionTokens: 1_000_000, outputMicroUsdPerMillionTokens: 2_000_000 },
+  })), {
+    'openai/gpt-test': { inputMicroUsdPerMillionTokens: 1_000_000, outputMicroUsdPerMillionTokens: 2_000_000 },
+  });
+});
