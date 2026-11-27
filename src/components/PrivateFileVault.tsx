@@ -6,6 +6,7 @@ type StoredFile = {
   id: string;
   objectKey: string;
   contentType: string;
+  fileName: string;
   byteSize: number;
   createdAt: string;
 };
@@ -66,6 +67,7 @@ export function PrivateFileVault() {
         headers: {
           'Content-Type': 'application/octet-stream',
           'X-Jerry-File-Type': selectedFile.type,
+          'X-Jerry-File-Name': selectedFile.name,
         },
         body: selectedFile,
       });
@@ -138,7 +140,7 @@ export function PrivateFileVault() {
             <div className="flex min-w-0 items-center gap-3">
               <FileText className="h-4 w-4 shrink-0 text-slate-400" />
               <div className="min-w-0">
-                <p className="truncate text-xs font-medium text-slate-800">Jerry file · {file.id.slice(0, 8)}</p>
+                <p className="truncate text-xs font-medium text-slate-800">{file.fileName}</p>
                 <p className="text-[11px] text-slate-500">{file.contentType} · {formatBytes(file.byteSize)} · {new Date(file.createdAt).toLocaleDateString()}</p>
               </div>
             </div>

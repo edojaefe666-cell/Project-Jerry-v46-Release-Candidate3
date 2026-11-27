@@ -108,6 +108,7 @@ export const storageObjects = pgTable('storage_objects', {
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
   objectKey: text('object_key').notNull().unique(),
   contentType: text('content_type').notNull(),
+  fileName: text('file_name').notNull().default('file'),
   byteSize: integer('byte_size').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
