@@ -143,6 +143,50 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
   );
   assert.equal(journalRows.rowCount, 3, 'Duplicate delivery must produce only one posted journal entry for the same settlement.');
 
+  // A reclaimed stale task receives a new fencing token. The original
+  // worker may finish later, but it must not finalize the newer claim.
+  const fencedTx = makeTransaction(`fenced-${suffix}`, 'e');
+  await insertOutbox(fencedTx, 'processing');
+  const fencedEventKey = getWalletJournalEventKey(fencedTx);
+  const oldClaimToken = randomUUID();
+  const newClaimToken = randomUUID();
+  await pool.query(
+    `UPDATE wallet_journal_outbox
+        SET claim_token = $3, updated_at = now() - interval '10 minutes'
+      WHERE user_id = $1 AND event_key = $2`,
+    [user.id, fencedEventKey, oldClaimToken],
+  );
+  const reclaimed = await pool.query(
+    `UPDATE wallet_journal_outbox
+        SET claim_token = $3, updated_at = now(), attempts = attempts + 1
+      WHERE user_id = $1 AND event_key = $2
+        AND status = 'processing'
+        AND updated_at < now() - interval '5 minutes'
+      RETURNING id`,
+    [user.id, fencedEventKey, newClaimToken],
+  );
+  assert.equal(reclaimed.rowCount, 1, 'stale task must be reclaimable by a new worker');
+  const staleFinalize = await pool.query(
+    `UPDATE wallet_journal_outbox
+        SET status = 'processed', claim_token = NULL, processed_at = now()
+      WHERE user_id = $1 AND event_key = $2
+        AND status = 'processing' AND claim_token = $3`,
+    [user.id, fencedEventKey, oldClaimToken],
+  );
+  assert.equal(staleFinalize.rowCount, 0, 'old worker must not finalize a task reclaimed by a newer worker');
+  const currentClaim = await pool.query(
+    'SELECT status, claim_token FROM wallet_journal_outbox WHERE user_id = $1 AND event_key = $2',
+    [user.id, fencedEventKey],
+  );
+  assert.equal(currentClaim.rows[0].status, 'processing');
+  assert.equal(currentClaim.rows[0].claim_token, newClaimToken);
+  await pool.query(
+    `UPDATE wallet_journal_outbox
+        SET status = 'pending', claim_token = NULL, available_at = now()
+      WHERE user_id = $1 AND event_key = $2 AND claim_token = $3`,
+    [user.id, fencedEventKey, newClaimToken],
+  );
+
   // Emergency stop after claim but before execution must preserve the row
   // and return it to pending rather than losing or falsely processing it.
   const pausedTx = makeTransaction(`paused-${suffix}`, 'd');
