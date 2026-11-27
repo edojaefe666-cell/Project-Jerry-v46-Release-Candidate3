@@ -35,3 +35,29 @@ CREATE TABLE IF NOT EXISTS jerry_security_approval_audit (
 
 CREATE INDEX IF NOT EXISTS jerry_security_approval_audit_owner_seq
   ON jerry_security_approval_audit(owner_uid,seq);
+
+CREATE TABLE IF NOT EXISTS jerry_security_approved_contacts (
+  id text PRIMARY KEY,
+  owner_uid text NOT NULL,
+  name text NOT NULL,
+  email text NOT NULL,
+  purpose text NOT NULL,
+  status text NOT NULL CHECK(status IN ('active','revoked')),
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS jerry_security_contacts_owner_created
+  ON jerry_security_approved_contacts(owner_uid,created_at DESC);
+
+CREATE TABLE IF NOT EXISTS jerry_security_audit (
+  seq bigserial PRIMARY KEY,
+  owner_uid text NOT NULL,
+  actor_uid text NOT NULL,
+  event text NOT NULL,
+  details jsonb NOT NULL,
+  created_at timestamptz NOT NULL,
+  previous_hash text NOT NULL,
+  entry_hash text NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS jerry_security_audit_owner_seq
+  ON jerry_security_audit(owner_uid,seq);
