@@ -664,3 +664,12 @@ test('Jerry teaching refuses memory persistence when emergency stop interrupts l
   assert.match(route, /res\.status\(423\)/);
   assert.match(route, /persisted: false/);
 });
+
+test('distributed emergency-stop polling is serialized and bounded to 250ms', () => {
+  assert.match(server, /let executionControlSyncInFlight = false/);
+  assert.match(server, /if \(executionControlSyncInFlight\) return/);
+  assert.match(server, /executionControlSyncInFlight = true/);
+  assert.match(server, /executionControlSyncInFlight = false/);
+  assert.match(server, /void synchronizeSharedExecutionControl\(\);\s*\}, 250\)/);
+  assert.match(server, /catch \{\s*executionRegistry\.setStopped\(true, 'Shared execution-control read failed; fail closed'\)/);
+});
