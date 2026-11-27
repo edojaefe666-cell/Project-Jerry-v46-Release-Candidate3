@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: jerry-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: bun scripts/apply-sql-migrations.ts && bun server.ts
+    healthCheckPath: /readyz
+    autoDeployTrigger: off
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JERRY_PAID_SERVICES_ENABLED
+        value: "0"
+      - key: DATABASE_URL
+        sync: false
+      - key: JERRY_OWNER_UID
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/firebase-service-account.json
+      - key: JERRY_FIREBASE_INTEGRATION
+        value: "0"
