@@ -14,10 +14,14 @@ import java.security.spec.ECGenParameterSpec
 import java.security.spec.ECPoint
 import java.security.spec.ECPublicKeySpec
 import java.security.spec.PKCS8EncodedKeySpec
+import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.KeyAgreement
 import javax.crypto.KeyGenerator
+import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+import org.json.JSONObject
 
 /**
  * Android 10-compatible ECDH identity for encrypted-memory key envelopes.
@@ -134,15 +138,177 @@ class DeviceMemoryExchangeKeyStore(
         }
     }
 
-    /** Removes this device's wrapped exchange key; existing envelopes then become unreadable here. */
+    /**
+     * Decrypts a WebCrypto-compatible v1 envelope entirely inside the native
+     * security boundary, then persists the recovered AES-256 data key only as
+     * Android-Keystore-authenticated ciphertext. Raw data-key bytes are never
+     * returned to JavaScript or written to preferences.
+     */
+    @Synchronized
+    fun unwrapAndStoreMemoryKey(
+        envelopeJson: String,
+        expectedOwnerUid: String,
+        expectedDeviceId: String,
+        expectedKeyVersion: Int,
+    ): Boolean {
+        require(envelopeJson.length in 2..16_384) { "Memory key envelope is invalid." }
+        require(expectedOwnerUid.isNotBlank() && expectedOwnerUid.length <= 160) { "Expected owner is invalid." }
+        require(expectedDeviceId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) { "Expected device ID is invalid." }
+        require(expectedKeyVersion in 1..999_999_999) { "Expected key version is invalid." }
+
+        val envelope = JSONObject(envelopeJson)
+        require(envelope.optInt("version", -1) == 1) { "Memory key envelope version is unsupported." }
+        require(envelope.optString("algorithm") == "ECDH-P256-HKDF-SHA256-AES-256-GCM") {
+            "Memory key envelope algorithm is unsupported."
+        }
+        val context = envelope.getJSONObject("context")
+        val ownerUid = context.getString("ownerUid")
+        val deviceId = context.getString("deviceId")
+        val keyVersion = context.getInt("keyVersion")
+        require(ownerUid == expectedOwnerUid && deviceId == expectedDeviceId && keyVersion == expectedKeyVersion) {
+            "Memory key envelope context does not match this owner, device, and key version."
+        }
+        val contextJson = canonicalContextJson(ownerUid, deviceId, keyVersion)
+        val contextBytes = contextJson.toByteArray(Charsets.UTF_8)
+        val ephemeral = envelope.getJSONObject("ephemeralPublicKey")
+        val peer = PublicJwk(
+            kty = ephemeral.getString("kty"),
+            crv = ephemeral.getString("crv"),
+            x = ephemeral.getString("x"),
+            y = ephemeral.getString("y"),
+        )
+        require(peer.kty == "EC" && peer.crv == "P-256") { "Envelope ephemeral key must be P-256." }
+        val salt = decodeBase64Url(envelope.getString("salt"), 32, "salt")
+        val iv = decodeBase64Url(envelope.getString("iv"), 12, "IV")
+        val ciphertext = decodeBase64Url(envelope.getString("ciphertext"), 48, "ciphertext")
+
+        val sharedSecret = deriveSharedSecret(peer)
+        var wrappingKey: ByteArray? = null
+        var rawMemoryKey: ByteArray? = null
+        try {
+            val info = ("Jerry memory key envelope v1\u0000" + contextJson).toByteArray(Charsets.UTF_8)
+            wrappingKey = hkdfSha256(sharedSecret, salt, info, 32)
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(wrappingKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.updateAAD(contextBytes)
+            rawMemoryKey = cipher.doFinal(ciphertext)
+            require(rawMemoryKey.size == 32) { "Unwrapped memory data key has an invalid length." }
+            persistMemoryDataKey(rawMemoryKey, contextJson)
+            return true
+        } finally {
+            sharedSecret.fill(0)
+            wrappingKey?.fill(0)
+            rawMemoryKey?.fill(0)
+            salt.fill(0)
+            iv.fill(0)
+            ciphertext.fill(0)
+            contextBytes.fill(0)
+        }
+    }
+
+    /** True only when a locally authenticated key exists for this exact context. */
+    @Synchronized
+    fun hasInstalledMemoryKey(ownerUid: String, deviceId: String, keyVersion: Int): Boolean {
+        val contextJson = canonicalContextJson(ownerUid, deviceId, keyVersion)
+        val suffix = contextStorageId(contextJson)
+        val iv = preferences.getString(DATA_KEY_IV_PREFIX + suffix, null)?.let { Base64.decode(it, BASE64_FLAGS) }
+            ?: return false
+        val ciphertext = preferences.getString(DATA_KEY_CIPHERTEXT_PREFIX + suffix, null)
+            ?.let { Base64.decode(it, BASE64_FLAGS) } ?: return false
+        if (iv.size != GCM_IV_BYTES || ciphertext.size != 48) return false
+        val plaintext = decryptPersistedMemoryKey(iv, ciphertext, contextJson)
+        return try {
+            plaintext.size == 32
+        } finally {
+            plaintext.fill(0)
+        }
+    }
+
+    private fun persistMemoryDataKey(rawKey: ByteArray, contextJson: String) {
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateWrappingKey())
+        cipher.updateAAD(("Jerry local memory data key v1\u0000" + contextJson).toByteArray(Charsets.UTF_8))
+        val encrypted = cipher.doFinal(rawKey)
+        val suffix = contextStorageId(contextJson)
+        val saved = preferences.edit()
+            .putString(DATA_KEY_IV_PREFIX + suffix, encode(cipher.iv))
+            .putString(DATA_KEY_CIPHERTEXT_PREFIX + suffix, encode(encrypted))
+            .commit()
+        check(saved) { "Unable to persist the protected Jerry memory data key." }
+        encrypted.fill(0)
+    }
+
+    private fun decryptPersistedMemoryKey(iv: ByteArray, ciphertext: ByteArray, contextJson: String): ByteArray {
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, getOrCreateWrappingKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+        cipher.updateAAD(("Jerry local memory data key v1\u0000" + contextJson).toByteArray(Charsets.UTF_8))
+        return cipher.doFinal(ciphertext)
+    }
+
+    private fun canonicalContextJson(ownerUid: String, deviceId: String, keyVersion: Int): String {
+        require(ownerUid.isNotBlank() && ownerUid.length <= 160) { "Memory key owner is invalid." }
+        require(deviceId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) { "Memory key device ID is invalid." }
+        require(keyVersion in 1..999_999_999) { "Memory key version is invalid." }
+        return "{\"ownerUid\":${JSONObject.quote(ownerUid)},\"deviceId\":${JSONObject.quote(deviceId)},\"keyVersion\":$keyVersion}"
+    }
+
+    private fun contextStorageId(contextJson: String): String =
+        Base64.encodeToString(
+            MessageDigest.getInstance("SHA-256").digest(contextJson.toByteArray(Charsets.UTF_8)),
+            BASE64_FLAGS,
+        )
+
+    private fun decodeBase64Url(value: String, expectedSize: Int, field: String): ByteArray {
+        require(value.matches(Regex("[A-Za-z0-9_-]+"))) { "Memory key envelope $field encoding is invalid." }
+        val decoded = Base64.decode(value, BASE64_FLAGS)
+        require(decoded.size == expectedSize) { "Memory key envelope $field length is invalid." }
+        return decoded
+    }
+
+    /** RFC 5869 HKDF-SHA256; output is limited to the SHA-256 255-block bound. */
+    private fun hkdfSha256(ikm: ByteArray, salt: ByteArray, info: ByteArray, length: Int): ByteArray {
+        require(length in 1..(255 * 32)) { "HKDF output length is invalid." }
+        val mac = Mac.getInstance("HmacSHA256")
+        val effectiveSalt = if (salt.isEmpty()) ByteArray(32) else salt
+        mac.init(SecretKeySpec(effectiveSalt, "HmacSHA256"))
+        val prk = mac.doFinal(ikm)
+        try {
+            val output = ByteArray(length)
+            var previous = ByteArray(0)
+            var offset = 0
+            var counter = 1
+            while (offset < length) {
+                mac.init(SecretKeySpec(prk, "HmacSHA256"))
+                mac.update(previous)
+                mac.update(info)
+                mac.update(counter.toByte())
+                val block = mac.doFinal()
+                previous.fill(0)
+                previous = block
+                val count = minOf(block.size, length - offset)
+                block.copyInto(output, offset, 0, count)
+                offset += count
+                counter++
+            }
+            previous.fill(0)
+            return output
+        } finally {
+            prk.fill(0)
+        }
+    }
+
+    /** Removes this device's wrapped exchange key and locally installed data keys. */
     @Synchronized
     fun deleteKey() {
-        preferences.edit()
+        val editor = preferences.edit()
             .remove(KEY_PUBLIC_X)
             .remove(KEY_PUBLIC_Y)
             .remove(KEY_PRIVATE_IV)
             .remove(KEY_PRIVATE_CIPHERTEXT)
-            .commit()
+        preferences.all.keys.filter {
+            it.startsWith(DATA_KEY_IV_PREFIX) || it.startsWith(DATA_KEY_CIPHERTEXT_PREFIX)
+        }.forEach { editor.remove(it) }
+        editor.commit()
         val store = keyStore()
         if (store.containsAlias(encryptionAlias)) store.deleteEntry(encryptionAlias)
     }
@@ -233,5 +399,7 @@ class DeviceMemoryExchangeKeyStore(
         private const val KEY_PUBLIC_Y = "public_y"
         private const val KEY_PRIVATE_IV = "private_iv"
         private const val KEY_PRIVATE_CIPHERTEXT = "private_ciphertext"
+        private const val DATA_KEY_IV_PREFIX = "memory_data_key_iv_"
+        private const val DATA_KEY_CIPHERTEXT_PREFIX = "memory_data_key_ciphertext_"
     }
 }
