@@ -221,6 +221,15 @@ async function startServer() {
         res.status(503).json({ status: 'not_ready' });
         return;
       }
+      const latestMigration = await db.execute(sql`
+        SELECT 1 FROM app_sql_migrations
+        WHERE migration_name = '0017_provider_token_reservations.sql'
+        LIMIT 1
+      `);
+      if (latestMigration.rows.length !== 1) {
+        res.status(503).json({ status: 'not_ready' });
+        return;
+      }
       await readSharedExecutionControl();
       res.status(200).json({ status: 'ready' });
     } catch {
