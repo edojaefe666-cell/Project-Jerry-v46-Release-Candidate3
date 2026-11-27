@@ -436,7 +436,7 @@ class MainActivity : AppCompatActivity() {
                     val keyEnvelopeRead = method == "GET" &&
                         targetPath.matches(Regex("/api/memory/key-envelopes/[1-9][0-9]{0,8}"))
                     val isWrite = method == "POST" || method == "PUT"
-                    val deviceRevocation = method == "POST" && targetPath == "/api/devices/revoke"
+                    val deviceRevocation = method == "POST" && targetPath.matches(Regex("/api/devices/[A-Za-z0-9_-]{16,128}/revoke"))
                     val allowedWrite = (method == "POST" &&
                         (targetPath == "/api/memory/encrypted" || targetPath == "/api/memory/key-envelopes" || deviceRevocation)) ||
                         (method == "PUT" &&
@@ -463,7 +463,9 @@ class MainActivity : AppCompatActivity() {
                             .setTitle(if (deviceRevocation) "Confirm Jerry device revocation?" else "Authorize Jerry memory change?")
                             .setMessage(
                                 if (deviceRevocation) {
-                                    "Jerry is requesting to revoke a trusted device. Its future signed requests and key-envelope access will be blocked. Encrypted memory records will be preserved. Only continue if you initiated this action."
+                                    "Jerry is requesting to revoke trusted device registration " +
+                                        targetPath.removePrefix("/api/devices/").removeSuffix("/revoke") +
+                                        ". Its future signed requests and key-envelope access will be blocked. Encrypted memory records will be preserved. Only continue if you initiated this action."
                                 } else {
                                     "Jerry is requesting to " + method + " encrypted memory.\\n\\n" +
                                         "Target: " + targetPath + "\\n\\n" +
