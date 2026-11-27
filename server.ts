@@ -378,7 +378,7 @@ async function startServer() {
   // Permanent S3 credentials remain server-side; Android/web clients never receive them.
   const storageBucket = process.env.JERRY_STORAGE_BUCKET?.trim() || 'jerry-private-storage';
   const storageOwnerPrefix = (ownerUid: string): string =>
-    \`owners/\${createHash('sha256').update(ownerUid, 'utf8').digest('hex')}/uploads/\`;
+    `owners/${createHash('sha256').update(ownerUid, 'utf8').digest('hex')}/uploads/`;
   const allowedStorageContentTypes = new Set([
     'image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain',
   ]);
@@ -399,7 +399,7 @@ async function startServer() {
           res.status(415).json({ error: 'This file type is not supported.' });
           return;
         }
-        const objectKey = \`\${storageOwnerPrefix(req.user!.uid)}\${randomUUID()}\`;
+        const objectKey = `${storageOwnerPrefix(req.user!.uid)}${randomUUID()}`;
         const signed = createNeonStoragePresignedUrl({
           method: 'PUT',
           bucket: storageBucket,
