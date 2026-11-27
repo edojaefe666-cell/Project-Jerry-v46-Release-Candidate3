@@ -550,3 +550,29 @@ test('owner memory and workspace persistence writes are fenced by the shared eme
       `persistence mutation must hold the shared emergency-stop lease: ${routePath}`);
   }
 });
+
+test('workspace initialization and self-upgrade proposal creation cannot bypass the shared stop', () => {
+  const stateStart = server.indexOf("app.get('/api/state'");
+  const stateEnd = server.indexOf("app.put('/api/state'", stateStart);
+  const stateRoute = server.slice(stateStart, stateEnd);
+  assert.match(stateRoute, /withSharedExecutionLease\(async \(\) =>/);
+  assert.match(stateRoute, /const latest = await getWorkspaceForUser/);
+
+  const cloudStart = server.indexOf("app.get('/api/cloudsql/workspace'");
+  const cloudEnd = server.indexOf("app.put('/api/cloudsql/workspace'", cloudStart);
+  const cloudRoute = server.slice(cloudStart, cloudEnd);
+  assert.match(cloudRoute, /withSharedExecutionLease\(async \(\) =>/);
+  assert.match(cloudRoute, /const latest = await getWorkspaceForUser/);
+
+  const approvalStart = server.indexOf("app.post('/api/approvals'");
+  const approvalEnd = server.indexOf("app.get('/api/approvals'", approvalStart);
+  const approvalRoute = server.slice(approvalStart, approvalEnd);
+  assert.match(approvalRoute.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  assert.match(approvalRoute, /withSharedExecutionLease\(\(\) => runIdempotentWorkspaceCommand/);
+
+  const upgradeStart = server.indexOf("app.post('/api/jerry/self-upgrades'");
+  const upgradeEnd = server.indexOf("app.post('/api/jerry/self-upgrades/:id/verify'", upgradeStart);
+  const upgradeRoute = server.slice(upgradeStart, upgradeEnd);
+  assert.match(upgradeRoute.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  assert.match(upgradeRoute, /withSharedExecutionLease\(\(\) => runIdempotentWorkspaceCommand/);
+});
