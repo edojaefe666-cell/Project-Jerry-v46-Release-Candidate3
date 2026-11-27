@@ -354,7 +354,7 @@ class DeviceMemoryExchangeKeyStoreTest {
                     envelope.toString(), recoveryKey, ownerUid, "another_device_recovery_123", keyVersion + 1,
                 )
             }
-            val tampered = JSONObject(envelope.toString())
+            val tampered = org.json.JSONObject(envelope.toString())
             val ciphertext = tampered.getString("ciphertext")
             tampered.put("ciphertext", ciphertext.dropLast(1) + if (ciphertext.last() == 'A') "B" else "A")
             assertThrows(Exception::class.java) {
