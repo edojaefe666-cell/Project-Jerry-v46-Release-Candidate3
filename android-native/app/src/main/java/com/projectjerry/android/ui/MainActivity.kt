@@ -265,8 +265,19 @@ class MainActivity : AppCompatActivity() {
                     val trustedOrigin = sourceOrigin.scheme == "https" &&
                         sourceOrigin.host == "localhost" &&
                         (sourceOrigin.port == -1 || sourceOrigin.port == 443)
-                    if (!isMainFrame || !trustedOrigin || message.data != "signInWithGoogle") return
-                    runOnUiThread { beginNativeGoogleSignIn() }
+                    if (!isMainFrame || !trustedOrigin) return
+                    val data = message.data ?: return
+                    if (data.length > 16 * 1024) {
+                        replyProxy.postMessage(
+                            JSONObject().put("ok", false).put("error", "Native request is too large.").toString()
+                        )
+                        return
+                    }
+                    if (data == "signInWithGoogle") {
+                        runOnUiThread { beginNativeGoogleSignIn() }
+                    } else {
+                        handleNativeDeviceSigningMessage(data, replyProxy)
+                    }
                 }
             }
             )
