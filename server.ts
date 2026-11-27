@@ -1231,6 +1231,7 @@ async function startServer() {
 
   app.post('/api/wallet/commands/reconcile-tx', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
+      await withSharedExecutionLease(async () => {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
       const txId = String((req.body as { txId?: string }).txId ?? '').trim();
@@ -1323,7 +1324,13 @@ async function startServer() {
         return { ...commandResult, journal };
       });
       res.json({ ...result.response, journal: result.journal, replayed: result.replayed });
+      });
     } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (/emergency stop is engaged/i.test(message)) {
+        res.status(423).json({ error: 'Jerry emergency stop is engaged. Blockchain reconciliation was not started or persisted.' });
+        return;
+      }
       console.error('Internal server error:', error);
       res.status(500).json({ error: 'Internal server error.' });
     }
