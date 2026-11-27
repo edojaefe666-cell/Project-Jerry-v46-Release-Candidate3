@@ -153,11 +153,7 @@ jobs:
           disable-animations: true
           script: |
             adb wait-for-device
-            for attempt in $(seq 1 60); do
-              boot_completed="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
-              if [ "$boot_completed" = "1" ]; then break; fi
-              sleep 2
-            done
+            for attempt in $(seq 1 60); do boot_completed="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"; if [ "$boot_completed" = "1" ]; then break; fi; sleep 2; done
             test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "29"
             gradle --no-daemon -p android-native :app:connectedDebugAndroidTest
