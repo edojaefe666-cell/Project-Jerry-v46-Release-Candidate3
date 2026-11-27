@@ -220,3 +220,64 @@ test('rejects malformed provider price configuration rather than guessing prices
     'openai/gpt-test': { inputMicroUsdPerMillionTokens: 1_000_000, outputMicroUsdPerMillionTokens: 2_000_000 },
   });
 });
+
+
+test('reserves a USD cost ceiling independently for each failed and fallback provider attempt', async () => {
+  const previousLimit = process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD;
+  process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD = '1000000';
+  const reservations: number[] = [];
+  const settlements: number[] = [];
+  let request = 0;
+  try {
+    const result = await generateWithModelFallback({
+      task: 'chat',
+      prompt: 'verify cost fallback',
+      ownerUid: 'owner-cost-fallback',
+      configuration: {
+        google: { apiKey: 'google-test', model: 'gemini-cost-test' },
+        openai: { apiKey: 'openai-test', model: 'gpt-cost-fallback' },
+      },
+      pricing: {
+        'google/gemini-cost-test': {
+          inputMicroUsdPerMillionTokens: 1_000_000,
+          outputMicroUsdPerMillionTokens: 2_000_000,
+        },
+        'openai/gpt-cost-fallback': {
+          inputMicroUsdPerMillionTokens: 2_000_000,
+          outputMicroUsdPerMillionTokens: 4_000_000,
+        },
+      },
+      reserveTokens: async (input) => ({
+        ownerUid: input.ownerUid, day: '2026-11-27',
+        reservedTokens: input.reserveTokens, dailyLimitTokens: input.dailyLimitTokens,
+      }),
+      settleTokens: async () => {},
+      reserveOperation: async () => {},
+      reserveCost: async (input) => {
+        reservations.push(input.reserveMicroUsd);
+        return {
+          reservationId: `cost-reservation-${reservations.length}`,
+          ownerUid: input.ownerUid, day: '2026-11-27',
+          reservedMicroUsd: input.reserveMicroUsd, dailyLimitMicroUsd: input.dailyLimitMicroUsd,
+        };
+      },
+      settleCost: async (_reservation, actual) => { settlements.push(actual); },
+      withExecutionLease: async (work) => work(),
+      fetchImpl: async (url) => {
+        request += 1;
+        if (request === 1) return jsonResponse({ error: 'provider unavailable' }, 503);
+        return jsonResponse({
+          choices: [{ message: { content: 'fallback accounted' } }],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        });
+      },
+    });
+    assert.equal(result.provider, 'openai');
+    assert.equal(reservations.length, 2, 'the failed first attempt and successful fallback each reserve their own cost ceiling');
+    assert.equal(settlements.length, 1, 'only the successful response can reconcile actual cost');
+    assert.equal(settlements[0], 50);
+  } finally {
+    if (previousLimit === undefined) delete process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD;
+    else process.env.JERRY_DAILY_PROVIDER_COST_LIMIT_MICRO_USD = previousLimit;
+  }
+});
