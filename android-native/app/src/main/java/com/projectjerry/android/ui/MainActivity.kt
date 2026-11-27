@@ -139,6 +139,21 @@ class MainActivity : AppCompatActivity() {
                     )
                     true
                 }
+                "unwrapDeviceMemoryKeyEnvelope" -> {
+                    val envelope = message.optJSONObject("envelope")
+                        ?: throw IllegalArgumentException("Memory key envelope is required.")
+                    val ownerUid = message.optString("ownerUid")
+                    val deviceId = message.optString("deviceId")
+                    val keyVersion = message.optInt("keyVersion", -1)
+                    val installed = deviceMemoryExchangeKeyStore.unwrapAndStoreMemoryKey(
+                        envelope.toString(), ownerUid, deviceId, keyVersion
+                    )
+                    replyProxy.postMessage(
+                        JSONObject().put("ok", true).put("requestId", requestId)
+                            .put("installed", installed).toString()
+                    )
+                    true
+                }
                 "deleteDeviceMemoryExchangeKey" -> {
                     AlertDialog.Builder(this)
                         .setTitle("Delete this device's memory key?")
