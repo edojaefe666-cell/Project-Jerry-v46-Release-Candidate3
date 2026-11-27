@@ -465,9 +465,9 @@ class MainActivity : AppCompatActivity() {
                         (sourceOrigin.port == -1 || sourceOrigin.port == 443)
                     if (!isMainFrame || !trustedOrigin) return
                     val data = message.data ?: return
-                    if (data.length > 16 * 1024) {
+                    if (data.length > 96 * 1024) {
                         replyProxy.postMessage(
-                            JSONObject().put("ok", false).put("error", "Native request is too large.").toString()
+                            JSONObject().put("ok", false).put("error", "Native request exceeds the 96 KiB safety limit.").toString()
                         )
                         return
                     }
