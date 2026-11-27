@@ -280,7 +280,7 @@ export interface SharedSecuritySnapshot {
 
 export async function exportSharedSecuritySnapshot(ownerUid: string): Promise<SharedSecuritySnapshot> {
   await ensureSchema();
-  const [approvals, contacts, auditRows] = await Promise.all([
+  const [approvals, contacts, auditRows, legacyAudit] = await Promise.all([
     pool.query(`SELECT id,action,summary,amount_usd AS "amountUsd",scope_json AS "scopeJson",scope_hash AS "scopeHash",
       status,created_at AS "createdAt",decided_at AS "decidedAt",decided_by AS "decidedBy",
       consumed_at AS "consumedAt" FROM jerry_security_approvals WHERE owner_uid=$1 ORDER BY created_at`, [ownerUid]),
@@ -289,8 +289,10 @@ export async function exportSharedSecuritySnapshot(ownerUid: string): Promise<Sh
     pool.query(`SELECT seq,actor_uid AS "actorUid",event,details,created_at AS "createdAt",
       previous_hash AS "previousHash",entry_hash AS "entryHash"
       FROM jerry_security_audit WHERE owner_uid=$1 ORDER BY seq`, [ownerUid]),
+    pool.query('SELECT source_entry AS "sourceEntry" FROM jerry_security_legacy_audit_archive WHERE owner_uid=$1 ORDER BY id',[ownerUid]),
   ]);
-  return { version: 1, approvals: approvals.rows, contacts: contacts.rows, audit: auditRows.rows };
+  return { version: 1, approvals: approvals.rows, contacts: contacts.rows, audit: auditRows.rows,
+    legacyAuditArchive: legacyAudit.rows.map(row => row.sourceEntry) };
 }
 
 /**
@@ -322,7 +324,7 @@ export async function restoreSharedSecuritySnapshot(
         [String(contact.id),ownerUid,String(contact.name),String(contact.email),String(contact.purpose),
           contact.status === 'active' ? 'active' : 'revoked',contact.createdAt,contact.updatedAt]);
     }
-    for (const entry of snapshot.audit) {
+    for (const entry of [...(snapshot.legacyAuditArchive ?? []), ...snapshot.audit]) {
       await client.query('INSERT INTO jerry_security_legacy_audit_archive(owner_uid,source_entry) VALUES($1,$2::jsonb)',
         [ownerUid, JSON.stringify(entry)]);
     }
