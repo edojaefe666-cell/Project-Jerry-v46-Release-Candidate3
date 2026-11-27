@@ -7,6 +7,12 @@ Configure the server-side secret `JERRY_OWNER_UID` with the sole owner's Firebas
 
 With `NODE_ENV=production`, requests fail closed with HTTP 503 if the owner UID is absent. A valid Firebase identity with a different UID receives HTTP 403. Firebase token revocation checking remains enabled. Whenever an owner UID is configured, it is enforced in every environment.
 
+## Container health and readiness
+
+- `GET /healthz` is a public liveness probe. It only confirms that the HTTP process is responding; it does not claim PostgreSQL or owner authentication is ready.
+- `GET /readyz` is a public, non-diagnostic readiness probe. In production it requires `JERRY_OWNER_UID`, a reachable PostgreSQL database, the SQL migration registry, and a readable shared execution-control record. It returns only `{ "status": "ready" }` or a generic HTTP 503 `{ "status": "not_ready" }`; it never returns database errors, owner identifiers, or secret values.
+- Apply the numbered SQL migrations before routing user traffic to a new deployment. Configure the orchestrator to use `/healthz` for liveness and `/readyz` for readiness. Do not use the liveness endpoint as proof that Jerry is connected.
+
 ## Rollout
 1. Independently verify the owner's Firebase UID.
 2. Store it in the server secret manager as `JERRY_OWNER_UID`.
