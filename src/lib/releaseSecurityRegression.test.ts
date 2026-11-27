@@ -871,3 +871,15 @@ test('Bitcoin settlement verification and persistence share one owner-stop lease
   assert.ok(persistence > firstExternalRead, 'verified settlement persistence must remain inside the same lease');
   assert.equal((route.match(/withSharedExecutionLease\(/g) ?? []).length, 1, 'settlement must not nest execution leases');
 });
+
+
+test('provider executions are pinned to admission epoch and stale results are rejected after stop/resume', () => {
+  assert.match(server, /const registerSharedExecution = async/);
+  assert.match(server, /const control = await readSharedExecutionControl\(\)/);
+  assert.match(server, /return \{ \.\.\.execution, epoch: control\.epoch \}/);
+  assert.match(server, /withSharedExecutionLease\(async \(lease\) =>/);
+  assert.match(server, /lease\.epoch !== execution\.epoch/);
+  const registrations = server.match(/await registerSharedExecution\(\)/g) ?? [];
+  assert.ok(registrations.length >= 10,
+    'Provider and long-running routes must capture the shared control epoch when admitted.');
+});
