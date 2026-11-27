@@ -35,7 +35,7 @@ import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { requestDeviceRegistrationForUser, listDeviceRegistrationsForUser, isActiveDeviceForUser } from './src/db/deviceRegistrationStore.ts';
-import { users, encryptedMemoryRecords, deviceRegistrations, deviceMemoryKeyEnvelopes, deviceHttpRequestChallenges, deviceApprovalChallenges } from './src/db/schema.ts';
+import { users, encryptedMemoryRecords, deviceRegistrations, deviceMemoryKeyEnvelopes } from './src/db/schema.ts';
 import {
   createDeviceHttpRequestChallengeForUser,
   getDeviceHttpRequestChallengeForUser,
@@ -62,7 +62,7 @@ import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts
 import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
 import { applyLearningEnhancement, createOwnerLearningEntry } from './src/lib/learningMemory.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
-import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   getWorkspaceForUser,
   saveDailySummaryForUser,
@@ -725,23 +725,9 @@ async function startServer() {
           eq(deviceMemoryKeyEnvelopes.deviceRegistrationId, target.id),
           eq(deviceMemoryKeyEnvelopes.status, 'active'),
         )).returning({ id: deviceMemoryKeyEnvelopes.id });
-      await tx.update(deviceHttpRequestChallenges)
-        .set({ consumedAt: revokedAt })
-        .where(and(
-          eq(deviceHttpRequestChallenges.userId, ownerId),
-          eq(deviceHttpRequestChallenges.deviceRegistrationId, target.id),
-          isNull(deviceHttpRequestChallenges.consumedAt),
-        ));
-      await tx.update(deviceApprovalChallenges)
-        .set({ consumedAt: revokedAt })
-        .where(and(
-          eq(deviceApprovalChallenges.userId, ownerId),
-          isNull(deviceApprovalChallenges.consumedAt),
-          or(
-            eq(deviceApprovalChallenges.approverRegistrationId, target.id),
-            eq(deviceApprovalChallenges.targetRegistrationId, target.id),
-          ),
-        ));
+      // Outstanding challenges become unusable immediately because every
+      // challenge lookup and consumption joins the registry and requires
+      // status='active'. Keep the rows as revocation evidence until expiry.
       return {
         revoked: true,
         deviceName: revoked.deviceName,
