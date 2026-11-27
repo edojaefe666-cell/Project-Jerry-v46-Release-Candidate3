@@ -356,6 +356,14 @@ test('financial workspace mutations hold the shared stop lease through durable s
   const leaseClose = transferRoute.indexOf('return { ...commandResult, finalizedApproval };', leaseStart);
   assert.ok(leaseStart >= 0 && finalize > leaseStart && leaseClose > finalize,
     'transfer reservation finalization must remain inside the shared execution lease');
+  assert.match(transferRoute, /runIdempotentWorkspaceCommand/,
+    'transfer staging must persist a replay receipt in the same PostgreSQL transaction as the workspace mutation');
+  assert.match(transferRoute, /securityStore\.reserveApproval\(approvalId, 'bitcoin_transfer'/,
+    'transfer staging must reserve the exact scoped owner approval');
+  assert.match(transferRoute, /status: 'pending_approval'/,
+    'approval only stages a pending transfer and must not settle it');
+  assert.doesNotMatch(transferRoute, /broadcast|sendRawTransaction|sendTransaction/i,
+    'approval and staging must never broadcast an external Bitcoin transfer');
 
   const reconcileStart = server.indexOf("app.post('/api/wallet/commands/reconcile-tx'");
   const reconcileEnd = server.indexOf("app.post('/api/jerry/chat'", reconcileStart);
