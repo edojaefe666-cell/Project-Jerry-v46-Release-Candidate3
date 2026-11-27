@@ -1,6 +1,7 @@
 import { resolveModelRoute, type ModelProvider, type ModelTask, type ProviderConfiguration } from './modelRouter';
 import { reserveProviderTokens, settleProviderTokens, type ProviderUsageReservation } from '../db/providerUsageStore.ts';
 import { reserveConfiguredProviderOperation } from '../db/providerOperationStore.ts';
+import { withSharedExecutionLease } from '../db/executionControl.ts';
 
 export interface ModelGenerationResult {
   text: string;
@@ -21,6 +22,7 @@ export interface ModelGenerationOptions {
   reserveOperation?: (ownerUid: string) => Promise<void>;
   reserveTokens?: typeof reserveProviderTokens;
   settleTokens?: typeof settleProviderTokens;
+  withExecutionLease?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
 function safeLocalEndpoint(baseUrl: string): URL {
@@ -155,34 +157,43 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
   for (const route of routes) {
     if (options.signal?.aborted) throw new Error('Jerry Brain request cancelled by emergency stop or client disconnect.');
     try {
-      let reservation: ProviderUsageReservation | undefined;
-      if (options.ownerUid) {
-        const dailyLimitTokens = Number(process.env.JERRY_DAILY_PROVIDER_TOKEN_LIMIT);
-        if (!Number.isSafeInteger(dailyLimitTokens) || dailyLimitTokens < 1) {
-          throw new Error('JERRY_DAILY_PROVIDER_TOKEN_LIMIT must be configured as a positive integer before Jerry can call external model providers.');
+      const executeAttempt = async (): Promise<ModelGenerationResult> => {
+        let reservation: ProviderUsageReservation | undefined;
+        if (options.ownerUid) {
+          const dailyLimitTokens = Number(process.env.JERRY_DAILY_PROVIDER_TOKEN_LIMIT);
+          if (!Number.isSafeInteger(dailyLimitTokens) || dailyLimitTokens < 1) {
+            throw new Error('JERRY_DAILY_PROVIDER_TOKEN_LIMIT must be configured as a positive integer before Jerry can call external model providers.');
+          }
+          const maxOutputTokens = 2048;
+          // UTF-8 byte count is a conservative tokenizer-independent input upper bound;
+          // include framing overhead before reserving the hard per-attempt ceiling.
+          const inputEstimate = Buffer.byteLength(prompt + (options.systemInstruction ?? ''), 'utf8') + 512;
+          reservation = await (options.reserveTokens ?? reserveProviderTokens)({
+            ownerUid: options.ownerUid,
+            reserveTokens: inputEstimate + maxOutputTokens,
+            dailyLimitTokens,
+          });
+        } else if (process.env.NODE_ENV === 'production') {
+          throw new Error('Authenticated owner identity is required for provider usage budgeting.');
         }
-        const maxOutputTokens = 2048;
-        // UTF-8 byte count is a conservative tokenizer-independent input upper bound;
-        // include framing overhead before reserving the hard per-attempt ceiling.
-        const inputEstimate = Buffer.byteLength(prompt + (options.systemInstruction ?? ''), 'utf8') + 512;
-        reservation = await (options.reserveTokens ?? reserveProviderTokens)({
-          ownerUid: options.ownerUid,
-          reserveTokens: inputEstimate + maxOutputTokens,
-          dailyLimitTokens,
-        });
-      } else if (process.env.NODE_ENV === 'production') {
-        throw new Error('Authenticated owner identity is required for provider usage budgeting.');
-      }
-      // Count every actual provider attempt, including each fallback, against
-      // the same owner-scoped daily operation ceiling before network execution.
-      if (options.ownerUid) {
-        await (options.reserveOperation ?? reserveConfiguredProviderOperation)(options.ownerUid);
-      }
-      const generated = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl, options.signal);
-      if (reservation && generated.usageTokens !== undefined) {
-        try { await (options.settleTokens ?? settleProviderTokens)(reservation, generated.usageTokens); } catch { /* reservation remains charged */ }
-      }
-      return { text: generated.text, provider: route.provider, model: route.model };
+        // Count every actual provider attempt, including each fallback, against
+        // the same owner-scoped daily operation ceiling before network execution.
+        if (options.ownerUid) {
+          await (options.reserveOperation ?? reserveConfiguredProviderOperation)(options.ownerUid);
+        }
+        const generated = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl, options.signal);
+        if (reservation && generated.usageTokens !== undefined) {
+          try { await (options.settleTokens ?? settleProviderTokens)(reservation, generated.usageTokens); } catch { /* reservation remains charged */ }
+        }
+        return { text: generated.text, provider: route.provider, model: route.model };
+      };
+      // Hold the durable shared stop lease from quota reservation through the
+      // provider response. Owner stop can abort local work, and cannot commit a
+      // cross-instance stop epoch in the middle of an admitted external call.
+      const generated = options.ownerUid
+        ? await (options.withExecutionLease ?? (work => withSharedExecutionLease(() => work())))(executeAttempt)
+        : await executeAttempt();
+      return generated;
     } catch (error) {
       if (options.signal?.aborted) throw new Error('Jerry Brain request cancelled by emergency stop or client disconnect.');
       failures.push(`${route.provider}: ${error instanceof Error ? error.message : 'request failed'}`);
