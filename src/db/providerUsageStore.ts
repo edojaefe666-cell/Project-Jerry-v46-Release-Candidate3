@@ -90,22 +90,31 @@ export async function settleProviderTokens(
   if (!Number.isSafeInteger(actualTokens) || actualTokens < 0 || actualTokens > reservation.reservedTokens) return;
   await ensureSchema(queryable);
   const result = await queryable.query(
-    `WITH claimed AS (
-       UPDATE jerry_provider_token_reservations
-       SET status='settled',settled_at=now()
+    `WITH candidate AS MATERIALIZED (
+       SELECT reservation_id,owner_uid,usage_day,daily_limit_tokens,reserved_tokens
+       FROM jerry_provider_token_reservations
        WHERE reservation_id=$1 AND owner_uid=$2 AND usage_day=$3::date
          AND daily_limit_tokens=$4 AND reserved_tokens=$5 AND status='reserved'
-       RETURNING owner_uid,usage_day,daily_limit_tokens,reserved_tokens
+       FOR UPDATE
+     ), budget AS (
+       UPDATE jerry_provider_daily_usage AS daily
+       SET reserved_tokens=daily.reserved_tokens-candidate.reserved_tokens,
+           actual_tokens=daily.actual_tokens+$6,
+           updated_at=now()
+       FROM candidate
+       WHERE daily.owner_uid=candidate.owner_uid AND daily.usage_day=candidate.usage_day
+         AND daily.daily_limit_tokens=candidate.daily_limit_tokens
+         AND daily.reserved_tokens >= candidate.reserved_tokens
+       RETURNING candidate.reservation_id
+     ), claimed AS (
+       UPDATE jerry_provider_token_reservations AS reservation
+       SET status='settled',settled_at=now()
+       FROM budget
+       WHERE reservation.reservation_id=budget.reservation_id
+         AND reservation.status='reserved'
+       RETURNING reservation.reservation_id
      )
-     UPDATE jerry_provider_daily_usage AS daily
-     SET reserved_tokens=daily.reserved_tokens-claimed.reserved_tokens,
-         actual_tokens=daily.actual_tokens+$6,
-         updated_at=now()
-     FROM claimed
-     WHERE daily.owner_uid=claimed.owner_uid AND daily.usage_day=claimed.usage_day
-       AND daily.daily_limit_tokens=claimed.daily_limit_tokens
-       AND daily.reserved_tokens >= claimed.reserved_tokens
-     RETURNING daily.owner_uid`,
+     SELECT reservation_id FROM claimed`,
     [reservation.reservationId,reservation.ownerUid,reservation.day,reservation.dailyLimitTokens,reservation.reservedTokens,actualTokens],
   );
   if (result.rowCount !== 1) throw new Error('Provider token settlement was already applied or its reservation could not be verified; budget remains fail-closed.');
