@@ -32,6 +32,7 @@ import { generateWithModelFallback, providerConfigurationFromEnvironment } from 
 import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
+import { reserveConfiguredProviderOperation } from './src/db/providerOperationStore.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
 import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
@@ -1728,7 +1729,7 @@ async function startServer() {
     res.once('close',cancelOnDisconnect);
     try{
       if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry execution is stopped.'});return;}
-      const result=await analyzeImageWithModelFallback({prompt:`${effectivePrompt}\\nReturn valid JSON with "analysis" (concise paragraph) and "extractedActions" (array of concrete next steps).`,mimeType,base64Data,configuration:providerConfigurationFromEnvironment(process.env),signal:execution.signal});
+      const result=await analyzeImageWithModelFallback({prompt:`${effectivePrompt}\\nReturn valid JSON with "analysis" (concise paragraph) and "extractedActions" (array of concrete next steps).`,mimeType,base64Data,configuration:providerConfigurationFromEnvironment(process.env),ownerUid:req.user!.uid,signal:execution.signal});
       if(execution.signal.aborted||await sharedStopBlocksAcceptance()){if(!res.headersSent)res.status(423).json({error:'Jerry Vision request cancelled before response delivery.'});return;}
       let parsed:{analysis?:string;extractedActions?:string[]};try{parsed=JSON.parse(result.text) as {analysis?:string;extractedActions?:string[]};}catch{res.status(502).json({error:'Vision provider returned an invalid structured response. The image analysis was not accepted.'});return;}
       if(typeof parsed.analysis!=='string'||!parsed.analysis.trim()||(parsed.extractedActions!==undefined&&(!Array.isArray(parsed.extractedActions)||parsed.extractedActions.some(item=>typeof item!=='string')))){res.status(502).json({error:'Vision provider response failed validation. The image analysis was not accepted.'});return;}
@@ -1747,7 +1748,7 @@ async function startServer() {
     res.once('close',cancelOnDisconnect);
     try{
       if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry execution is stopped.'});return;}
-      const result=await synthesizeSpeechWithModelFallback({text,voice:voiceName,style:voiceStyle,configuration,googleModel:process.env.JERRY_GOOGLE_TTS_MODEL,openaiModel:process.env.JERRY_OPENAI_TTS_MODEL,signal:execution.signal});
+      const result=await synthesizeSpeechWithModelFallback({text,voice:voiceName,style:voiceStyle,configuration,googleModel:process.env.JERRY_GOOGLE_TTS_MODEL,openaiModel:process.env.JERRY_OPENAI_TTS_MODEL,ownerUid:req.user!.uid,signal:execution.signal});
       await deliverWithSharedExecutionLease(execution, res, () => res.json({audioBase64:result.audioBase64,mimeType:result.mimeType,voiceName,voiceStyle,provider:result.provider,modelUsed:result.model}));
     }catch(error){if(execution.signal.aborted){if(!res.headersSent&&!res.destroyed)res.status(423).json({error:'Jerry speech request cancelled.'});return;}const message=error instanceof Error?error.message:'Speech synthesis failed.';if(!res.headersSent&&!res.destroyed)res.status(503).json({error:`Jerry speech synthesis unavailable: ${message.slice(0,240)}`});}
     finally{res.removeListener('close',cancelOnDisconnect);execution.release();}
@@ -1762,7 +1763,7 @@ async function startServer() {
     res.once('close',cancelOnDisconnect);
     try{
       if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry execution is stopped.'});return;}
-      const result=await transcribeAudioWithModelFallback({audioBase64,mimeType,configuration,googleModel:process.env.JERRY_GOOGLE_TRANSCRIPTION_MODEL,openaiModel:process.env.JERRY_OPENAI_TRANSCRIPTION_MODEL,signal:execution.signal});
+      const result=await transcribeAudioWithModelFallback({audioBase64,mimeType,configuration,googleModel:process.env.JERRY_GOOGLE_TRANSCRIPTION_MODEL,openaiModel:process.env.JERRY_OPENAI_TRANSCRIPTION_MODEL,ownerUid:req.user!.uid,signal:execution.signal});
       await deliverWithSharedExecutionLease(execution, res, () => res.json({transcript:result.transcript,provider:result.provider,modelUsed:result.model,evidenceStatus:'machine_transcription_not_human_verified'}));
     }catch(error){if(execution.signal.aborted){if(!res.headersSent&&!res.destroyed)res.status(423).json({error:'Jerry transcription cancelled.'});return;}const message=error instanceof Error?error.message:'Transcription failed.';if(!res.headersSent&&!res.destroyed)res.status(502).json({error:`Jerry transcription failed: ${message.slice(0,240)}`});}
     finally{res.removeListener('close',cancelOnDisconnect);execution.release();}
@@ -2289,6 +2290,7 @@ async function startServer() {
         });
         return;
       }
+      await reserveConfiguredProviderOperation(req.user!.uid);
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
         contents:
@@ -2487,6 +2489,7 @@ async function startServer() {
         res.status(423).json({ error: 'Jerry emergency stop interrupted human insight generation.', status: 'cancelled' });
         return;
       }
+      await reserveConfiguredProviderOperation(req.user!.uid);
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
         contents:
@@ -2640,6 +2643,7 @@ async function startServer() {
         res.status(423).json({ error: 'Jerry emergency stop interrupted internet growth generation.', status: 'cancelled' });
         return;
       }
+      await reserveConfiguredProviderOperation(req.user!.uid);
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
         contents:
