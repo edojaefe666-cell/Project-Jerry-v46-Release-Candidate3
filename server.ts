@@ -35,7 +35,6 @@ import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { requestDeviceRegistrationForUser, listDeviceRegistrationsForUser, isActiveDeviceForUser } from './src/db/deviceRegistrationStore.ts';
-import { createEncryptedMemoryRecordForUser, listEncryptedMemoryRecordsForUser, updateEncryptedMemoryRecordForUser } from './src/db/encryptedMemoryStore.ts';
 import {
   createDeviceApprovalChallengeForUser,
   getDeviceApprovalChallengeForUser,
@@ -1048,75 +1047,6 @@ async function startServer() {
       res.status(200).json({ entry, persisted: true });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'Memory persistence failed.' });
-    }
-  });
-
-  // Ciphertext-only memory sync. The server stores opaque envelopes and
-  // permits access only from an already owner-approved device.
-  app.get('/api/memory/encrypted', requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const uid = req.user!.uid;
-      const email = req.user!.email ?? 'owner@jerry.workspace';
-      const deviceId = req.get('x-jerry-device-id') ?? '';
-      if (!await isActiveDeviceForUser(uid, email, deviceId)) {
-        res.status(403).json({ error: 'An owner-approved Jerry device is required for encrypted memory sync.' });
-        return;
-      }
-      const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 100;
-      const records = await listEncryptedMemoryRecordsForUser(uid, email, limit);
-      res.setHeader('Cache-Control', 'no-store');
-      res.json({ schemaVersion: 1, records, count: records.length });
-    } catch {
-      res.status(503).json({ error: 'Encrypted memory sync is unavailable.' });
-    }
-  });
-
-  app.post('/api/memory/encrypted', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
-    try {
-      const uid = req.user!.uid;
-      const email = req.user!.email ?? 'owner@jerry.workspace';
-      const deviceId = req.get('x-jerry-device-id') ?? '';
-      if (!await isActiveDeviceForUser(uid, email, deviceId)) {
-        res.status(403).json({ error: 'An owner-approved Jerry device is required for encrypted memory writes.' });
-        return;
-      }
-      const record = await withSharedExecutionLease(() =>
-        createEncryptedMemoryRecordForUser(uid, email, req.body?.record));
-      res.setHeader('Cache-Control', 'no-store');
-      res.status(201).json({ record, persisted: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      const status = /revision|envelope|record is required|record must/i.test(message) ? 400 : 409;
-      res.status(status).json({ error: status === 400 ? message : 'Encrypted memory record could not be created.' });
-    }
-  });
-
-  app.put('/api/memory/encrypted/:recordId', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
-    try {
-      const uid = req.user!.uid;
-      const email = req.user!.email ?? 'owner@jerry.workspace';
-      const deviceId = req.get('x-jerry-device-id') ?? '';
-      if (!await isActiveDeviceForUser(uid, email, deviceId)) {
-        res.status(403).json({ error: 'An owner-approved Jerry device is required for encrypted memory writes.' });
-        return;
-      }
-      const record = req.body?.record;
-      if (!record || record.recordId !== req.params.recordId) {
-        res.status(400).json({ error: 'Encrypted memory record identifier does not match the route.' });
-        return;
-      }
-      const expectedRevision = req.body?.expectedRevision;
-      const updated = await withSharedExecutionLease(() =>
-        updateEncryptedMemoryRecordForUser(uid, email, record, expectedRevision));
-      if (!updated) {
-        res.status(409).json({ error: 'Encrypted memory record changed or is not available to this owner. Refresh before retrying.' });
-        return;
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      res.json({ record: updated, persisted: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      res.status(400).json({ error: /revision|envelope|record/i.test(message) ? message : 'Encrypted memory update failed.' });
     }
   });
 
