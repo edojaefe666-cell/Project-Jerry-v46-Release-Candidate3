@@ -34,7 +34,7 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 function base64Url(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
+    return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '');
 }
 function fromBase64Url(value: string): Uint8Array {
   if (!/^[A-Za-z0-9_-]{86}$/.test(value)) throw new Error('Device request proof encoding is invalid.');
