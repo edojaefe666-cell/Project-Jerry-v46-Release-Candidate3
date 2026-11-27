@@ -131,3 +131,15 @@ export async function acquireSharedExecutionLease(
     throw error;
   }
 }
+
+export async function withSharedExecutionLease<T>(
+  work: (lease: SharedExecutionLease) => Promise<T>,
+  connect: () => Promise<PoolClient> = () => pool.connect(),
+): Promise<T> {
+  const lease = await acquireSharedExecutionLease(connect);
+  try {
+    return await work(lease);
+  } finally {
+    await lease.release();
+  }
+}
