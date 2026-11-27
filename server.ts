@@ -345,10 +345,8 @@ async function startServer() {
 
   app.get('/api/security/emergency-stop', requireAuth, async (_req: AuthRequest, res) => {
     try {
-      const [localControl, sharedControl] = await Promise.all([
-        Promise.resolve(securityStore.getEmergencyStop()),
-        readSharedExecutionControl(),
-      ]);
+      const sharedControl = await readSharedExecutionControl();
+      const localControl = synchronizeLocalEmergencyControl(sharedControl, securityStore);
       res.json({
         ...localControl,
         sharedControl,
