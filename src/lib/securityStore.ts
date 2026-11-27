@@ -208,9 +208,13 @@ export class SecurityStore {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const result = this.db.prepare(
-        'UPDATE emergency_control SET stopped=?, reason=?, updated_at=?, owner_uid=?, shared_epoch=CASE WHEN ? IS NULL THEN shared_epoch ELSE MAX(shared_epoch, ?) END WHERE id=1'
-      ).run(stopped ? 1 : 0, cleanReason, updatedAt, ownerUid, sharedEpoch ?? null, sharedEpoch ?? null);
-      if (Number(result.changes ?? 0) !== 1) throw new Error('Emergency-stop control row is missing; local state was not changed.');
+        'UPDATE emergency_control SET stopped=?, reason=?, updated_at=?, owner_uid=?, shared_epoch=CASE WHEN ? IS NULL THEN shared_epoch ELSE ? END WHERE id=1 AND (? IS NULL OR shared_epoch <= ?)'
+      ).run(stopped ? 1 : 0, cleanReason, updatedAt, ownerUid, sharedEpoch ?? null, sharedEpoch ?? null, sharedEpoch ?? null, sharedEpoch ?? null);
+      if (Number(result.changes ?? 0) !== 1) {
+        throw new Error(sharedEpoch === undefined
+          ? 'Emergency-stop control row is missing; local state was not changed.'
+          : 'Stale emergency-stop update rejected because a newer shared epoch is already stored.');
+      }
       this.audit(ownerUid, stopped ? 'emergency_stop.engaged' : 'emergency_stop.released', { reason: cleanReason, updatedAt, sharedEpoch });
       this.db.exec('COMMIT');
     } catch (error) {
