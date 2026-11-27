@@ -2020,11 +2020,11 @@ async function startServer() {
         createdAt: new Date().toISOString(),
       };
 
-      res.json({
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({
         proposal,
         modelUsed: generated.model,
         evidenceStatus: 'model_generated_unverified_proposal',
-      });
+      }));
     } catch (error) {
       if (execution.signal.aborted || isEmergencyStopActive()) {
         if (!res.headersSent && !res.writableEnded && !res.destroyed) {
@@ -2314,12 +2314,12 @@ async function startServer() {
         });
         return;
       }
-      res.json({
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({
         discoveries,
         modelUsed: 'gemini-4-hydrogen + Google Search',
         financialValuesAre: 'unverified_hypothetical_scenarios',
         executionStatus: 'ideas_only_no_external_actions',
-      });
+      }));
     } catch (error) {
       if (execution.signal.aborted || isEmergencyStopActive()) {
         if (!res.headersSent && !res.writableEnded) {
@@ -2480,7 +2480,7 @@ async function startServer() {
           parsed.practicalApplication?.trim() || buildOfflineInsight().practicalApplication,
         clarityScoreGain: Math.min(5, Math.max(2, Number(parsed.clarityScoreGain ?? 3))),
       };
-      res.json({ insight, modelUsed: 'gemini-4-hydrogen' });
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({ insight, modelUsed: 'gemini-4-hydrogen' }));
     } catch {
       if (execution.signal.aborted || isEmergencyStopActive()) {
         if (!res.headersSent && !res.writableEnded) {
@@ -2494,10 +2494,10 @@ async function startServer() {
         }
         return;
       }
-      res.json({
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({
         insight: buildOfflineInsight(),
         modelUsed: 'Jerry Empathy & Learning Engine (Local fallback)',
-      });
+      }));
     } finally {
       res.off('close', cancelOnDisconnect);
       execution.release();
@@ -2632,7 +2632,7 @@ async function startServer() {
         expectedImpact: parsed.expectedImpact?.trim() || buildOfflinePlaybook().expectedImpact,
         authorityGainPts: Math.min(5, Math.max(3, Number(parsed.authorityGainPts ?? 4))),
       };
-      res.json({ playbook, modelUsed: 'gemini-4-hydrogen' });
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({ playbook, modelUsed: 'gemini-4-hydrogen' }));
     } catch {
       if (execution.signal.aborted || isEmergencyStopActive()) {
         if (!res.headersSent && !res.writableEnded) {
@@ -2646,10 +2646,10 @@ async function startServer() {
         }
         return;
       }
-      res.json({
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({
         playbook: buildOfflinePlaybook(),
         modelUsed: 'Jerry Internet Mastery Engine (Local fallback)',
-      });
+      }));
     } finally {
       res.off('close', cancelOnDisconnect);
       execution.release();
