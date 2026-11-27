@@ -57,5 +57,6 @@ test('shared PostgreSQL approval reservation is single-winner across independent
     }
     await pool.query(
       "UPDATE jerry_execution_control SET stopped=$1,epoch=epoch+1,reason='approval test fixture cleanup',updated_by='test-fixture',updated_at=now() WHERE id=1", [originalStopped]);
+    await pool.end();
   }
 });
