@@ -627,6 +627,37 @@ async function startServer() {
     lastWalletSyncAt: authoritative.lastWalletSyncAt,
   });
 
+  // Owner-only, read-only provider accounting ledger. This remains available
+  // during emergency stop because it cannot initiate external execution.
+  app.get('/api/provider-usage', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const rawLimit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 30;
+      if (!Number.isSafeInteger(rawLimit) || rawLimit < 1 || rawLimit > 100) {
+        res.status(400).json({ error: 'Provider usage ledger page size must be between 1 and 100.' });
+        return;
+      }
+      const uid = req.user!.uid;
+      const [tokens, costs] = await Promise.all([
+        getProviderUsageLedgerSnapshot(uid, rawLimit),
+        getProviderCostLedgerSnapshot(uid, rawLimit),
+      ]);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        accountingUnit: { token: 'provider-reported tokens', cost: 'micro-USD (1 USD = 1,000,000 micro-USD)' },
+        reservationStatus: {
+          reserved: 'Unsettled reservation. It may represent in-flight or ambiguous provider work; it is not a confirmed refund.',
+          settled: 'Provider usage or cost was reconciled from a successful response.',
+        },
+        tokens,
+        costs,
+      });
+    } catch {
+      res.status(503).json({ error: 'Provider usage ledger is unavailable. Accounting data was not inferred.' });
+    }
+  });
+
   // Owner-only paginated JSON export. Stable (createdAt, id) cursors avoid
   // offset skips when new memories are added while an export is in progress.
   app.get('/api/memory/export', requireAuth, async (req: AuthRequest, res) => {
