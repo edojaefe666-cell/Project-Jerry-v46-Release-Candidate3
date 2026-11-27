@@ -156,8 +156,10 @@ jobs:
             for attempt in $(seq 1 60); do boot_completed="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"; if [ "$boot_completed" = "1" ]; then break; fi; sleep 2; done
             test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "29"
-            gradle --no-daemon -p android-native :app:connectedDebugAndroidTest
+            gradle --no-daemon -p android-native :app:assembleDebugAndroidTest
             adb install -r android-native/app/build/outputs/apk/debug/app-debug.apk
+            adb install -r android-native/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell am instrument -w com.projectjerry.android.test/androidx.test.runner.AndroidJUnitRunner
             adb shell am start -W -n com.projectjerry.android/.ui.MainActivity
             sleep 5
             adb shell pidof com.projectjerry.android
