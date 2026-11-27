@@ -20,6 +20,7 @@ const androidManifest = fs.readFileSync(path.join(root, 'android-native/app/src/
 const androidPermissionManager = fs.readFileSync(path.join(root, 'android-native/app/src/main/java/com/projectjerry/android/permissions/JerryPermissionManager.kt'), 'utf8');
 const androidMainActivity = fs.readFileSync(path.join(root, 'android-native/app/src/main/java/com/projectjerry/android/ui/MainActivity.kt'), 'utf8');
 const authContext = fs.readFileSync(path.join(root, 'src/lib/AuthContext.tsx'), 'utf8');
+const appComponent = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
 const androidAuthClient = fs.readFileSync(path.join(root, 'android-native/app/src/main/res/values/strings.xml'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
@@ -74,6 +75,11 @@ test('container liveness and readiness probes are public, bounded, and non-discl
   assert.match(readiness[0], /readSharedExecutionControl/);
   assert.match(readiness[0], /status\(503\)\.json\(\{ status: 'not_ready' \}\)/);
   assert.doesNotMatch(readiness[0], /error\.message|SQL_HOST|JERRY_OWNER_UID.*json/);
+});
+
+test('Jerry UI displays authentication errors instead of silently hiding sign-in failures', () => {
+  assert.match(appComponent, /authError/);
+  assert.match(appComponent, /role="alert"/);
 });
 
 test('Android app uses native Google identity and exchanges the ID token with Firebase Auth', () => {
