@@ -656,25 +656,28 @@ async function startServer() {
     }
     let resetCommitted = false;
     try {
-      const current = await getWorkspaceForUser(uid, email);
-      let resetState: JerryState;
-      if (!current) {
-        await saveWorkspaceForUser(uid, email, INITIAL_JERRY_STATE);
-        resetState = INITIAL_JERRY_STATE;
-      } else {
-        // Preserve server-owned financial/security records and the durable ledger.
-        resetState = await updateWorkspaceForUserAtomic(uid, email, (latest) =>
-          mergeClientWorkspaceState(latest, INITIAL_JERRY_STATE)
-        );
-      }
-      resetCommitted = true;
-      const consumed = securityStore.finalizeApprovalReservation(approvalId, uid, reservationId);
-      if (!consumed) {
+      const resetResult = await withSharedExecutionLease(async () => {
+        const current = await getWorkspaceForUser(uid, email);
+        let resetState: JerryState;
+        if (!current) {
+          await saveWorkspaceForUser(uid, email, INITIAL_JERRY_STATE);
+          resetState = INITIAL_JERRY_STATE;
+        } else {
+          // Preserve server-owned financial/security records and the durable ledger.
+          resetState = await updateWorkspaceForUserAtomic(uid, email, (latest) =>
+            mergeClientWorkspaceState(latest, INITIAL_JERRY_STATE)
+          );
+        }
+        resetCommitted = true;
+        const consumed = securityStore.finalizeApprovalReservation(approvalId, uid, reservationId);
+        return { resetState, consumed };
+      });
+      if (!resetResult.consumed) {
         // The workspace reset is durable; never pretend the approval was consumed.
         res.status(503).json({ error: 'Workspace reset completed, but authorization finalization is pending. Contact the owner administrator before retrying.' });
         return;
       }
-      res.json(resetState);
+      res.json(resetResult.resetState);
     } catch (error) {
       if (!resetCommitted) securityStore.releaseApprovalReservation(approvalId, uid, reservationId);
       console.error('Internal server error:', error);
