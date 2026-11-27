@@ -172,7 +172,7 @@ async function startServer() {
   // The shared row lock remains held until the response is handed to Express,
   // so an owner stop cannot commit between the final check and result delivery.
   const deliverWithSharedExecutionLease = async (
-    execution: { signal: AbortSignal },
+    execution: { signal: AbortSignal; epoch: number },
     res: express.Response,
     deliver: () => void,
   ): Promise<boolean> => {
