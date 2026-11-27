@@ -652,3 +652,15 @@ test('read-only Bitcoin transaction verification is also fenced from new externa
   assert.ok(lease >= 0 && chainRead > lease, 'shared lease must be acquired before external Blockstream reads');
   assert.match(route, /res\.status\(423\)/);
 });
+
+test('Jerry teaching refuses memory persistence when emergency stop interrupts learning', () => {
+  const start = server.indexOf("app.post('/api/jerry/teach'");
+  const end = server.indexOf('// Jerry Polyglot Self-Programming Engine', start);
+  const route = server.slice(start, end);
+  const lease = route.indexOf('withSharedExecutionLease(() => saveMemoryEntryForUser');
+  const prePersistStopCheck = route.indexOf('execution.signal.aborted || isEmergencyStopActive()', route.indexOf('try {', route.indexOf('if (execution.signal.aborted || isEmergencyStopActive())'));
+  assert.ok(lease >= 0 && prePersistStopCheck >= 0 && prePersistStopCheck < lease,
+    'teaching must recheck stop immediately before acquiring persistence lease');
+  assert.match(route, /res\.status\(423\)/);
+  assert.match(route, /persisted: false/);
+});
