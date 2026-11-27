@@ -44,6 +44,7 @@ jobs:
         env:
           NODE_ENV: test
           JERRY_JOURNAL_TEST_DATABASE: "1"
+          JERRY_PROVIDER_LEDGER_TEST_DATABASE: "1"
           SQL_HOST: 127.0.0.1
           SQL_USER: jerry_test
           SQL_PASSWORD: jerry_test
