@@ -397,8 +397,8 @@ export class SecurityStore {
   }
 
   getApproval(id: string, ownerUid: string): ApprovalRequest | null {
-    const row = this.db.prepare('SELECT id,action,summary,amount_usd AS amountUsd,scope_json AS scopeJson,scope_hash AS scopeHash,status,created_at AS createdAt,decided_at AS decidedAt,decided_by AS decidedBy,consumed_at AS consumedAt,owner_uid AS ownerUid FROM approvals WHERE id=? AND owner_uid=?')
-      .get(id, ownerUid) as { id: string; action: HighImpactAction; summary: string; amountUsd?: number; scopeJson?: string; scopeHash?: string; status: 'pending' | 'approved' | 'rejected'; createdAt: string; decidedAt?: string; decidedBy?: string; consumedAt?: string; ownerUid?: string } | undefined;
+    const row = this.db.prepare('SELECT id,action,summary,amount_usd AS amountUsd,scope_json AS scopeJson,scope_hash AS scopeHash,status,created_at AS createdAt,decided_at AS decidedAt,decided_by AS decidedBy,consumed_at AS consumedAt,reservation_id AS reservationId,reserved_at AS reservedAt,owner_uid AS ownerUid FROM approvals WHERE id=? AND owner_uid=?')
+      .get(id, ownerUid) as { id: string; action: HighImpactAction; summary: string; amountUsd?: number; scopeJson?: string; scopeHash?: string; status: 'pending' | 'approved' | 'rejected'; createdAt: string; decidedAt?: string; decidedBy?: string; consumedAt?: string; reservationId?: string; reservedAt?: string; ownerUid?: string } | undefined;
     if (!row) return null;
     return { ...row, scope: row.scopeJson ? JSON.parse(row.scopeJson) : undefined, scopeHash: row.scopeHash } as ApprovalRequest;
   }
