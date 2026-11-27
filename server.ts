@@ -35,6 +35,14 @@ import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { requestDeviceRegistrationForUser, listDeviceRegistrationsForUser, isActiveDeviceForUser } from './src/db/deviceRegistrationStore.ts';
+import { users, encryptedMemoryRecords } from './src/db/schema.ts';
+import {
+  createDeviceHttpRequestChallengeForUser,
+  getDeviceHttpRequestChallengeForUser,
+  withConsumedDeviceHttpRequestChallenge,
+} from './src/db/deviceHttpRequestChallengeStore.ts';
+import { verifyDeviceHttpRequestProof, isAllowedEncryptedMemoryTarget } from './src/lib/deviceHttpRequestProof.ts';
+import { validateEncryptedMemoryRecord } from './src/db/encryptedMemoryStore.ts';
 import {
   createDeviceApprovalChallengeForUser,
   getDeviceApprovalChallengeForUser,
@@ -51,7 +59,7 @@ import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts
 import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
 import { applyLearningEnhancement, createOwnerLearningEntry } from './src/lib/learningMemory.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
-import { sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   getWorkspaceForUser,
   saveDailySummaryForUser,
@@ -261,7 +269,7 @@ async function startServer() {
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     next();
   });
-  app.use(express.json({ limit: '12mb' }));
+  app.use(express.json({ limit: '12mb', verify: (req, _res, buffer) => { (req as AuthRequest & { rawBody?: Buffer }).rawBody = Buffer.from(buffer); } }));
 
   // Shared owner approvals, approved contacts, security audit history and
   // backup restore now use PostgreSQL. SQLite remains only a per-instance
@@ -453,6 +461,152 @@ async function startServer() {
       }
     },
   );
+
+
+  const encryptedMemoryRateLimit = createSharedOwnerRateLimiter('encrypted-memory', 60, 60_000);
+  type RawBodyAuthRequest = AuthRequest & { rawBody?: Buffer };
+
+  app.post('/api/memory/encrypted/challenge', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: AuthRequest, res) => {
+    try {
+      const body = req.body as { deviceId?: unknown; method?: unknown; path?: unknown; bodySha256?: unknown };
+      if (typeof body.deviceId !== 'string' || typeof body.method !== 'string' ||
+          typeof body.path !== 'string' || typeof body.bodySha256 !== 'string' ||
+          !isAllowedEncryptedMemoryTarget(body.method, body.path)) {
+        res.status(400).json({ error: 'A valid device and exact encrypted-memory request target are required.' });
+        return;
+      }
+      const challenge = await withSharedExecutionLease(() => createDeviceHttpRequestChallengeForUser(
+        req.user!.uid, req.user!.email ?? 'owner@jerry.local',
+        body.deviceId as string, body.method as string, body.path as string, body.bodySha256 as string,
+      ));
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(201).json({ challenge });
+    } catch {
+      res.status(403).json({ error: 'A device request challenge could not be issued.' });
+    }
+  });
+
+  const executeEncryptedMemoryRequest = async (
+    req: RawBodyAuthRequest,
+    res: express.Response,
+    operation: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0], ownerId: number) => Promise<unknown>,
+  ): Promise<void> => {
+    const challengeId = req.header('x-jerry-challenge-id') ?? '';
+    const signature = req.header('x-jerry-device-signature') ?? '';
+    const ownerUid = req.user!.uid;
+    const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+    const challenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
+    const rawBody = req.rawBody ?? Buffer.alloc(0);
+    if (!challenge || challenge.method !== req.method.toUpperCase() ||
+        challenge.path !== req.path || !challenge.signingPublicKey) {
+      res.status(403).json({ error: 'Device request challenge is invalid or no longer active.' });
+      return;
+    }
+    const verified = await verifyDeviceHttpRequestProof(
+      challenge, { challengeId, signature }, challenge.signingPublicKey, rawBody,
+    );
+    if (!verified) {
+      res.status(403).json({ error: 'Device request signature or body binding is invalid.' });
+      return;
+    }
+    try {
+      const result = await withSharedExecutionLease(() =>
+        withConsumedDeviceHttpRequestChallenge(ownerUid, ownerEmail, challengeId, async (tx) => {
+          const [owner] = await tx.select({ id: users.id }).from(users).where(eq(users.uid, ownerUid)).limit(1);
+          if (!owner) throw new Error('Owner account is unavailable.');
+          return operation(tx, owner.id);
+        }),
+      );
+      if (result === null) {
+        res.status(409).json({ error: 'Device request challenge was already used, expired, or revoked.' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Pragma', 'no-cache');
+      res.json(result);
+    } catch {
+      res.status(503).json({ error: 'Encrypted memory operation could not be completed safely.' });
+    }
+  };
+
+  app.get('/api/memory/encrypted', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const rows = await tx.select().from(encryptedMemoryRecords)
+        .where(eq(encryptedMemoryRecords.userId, ownerId))
+        .orderBy(desc(encryptedMemoryRecords.updatedAt), desc(encryptedMemoryRecords.id))
+        .limit(100);
+      return { records: rows.map((row) => ({
+        schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+        revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+        createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+      })) };
+    });
+  });
+
+  app.post('/api/memory/encrypted', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const record = req.body as Record<string, unknown>;
+      const validationError = validateEncryptedMemoryRecord(record);
+      if (validationError || record.revision !== 1) throw new Error('Encrypted memory envelope is invalid.');
+      const [row] = await tx.insert(encryptedMemoryRecords).values({
+        id: record.recordId as string, userId: ownerId,
+        keyVersion: record.keyVersion as number, revision: 1,
+        iv: record.iv as string, ciphertext: record.ciphertext as string,
+      }).returning();
+      if (!row) throw new Error('Encrypted memory record was not stored.');
+      return { record: {
+        schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+        revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+        createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+      } };
+    });
+  });
+
+  app.get('/api/memory/encrypted/:recordId', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const [row] = await tx.select().from(encryptedMemoryRecords).where(and(
+        eq(encryptedMemoryRecords.userId, ownerId),
+        eq(encryptedMemoryRecords.id, req.params.recordId),
+      )).limit(1);
+      if (!row) throw new Error('Encrypted memory record was not found.');
+      return { record: {
+        schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+        revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+        createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+      } };
+    });
+  });
+
+  app.put('/api/memory/encrypted/:recordId', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const body = req.body as { record?: Record<string, unknown>; expectedRevision?: unknown };
+      const record = body?.record;
+      const expectedRevision = body?.expectedRevision;
+      const validationError = validateEncryptedMemoryRecord(record);
+      if (validationError || !record || record.recordId !== req.params.recordId ||
+          !Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 1 ||
+          record.revision !== (expectedRevision as number) + 1) {
+        throw new Error('Encrypted memory revision transition is invalid.');
+      }
+      const [row] = await tx.update(encryptedMemoryRecords).set({
+        keyVersion: record.keyVersion as number,
+        revision: record.revision as number,
+        iv: record.iv as string,
+        ciphertext: record.ciphertext as string,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(encryptedMemoryRecords.userId, ownerId),
+        eq(encryptedMemoryRecords.id, req.params.recordId),
+        eq(encryptedMemoryRecords.revision, expectedRevision as number),
+      )).returning();
+      if (!row) throw new Error('Encrypted memory record changed on another device; reload and retry.');
+      return { record: {
+        schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+        revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+        createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+      } };
+    });
+  });
 
   const deviceApprovalRateLimit = createSharedOwnerRateLimiter('device-approval', 8, 60_000);
 
