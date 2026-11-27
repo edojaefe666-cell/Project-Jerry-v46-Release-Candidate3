@@ -4,6 +4,11 @@
  * logical timestamps, and logical deletion state, are inside AES-256-GCM.
  */
 import type { MemoryEntry, JerryMemoryArea } from './types.ts';
+import { getOrCreateJerryDeviceId } from './deviceIdentity.ts';
+import {
+  encryptNativeMemoryRecordPayload,
+  decryptNativeMemoryRecordPayload,
+} from './nativeDeviceSigning.ts';
 
 export interface EncryptedMemoryPayload {
   schemaVersion: 1;
@@ -154,4 +159,36 @@ export async function decryptMemoryRecord(
   } finally {
     plaintext.fill(0);
   }
+}
+
+/**
+ * Android 10 path: AES key operations remain in native code and the key is
+ * never returned to JavaScript. The serialized memory payload necessarily
+ * crosses the trusted WebView bridge so the UI can store/display its content.
+ */
+export async function encryptMemoryRecordOnAndroid(
+  payload: EncryptedMemoryPayload,
+  context: MemoryRecordContext,
+): Promise<EncryptedMemoryRecord> {
+  validateContext(context);
+  validatePayload(payload, context.recordId);
+  const plaintextJson = JSON.stringify(payload);
+  return encryptNativeMemoryRecordPayload(plaintextJson, context, getOrCreateJerryDeviceId());
+}
+
+/** Android counterpart to decryptMemoryRecord; validates the authenticated plaintext after native decryption. */
+export async function decryptMemoryRecordOnAndroid(
+  record: EncryptedMemoryRecord,
+  context: MemoryRecordContext,
+): Promise<EncryptedMemoryPayload> {
+  validateContext(context);
+  if (!record || record.schemaVersion !== 1 || record.recordId !== context.recordId ||
+      record.keyVersion !== context.keyVersion || record.revision !== context.revision) {
+    throw new Error('Encrypted memory record does not match its authenticated context.');
+  }
+  const parsed = await decryptNativeMemoryRecordPayload(
+    record, context, getOrCreateJerryDeviceId(),
+  );
+  validatePayload(parsed, context.recordId);
+  return parsed;
 }
