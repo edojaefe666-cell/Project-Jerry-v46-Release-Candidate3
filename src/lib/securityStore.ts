@@ -373,6 +373,30 @@ export class SecurityStore {
     }
   }
 
+  consumeApproval(id: string, action: HighImpactAction, actorUid: string, expectedScope?: Record<string, unknown>): ApprovalRequest | null {
+    const consumedAt = now();
+    const expectedHash = hashScope(expectedScope);
+    const cutoff = new Date(Date.now() - APPROVAL_TTL_MS).toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(
+        "UPDATE approvals SET consumed_at=? WHERE id=? AND owner_uid=? AND action=? AND status='approved' AND consumed_at IS NULL AND reservation_id IS NULL AND created_at>=? AND (? IS NULL OR scope_hash=?)"
+      ).run(consumedAt, id, actorUid, action, cutoff, expectedHash ?? null, expectedHash ?? null);
+      if (Number(result.changes ?? 0) !== 1) {
+        this.db.exec('COMMIT');
+        return null;
+      }
+      const consumed = this.getApproval(id, actorUid);
+      if (!consumed) throw new Error('Consumed approval could not be reloaded.');
+      this.audit(actorUid, 'approval.consumed', { id, action, consumedAt });
+      this.db.exec('COMMIT');
+      return consumed;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+  }
+
   getApproval(id: string, ownerUid: string): ApprovalRequest | null {
     const row = this.db.prepare('SELECT id,action,summary,amount_usd AS amountUsd,scope_json AS scopeJson,scope_hash AS scopeHash,status,created_at AS createdAt,decided_at AS decidedAt,decided_by AS decidedBy,consumed_at AS consumedAt,owner_uid AS ownerUid FROM approvals WHERE id=? AND owner_uid=?')
       .get(id, ownerUid) as { id: string; action: HighImpactAction; summary: string; amountUsd?: number; scopeJson?: string; scopeHash?: string; status: 'pending' | 'approved' | 'rejected'; createdAt: string; decidedAt?: string; decidedBy?: string; consumedAt?: string; ownerUid?: string } | undefined;
