@@ -192,6 +192,7 @@ test('wallet outbox claims use fencing tokens so stale workers cannot finalize r
   assert.match(outbox, /RETURNING[\s\S]*?o\.claim_token/);
   assert.match(outbox, /WHERE id = \$1 AND status = 'processing' AND claim_token = \$2/);
   assert.match(outbox, /if \(finalized\.rowCount === 1\) processed\+\+/);
+  assert.match(outbox, /if \(retry\.rowCount === 1\) \{[\s\S]*?failed\+\+[\s\S]*?retried\+\+/);
   assert.match(outbox, /SET status = 'processed', claim_token = NULL/);
 });
 
