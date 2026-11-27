@@ -130,6 +130,17 @@ test('all hosted AI and live research paths default to no paid spending before v
   assert.match(environmentExample, /JERRY_PAID_SERVICES_ENABLED=0/);
 });
 
+test('Android never presents demo state as a connected owner workspace', () => {
+  assert.match(apiClient, /export async function checkBackendReadiness/);
+  assert.match(apiClient, /API_BASE_IS_PLACEHOLDER\) return false/);
+  assert.match(appSource, /checkBackendReadiness\(\)/);
+  assert.match(appSource, /if \(backendReady === null\)/);
+  assert.match(appSource, /if \(!backendReady\)/);
+  assert.match(appSource, /if \(workspaceLoadError\)/);
+  assert.match(appSource, /No demo workspace will be presented as live owner data/);
+  assert.match(appSource, /backendReady !== true/);
+});
+
 test('Jerry workspace is gated behind a valid authenticated owner session', () => {
   assert.match(appSource, /loading: authLoading/);
   assert.match(appSource, /if \(authLoading\)/);
