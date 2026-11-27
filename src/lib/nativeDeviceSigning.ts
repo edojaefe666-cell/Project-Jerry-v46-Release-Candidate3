@@ -1,4 +1,5 @@
 import type { DeviceKeyEnvelope } from './memoryKeyEnvelope.ts';
+import type { MemoryRecordContext, EncryptedMemoryRecord } from './encryptedMemoryRecord.ts';
 import type {
   DeviceApprovalChallenge,
   DeviceApprovalProof,
@@ -27,6 +28,9 @@ type NativeBridgeReply = {
   publicKey?: DeviceSigningPublicKey;
   proof?: DeviceApprovalProof;
   installed?: boolean;
+  iv?: string;
+  ciphertext?: string;
+  plaintextJson?: string;
 };
 
 type NativeBridge = {
@@ -170,4 +174,56 @@ export async function unwrapNativeDeviceMemoryKeyEnvelope(
   if (reply.installed !== true) {
     throw new Error('Android did not confirm protected memory-key installation.');
   }
+}
+
+/** Encrypts one serialized memory payload using the locally installed native data key. */
+export async function encryptNativeMemoryRecordPayload(
+  plaintextJson: string,
+  context: MemoryRecordContext,
+  deviceId: string,
+): Promise<EncryptedMemoryRecord> {
+  if (typeof plaintextJson !== 'string' || !plaintextJson.trim() ||
+      new TextEncoder().encode(plaintextJson).byteLength > 24_000) {
+    throw new Error('Memory record plaintext is invalid or too large.');
+  }
+  const reply = await requestNative<NativeBridgeReply>('encryptMemoryRecordPayload', {
+    ownerUid: context.ownerUid,
+    deviceId,
+    keyVersion: context.keyVersion,
+    recordId: context.recordId,
+    revision: context.revision,
+    plaintextJson,
+  });
+  if (!reply.iv || !reply.ciphertext) {
+    throw new Error('Android did not return an encrypted memory record.');
+  }
+  return {
+    schemaVersion: 1,
+    recordId: context.recordId,
+    keyVersion: context.keyVersion,
+    revision: context.revision,
+    iv: reply.iv,
+    ciphertext: reply.ciphertext,
+  };
+}
+
+/** Decrypts one authenticated memory record; the raw AES key never leaves native code. */
+export async function decryptNativeMemoryRecordPayload(
+  record: EncryptedMemoryRecord,
+  context: MemoryRecordContext,
+  deviceId: string,
+): Promise<unknown> {
+  const reply = await requestNative<NativeBridgeReply>('decryptMemoryRecordPayload', {
+    ownerUid: context.ownerUid,
+    deviceId,
+    keyVersion: context.keyVersion,
+    recordId: context.recordId,
+    revision: context.revision,
+    iv: record.iv,
+    ciphertext: record.ciphertext,
+  });
+  if (typeof reply.plaintextJson !== 'string') {
+    throw new Error('Android did not return decrypted memory content.');
+  }
+  return JSON.parse(reply.plaintextJson) as unknown;
 }
