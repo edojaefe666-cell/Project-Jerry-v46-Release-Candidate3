@@ -641,3 +641,14 @@ test('historical financial backfill holds the shared stop lease across journal r
     'shared lease must cover historical journal repair and its resulting financial-truth report');
   assert.match(route, /res\.status\(423\)/);
 });
+
+test('read-only Bitcoin transaction verification is also fenced from new external requests during emergency stop', () => {
+  const start = server.indexOf("app.post('/api/wallet/verify-tx'");
+  const end = server.indexOf("app.get('/api/wallet/financial-truth'", start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  const lease = route.indexOf('withSharedExecutionLease(async () =>');
+  const chainRead = route.indexOf('https://blockstream.info/api/tx/', lease);
+  assert.ok(lease >= 0 && chainRead > lease, 'shared lease must be acquired before external Blockstream reads');
+  assert.match(route, /res\.status\(423\)/);
+});
