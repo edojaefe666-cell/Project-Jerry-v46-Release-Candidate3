@@ -1175,8 +1175,8 @@ test('direct Gemini SDK execution reserves configured USD cost inside the shared
     const start = server.indexOf(routeMarker);
     assert.ok(start >= 0, `route ${routeMarker} must exist`);
     const route = server.slice(start, start + 16_000);
-    assert.match(route, /generateDirectGeminiWithBudget\\(req\\.user!\\.uid, prompt, execution\\.signal/);
+    assert.match(route, /generateDirectGeminiWithBudget\(req\\.user!\\.uid, prompt, execution\\.signal/);
   }
-  assert.equal((server.match(/ai\\.models\\.generateContent\\(/g) ?? []).length, 3,
+  assert.equal((server.match(/ai\.models\.generateContent\(/g) ?? []).length, 3,
     'all direct Gemini SDK generation call sites must remain within the budgeted helper');
 });
