@@ -157,6 +157,17 @@ async function startServer() {
       return true;
     }
   };
+  // Pin every request to the durable control epoch observed at admission.
+  // A stop followed by resume increments the epoch; work admitted before that
+  // transition must remain stale and cannot publish a late provider result.
+  const registerSharedExecution = async (): Promise<ReturnType<typeof executionRegistry.register> & { epoch: number }> => {
+    const control = await readSharedExecutionControl();
+    const execution = executionRegistry.register();
+    if (control.stopped || isEmergencyStopActive()) {
+      execution.cancel('Jerry emergency stop is active at execution admission');
+    }
+    return { ...execution, epoch: control.epoch };
+  };
   // Linearize provider-result delivery against the durable owner stop.
   // The shared row lock remains held until the response is handed to Express,
   // so an owner stop cannot commit between the final check and result delivery.
@@ -166,8 +177,8 @@ async function startServer() {
     deliver: () => void,
   ): Promise<boolean> => {
     try {
-      await withSharedExecutionLease(async () => {
-        if (execution.signal.aborted || isEmergencyStopActive() || res.destroyed || res.writableEnded) return;
+      await withSharedExecutionLease(async (lease) => {
+        if (lease.epoch !== execution.epoch || execution.signal.aborted || isEmergencyStopActive() || res.destroyed || res.writableEnded) return;
         deliver();
       });
       if (execution.signal.aborted || isEmergencyStopActive()) {
@@ -211,7 +222,7 @@ async function startServer() {
     if (isEmergencyStopActive()) {
       return { status: 'unavailable' as const, report: 'Emergency stop is active. Isolated verification was not started.' };
     }
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     try {
       if (execution.signal.aborted) {
         return { status: 'unavailable' as const, report: 'Emergency stop interrupted isolated verification before it started.' };
@@ -603,7 +614,7 @@ async function startServer() {
       res.status(400).json({ error: 'Unsupported preferred model provider.' });
       return;
     }
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     const cancelOnDisconnect = () => {
       if (!res.writableEnded && !execution.signal.aborted) {
         execution.cancel('Jerry Brain client disconnected');
@@ -1432,7 +1443,7 @@ async function startServer() {
       'Never claim an action was executed unless a connected tool confirms it. Respect the owner-controlled emergency stop and all authorization boundaries. ' +
       'Protect private workspace information and keep responses clear, concise, and useful.';
 
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     const cancelOnDisconnect = () => {
       if (!res.writableEnded && !execution.signal.aborted) {
         execution.cancel('Jerry chat client disconnected');
@@ -1495,7 +1506,7 @@ async function startServer() {
       return;
     }
 
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     const cancelOnDisconnect = () => {
       if (!res.writableEnded && !execution.signal.aborted) {
         execution.cancel('Goal planning client disconnected');
@@ -1609,7 +1620,7 @@ async function startServer() {
       res.status(400).json({ error: 'Business idea or market topic must contain 1–4,000 characters.' });
       return;
     }
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     const cancelOnDisconnect = () => {
       if (!res.writableEnded && !execution.signal.aborted) {
         execution.cancel('Business opportunity assessment client disconnected');
@@ -1679,7 +1690,7 @@ async function startServer() {
       else if(sampleImagePath?.startsWith('/src/assets/images/')){const safePath=path.resolve(process.cwd(),`.${sampleImagePath}`),allowedRoot=path.resolve(process.cwd(),'src/assets/images')+path.sep;if(!safePath.startsWith(allowedRoot)){res.status(400).json({error:'Invalid sample image path.'});return;}const buf=await fs.readFile(safePath);base64Data=buf.toString('base64');mimeType=sampleImagePath.endsWith('.png')?'image/png':sampleImagePath.endsWith('.webp')?'image/webp':'image/jpeg';}
       else{res.status(400).json({error:'Provide an uploaded image or sample document.'});return;}
     }catch{res.status(400).json({error:'Could not read image source.'});return;}
-    const execution=executionRegistry.register();
+    const execution=await registerSharedExecution();
     const cancelOnDisconnect=()=>{if(!res.writableEnded&&!execution.signal.aborted)execution.cancel('Jerry Vision client disconnected');};
     res.once('close',cancelOnDisconnect);
     try{
@@ -1698,8 +1709,8 @@ async function startServer() {
     const {text,voiceName='Charon',voiceStyle='Calm, warm, confident adult male voice'}=req.body as {text?:string;voiceName?:string;voiceStyle?:string};
     if(typeof text!=='string'||!text.trim()||text.length>8000){res.status(400).json({error:'Text is required and must not exceed 8000 characters.'});return;}
     const configuration=providerConfigurationFromEnvironment(process.env);
-    if(!configuration.google?.apiKey&&!configuration.openai?.apiKey){const fallbackExecution=executionRegistry.register();try{await deliverWithSharedExecutionLease(fallbackExecution,res,()=>res.json({fallback:'browser_speech',voiceName,voiceStyle,note:'No server speech provider is configured; use device speech synthesis.'}));}finally{fallbackExecution.release();}return;}
-    const execution=executionRegistry.register(),cancelOnDisconnect=()=>{if(!res.writableEnded&&!execution.signal.aborted)execution.cancel('Jerry TTS client disconnected');};
+    if(!configuration.google?.apiKey&&!configuration.openai?.apiKey){const fallbackExecution=await registerSharedExecution();try{await deliverWithSharedExecutionLease(fallbackExecution,res,()=>res.json({fallback:'browser_speech',voiceName,voiceStyle,note:'No server speech provider is configured; use device speech synthesis.'}));}finally{fallbackExecution.release();}return;}
+    const execution=await registerSharedExecution(),cancelOnDisconnect=()=>{if(!res.writableEnded&&!execution.signal.aborted)execution.cancel('Jerry TTS client disconnected');};
     res.once('close',cancelOnDisconnect);
     try{
       if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry execution is stopped.'});return;}
@@ -1714,7 +1725,7 @@ async function startServer() {
     if(typeof audioBase64!=='string'||!audioBase64){res.status(400).json({error:'Audio payload is required.'});return;}
     const configuration=providerConfigurationFromEnvironment(process.env);
     if(!configuration.google?.apiKey&&!configuration.openai?.apiKey){res.status(503).json({error:'No compatible server-side transcription provider is configured. Audio was not transcribed.'});return;}
-    const execution=executionRegistry.register(),cancelOnDisconnect=()=>{if(!res.writableEnded&&!execution.signal.aborted)execution.cancel('Jerry transcription client disconnected');};
+    const execution=await registerSharedExecution(),cancelOnDisconnect=()=>{if(!res.writableEnded&&!execution.signal.aborted)execution.cancel('Jerry transcription client disconnected');};
     res.once('close',cancelOnDisconnect);
     try{
       if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry execution is stopped.'});return;}
@@ -1736,7 +1747,7 @@ async function startServer() {
     }
     const { interests, availableCapitalUsd } = parsedRequest.value;
 
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     const cancelOnDisconnect = () => { if (!res.writableEnded && !execution.signal.aborted) execution.cancel('Jerry Opportunity Radar client disconnected'); };
     res.once('close', cancelOnDisconnect);
     try {
@@ -1800,7 +1811,7 @@ async function startServer() {
       cleanInfo,
       now,
     );
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     const cancelOnDisconnect = () => { if (!res.writableEnded && !execution.signal.aborted) execution.cancel('Jerry Learning client disconnected'); };
     res.once('close', cancelOnDisconnect);
     let entry = originalEntry;
@@ -1952,7 +1963,7 @@ async function startServer() {
       configuration.anthropic?.apiKey || (configuration.local?.enabled && configuration.local.baseUrl),
     );
     if (!hasProvider) {
-      const fallbackExecution = executionRegistry.register();
+      const fallbackExecution = await registerSharedExecution();
       try {
         await deliverWithSharedExecutionLease(fallbackExecution, res, () => res.json({
           proposal: buildPolyglotFallback(),
@@ -1965,7 +1976,7 @@ async function startServer() {
       return;
     }
 
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     const cancelOnDisconnect = () => {
       if (!res.writableEnded && !execution.signal.aborted) {
         execution.cancel('Self-programming client disconnected');
@@ -2228,7 +2239,7 @@ async function startServer() {
       return;
     }
 
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     const cancelOnDisconnect = () => {
       if (!res.writableEnded && !execution.signal.aborted) {
         execution.cancel('Daily opportunity discovery client disconnected');
@@ -2428,7 +2439,7 @@ async function startServer() {
       return;
     }
 
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     const cancelOnDisconnect = () => {
       if (!res.writableEnded && !execution.signal.aborted) {
         execution.cancel('Human insight generation client disconnected');
@@ -2581,7 +2592,7 @@ async function startServer() {
       return;
     }
 
-    const execution = executionRegistry.register();
+    const execution = await registerSharedExecution();
     const cancelOnDisconnect = () => {
       if (!res.writableEnded && !execution.signal.aborted) {
         execution.cancel('Internet growth generation client disconnected');
@@ -2759,7 +2770,7 @@ async function startServer() {
         executionRegistry.setStopped(true, 'Shared execution-control unavailable; wallet journal worker paused');
         return;
       }
-      const execution = executionRegistry.register();
+      const execution = await registerSharedExecution();
       if (execution.signal.aborted) {
         execution.release();
         return;
