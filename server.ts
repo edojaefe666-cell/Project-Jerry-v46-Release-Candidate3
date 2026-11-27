@@ -849,7 +849,7 @@ async function startServer() {
         const approval: ApprovalRequest = { ...payload, id: `approval-${crypto.randomUUID()}`, requestedAt: new Date().toISOString(), decision: 'pending' };
         const state = { ...current, approvals: [approval, ...(current.approvals ?? [])] };
         return { state, response: { approval, state } };
-      }));
+      });
       res.status(result.replayed ? 200 : 201).json({ ...result.response, replayed: result.replayed });
     } catch (error) {
       console.error('Internal server error:', error);
