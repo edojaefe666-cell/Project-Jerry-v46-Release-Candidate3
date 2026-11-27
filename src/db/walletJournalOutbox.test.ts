@@ -62,12 +62,23 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
   const { drainWalletJournalOutbox } = await import('../db/walletJournalOutbox.ts');
   const { randomUUID } = await import('node:crypto');
   const pool = createPool();
-  // The shared control migration seeds the execution latch stopped. This
-  // disposable integration fixture explicitly enables it for worker tests.
-  await pool.query("UPDATE jerry_execution_control SET stopped=false, epoch=epoch+1, reason='outbox integration fixture enabled', updated_by='test-fixture', updated_at=now() WHERE id=1");
   const suffix = randomUUID();
   const uid = `outbox-test-${suffix}`;
+  let fixtureUserId: number | undefined;
+  let priorControl: { stopped: boolean; reason: string | null; updated_by: string | null } | undefined;
+
+  try {
+    // Preserve the pre-test shared latch. Epoch remains monotonic when it is
+    // restored, rather than rewinding to the captured value.
+    const controlSnapshot = await pool.query(
+      'SELECT stopped, reason, updated_by FROM jerry_execution_control WHERE id = 1',
+    );
+    assert.equal(controlSnapshot.rowCount, 1, 'shared execution control singleton must exist');
+    priorControl = controlSnapshot.rows[0];
+    // This disposable integration fixture explicitly enables workers.
+    await pool.query("UPDATE jerry_execution_control SET stopped=false, epoch=epoch+1, reason='outbox integration fixture enabled', updated_by='test-fixture', updated_at=now() WHERE id=1");
   const user = await getOrCreateUser(uid, `outbox-${suffix}@example.invalid`);
+  fixtureUserId = user.id;
   const makeTransaction = (id: string, block: string): WalletTransaction => ({
     id,
     timestamp: new Date().toISOString(),
@@ -226,5 +237,32 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
   assert.equal(pausedRow.rowCount, 1);
   assert.equal(pausedRow.rows[0].status, 'pending');
   assert.match(pausedRow.rows[0].last_error, /emergency stop/i);
-  await pool.query("UPDATE jerry_execution_control SET stopped=true, epoch=epoch+1, reason='outbox integration fixture cleanup', updated_by='test-fixture', updated_at=now() WHERE id=1");
+  } finally {
+    try {
+      if (fixtureUserId !== undefined) {
+        // Delete only this test's rows. The user fixture is unique per run;
+        // remove dependent journal/outbox/ledger rows before the owner row.
+        await pool.query('DELETE FROM wallet_journal_outbox WHERE user_id = $1', [fixtureUserId]);
+        await pool.query('DELETE FROM journal_entries WHERE user_id = $1', [fixtureUserId]);
+        await pool.query('DELETE FROM ledger_transactions WHERE user_id = $1', [fixtureUserId]);
+        await pool.query('DELETE FROM users WHERE id = $1 AND uid = $2', [fixtureUserId, uid]);
+      }
+    } finally {
+      try {
+        // Restore only while this test still owns the singleton update.
+        // Never overwrite a concurrent owner/admin stop transition.
+        if (priorControl) {
+          await pool.query(
+            `UPDATE jerry_execution_control
+                SET stopped = $1, epoch = epoch + 1, reason = $2,
+                    updated_by = $3, updated_at = now()
+              WHERE id = 1 AND updated_by = 'test-fixture'`,
+            [priorControl.stopped, priorControl.reason, priorControl.updated_by],
+          );
+        }
+      } finally {
+        await pool.end();
+      }
+    }
+  }
 });
