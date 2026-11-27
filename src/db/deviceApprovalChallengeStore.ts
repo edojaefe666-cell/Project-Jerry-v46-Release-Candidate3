@@ -13,6 +13,7 @@ export type DeviceApprovalChallengeRecord = {
   approverDeviceId: string;
   targetRegistrationId: string;
   expiresAt: string;
+  approverSigningPublicKey?: { kty: 'EC'; crv: 'P-256'; x: string; y: string };
 };
 
 export async function createDeviceApprovalChallengeForUser(
@@ -75,7 +76,7 @@ export async function getDeviceApprovalChallengeForUser(
       gt(deviceApprovalChallenges.expiresAt, new Date()),
       eq(deviceRegistrations.userId, user.id),
       eq(deviceRegistrations.status, 'active'),
-    )).limit(1);
+    )).limit(1).for('update');
   if (!row || !row.approver.signingPublicKey) return null;
   const [target] = await db.select().from(deviceRegistrations).where(and(
     eq(deviceRegistrations.userId, user.id),
@@ -90,6 +91,7 @@ export async function getDeviceApprovalChallengeForUser(
     approverDeviceId: row.approver.deviceId,
     targetRegistrationId: target.id,
     expiresAt: row.challenge.expiresAt.toISOString(),
+    approverSigningPublicKey: row.approver.signingPublicKey as { kty: 'EC'; crv: 'P-256'; x: string; y: string },
   };
 }
 
@@ -121,7 +123,7 @@ export async function consumeDeviceApprovalChallengeAndApproveForUser(
       eq(deviceRegistrations.userId, user.id),
       eq(deviceRegistrations.id, challenge.targetRegistrationId),
       eq(deviceRegistrations.status, 'pending'),
-    )).limit(1);
+    )).limit(1).for('update');
     if (!approver?.signingPublicKey || !target || approver.id === target.id) return false;
     const consumed = await tx.update(deviceApprovalChallenges)
       .set({ consumedAt: new Date() })
