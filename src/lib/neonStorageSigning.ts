@@ -85,7 +85,8 @@ export function createNeonStoragePresignedUrl(
   const service = 's3';
   const scope = `${dateStamp}/${region}/${service}/aws4_request`;
   const host = endpoint.host;
-  const canonicalUri = `${endpoint.pathname.replace(/\\/$/, '')}/${encodeRfc3986(request.bucket)}/${encodePath(request.objectKey)}` || '/';
+  const basePath = endpoint.pathname.replace(/\\/$/, '');
+  const canonicalUri = `${basePath}/${encodeRfc3986(request.bucket)}/${encodePath(request.objectKey)}`;
 
   const query: Array<[string, string]> = [
     ['X-Amz-Algorithm', 'AWS4-HMAC-SHA256'],
@@ -97,7 +98,8 @@ export function createNeonStoragePresignedUrl(
   const canonicalQuery = query
     .map(([key, value]) => [encodeRfc3986(key), encodeRfc3986(value)] as const)
     .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
-      leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue),
+      leftKey < rightKey ? -1 : leftKey > rightKey ? 1 :
+        leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0,
     )
     .map(([key, value]) => `${key}=${value}`)
     .join('&');
