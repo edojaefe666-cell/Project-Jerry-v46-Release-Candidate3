@@ -1069,6 +1069,7 @@ async function startServer() {
 
   app.post('/api/wallet/sync-onchain', requireAuth, requireExecutionEnabled, async (req: AuthRequest, res) => {
     try {
+      await withSharedExecutionLease(async () => {
       const uid = req.user!.uid;
       const email = req.user!.email ?? 'owner@jerry.workspace';
       const body = req.body as { assetId?: string; address?: string; useLiveOnChain?: boolean };
@@ -1155,7 +1156,13 @@ async function startServer() {
         fetchedAt,
         onChainBalances: assetId ? { [assetId]: { onChainBalance: liveBalance, rpcSource: 'Blockstream Bitcoin API', verified } } : {},
       });
+      });
     } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (/emergency stop is engaged/i.test(message)) {
+        res.status(423).json({ error: 'Jerry emergency stop is engaged. On-chain synchronization was not started or persisted.' });
+        return;
+      }
       console.error('Internal server error:', error);
       res.status(500).json({ error: 'Internal server error.' });
     }
