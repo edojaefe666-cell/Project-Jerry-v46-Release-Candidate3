@@ -113,7 +113,12 @@ class DeviceSigningKeyStore(
         val allowedCollection = path == "/api/memory/encrypted" && (method == "GET" || method == "POST")
         val allowedRecord = path.matches(Regex("/api/memory/encrypted/[A-Za-z0-9_-]{16,128}")) &&
             (method == "GET" || method == "PUT")
-        require(allowedCollection || allowedRecord) { "Memory request target is not allowed." }
+        val allowedKeyEnvelopeCollection = path == "/api/memory/key-envelopes" && method == "POST"
+        val allowedKeyEnvelopeRead = path.matches(Regex("/api/memory/key-envelopes/[1-9][0-9]{0,8}")) &&
+            method == "GET"
+        require(allowedCollection || allowedRecord || allowedKeyEnvelopeCollection || allowedKeyEnvelopeRead) {
+            "Memory request target is not allowed."
+        }
         require(!path.contains("?") && !path.contains("#") && !path.contains("%") && !path.contains("//")) {
             "Memory request path is not canonical."
         }
