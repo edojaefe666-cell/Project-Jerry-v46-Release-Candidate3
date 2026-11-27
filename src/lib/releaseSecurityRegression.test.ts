@@ -10,6 +10,8 @@ const jerryEngine = fs.readFileSync(path.join(root, 'src/lib/jerryEngine.ts'), '
 const walletOutbox = fs.readFileSync(path.join(root, 'src/db/walletJournalOutbox.ts'), 'utf8');
 const sharedApprovalStore = fs.readFileSync(path.join(root, 'src/db/approvalStore.ts'), 'utf8');
 const sharedRateLimitStore = fs.readFileSync(path.join(root, 'src/db/rateLimitStore.ts'), 'utf8');
+const sharedProviderOperationStore = fs.readFileSync(path.join(root, 'src/db/providerOperationStore.ts'), 'utf8');
+const multimodalAdapters = fs.readFileSync(path.join(root, 'src/lib/multimodalAdapters.ts'), 'utf8');
 
 test('all Jerry API endpoints require Firebase authentication', () => {
   const routes = [...server.matchAll(/app\.post\('(\/api\/jerry\/[^']+)'\s*,\s*([^\n]+)/g)].map((m) => ({ path: m[1], declaration: m[0] }));
@@ -1047,3 +1049,23 @@ test('expensive provider routes use shared PostgreSQL owner quotas and fail clos
   assert.match(sharedRateLimitStore, /status\(503\)/);
 });
 
+
+test('multimodal and direct SDK provider attempts consume a shared daily owner operation budget', () => {
+  assert.match(server, /import \{ reserveConfiguredProviderOperation \} from '\.\/src\/db\/providerOperationStore\.ts'/);
+  for (const route of [
+    'analyzeImageWithModelFallback',
+    'synthesizeSpeechWithModelFallback',
+    'transcribeAudioWithModelFallback',
+  ]) {
+    const index = server.indexOf(route + '({');
+    assert.ok(index >= 0, `missing multimodal route call: ${route}`);
+    assert.match(server.slice(index, index + 700), /ownerUid:req\.user!\.uid/);
+  }
+  assert.equal((server.match(/await reserveConfiguredProviderOperation\(req\.user!\.uid\)/g) ?? []).length, 3,
+    'all direct Gemini SDK routes must reserve before execution');
+  assert.equal((multimodalAdapters.match(/await reserveConfiguredProviderOperation\(options\.ownerUid\)/g) ?? []).length, 6,
+    'each Google/OpenAI vision, speech and transcription attempt must reserve a slot');
+  assert.match(sharedProviderOperationStore, /ON CONFLICT\(owner_uid,usage_day\) DO UPDATE/);
+  assert.match(sharedProviderOperationStore, /used_operations < jerry_provider_daily_operations\.daily_limit_operations/);
+  assert.match(sharedProviderOperationStore, /JERRY_DAILY_PROVIDER_OPERATION_LIMIT/);
+});
