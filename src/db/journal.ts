@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { createPool } from './index.ts';
+import { withSharedExecutionLease } from './executionControl.ts';
 import { reverseJournalLines, validateJournalLines, type JournalLineInput, type NormalizedJournalLine } from '../lib/doubleEntryJournal.ts';
 
 const PG_BIGINT_MAX = 9_223_372_036_854_775_807n;
@@ -97,7 +98,7 @@ async function writePostedEntry(
 }
 
 /** Atomically create accounts, journal lines, and seal a balanced journal entry. */
-export async function postJournalEntry(input: PostJournalInput): Promise<PostedJournalEntry> {
+async function postJournalEntryWithinLease(input: PostJournalInput): Promise<PostedJournalEntry> {
   const uid = input.uid?.trim();
   const idempotencyKey = input.idempotencyKey?.trim();
   const description = input.description?.trim();
@@ -126,7 +127,7 @@ export async function postJournalEntry(input: PostJournalInput): Promise<PostedJ
 }
 
 /** Reverse a posted entry exactly once; original rows remain immutable. */
-export async function reversePostedJournalEntry(input: {
+async function reversePostedJournalEntryWithinLease(input: {
   uid: string;
   originalEntryId: string;
   idempotencyKey: string;
@@ -198,6 +199,24 @@ export async function reversePostedJournalEntry(input: {
   } finally {
     client.release();
   }
+}
+
+/**
+ * Every posted journal mutation must hold the shared owner-stop lease for the
+ * complete PostgreSQL transaction. This closes the gap between an HTTP
+ * middleware stop check and the irreversible ledger commit.
+ */
+export async function postJournalEntry(input: PostJournalInput): Promise<PostedJournalEntry> {
+  return withSharedExecutionLease(() => postJournalEntryWithinLease(input));
+}
+
+export async function reversePostedJournalEntry(input: {
+  uid: string;
+  originalEntryId: string;
+  idempotencyKey: string;
+  description?: string;
+}): Promise<PostedJournalEntry> {
+  return withSharedExecutionLease(() => reversePostedJournalEntryWithinLease(input));
 }
 
 /** Return posted net balances, grouped by tenant, account and asset. */
