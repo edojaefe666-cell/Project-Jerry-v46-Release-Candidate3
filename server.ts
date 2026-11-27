@@ -498,7 +498,7 @@ async function startServer() {
     const challenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
     const rawBody = req.rawBody ?? Buffer.alloc(0);
     if (!challenge || challenge.method !== req.method.toUpperCase() ||
-        challenge.path !== req.path || !challenge.signingPublicKey) {
+        challenge.path !== req.originalUrl || !challenge.signingPublicKey) {
       res.status(403).json({ error: 'Device request challenge is invalid or no longer active.' });
       return;
     }
