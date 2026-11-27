@@ -19,6 +19,8 @@ export interface ModelGenerationOptions {
   signal?: AbortSignal;
   ownerUid?: string;
   reserveOperation?: (ownerUid: string) => Promise<void>;
+  reserveTokens?: typeof reserveProviderTokens;
+  settleTokens?: typeof settleProviderTokens;
 }
 
 function safeLocalEndpoint(baseUrl: string): URL {
@@ -163,7 +165,7 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
         // UTF-8 byte count is a conservative tokenizer-independent input upper bound;
         // include framing overhead before reserving the hard per-attempt ceiling.
         const inputEstimate = Buffer.byteLength(prompt + (options.systemInstruction ?? ''), 'utf8') + 512;
-        reservation = await reserveProviderTokens({
+        reservation = await (options.reserveTokens ?? reserveProviderTokens)({
           ownerUid: options.ownerUid,
           reserveTokens: inputEstimate + maxOutputTokens,
           dailyLimitTokens,
@@ -178,7 +180,7 @@ export async function generateWithModelFallback(options: ModelGenerationOptions)
       }
       const generated = await generateFromProvider(route.provider, route.model, prompt, options.systemInstruction, options.configuration, timeoutMs, fetchImpl, options.signal);
       if (reservation && generated.usageTokens !== undefined) {
-        try { await settleProviderTokens(reservation, generated.usageTokens); } catch { /* reservation remains charged */ }
+        try { await (options.settleTokens ?? settleProviderTokens)(reservation, generated.usageTokens); } catch { /* reservation remains charged */ }
       }
       return { text: generated.text, provider: route.provider, model: route.model };
     } catch (error) {
