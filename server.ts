@@ -930,7 +930,7 @@ async function startServer() {
         }
         const state = { ...current, approvals: [approval, ...(current.approvals ?? [])], transactions: [tx, ...(current.transactions ?? [])] };
         return { state, response: { transaction: tx, approval, state } };
-      });
+        }));
       res.status(result.replayed ? 200 : 201).json({ ...result.response, replayed: result.replayed });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to submit settlement evidence.';
@@ -965,7 +965,8 @@ async function startServer() {
       const txId = `tx-out-${crypto.randomUUID()}`;
       const command = `wallet-submit-transfer:${JSON.stringify({ amount, fee, counterparty, note, approvalId })}`;
       reservationId = createHash('sha256').update(`${uid}:${approvalId}:${key}:${command}`).digest('hex');
-      const result = await runIdempotentWorkspaceCommand(uid, email, key, command, async (current) => {
+      const result = await withSharedExecutionLease(async () => {
+        const commandResult = await runIdempotentWorkspaceCommand(uid, email, key, command, async (current) => {
         const journalBtcSatoshis = await getAuthoritativeWalletBtcSatoshis(uid);
         const pendingReservedSatoshis = (current.transactions ?? [])
           .filter((tx) => tx.asset === 'BTC' && tx.network === 'Bitcoin Mainnet' && tx.type === 'outgoing' && tx.status === 'pending_approval')
@@ -991,8 +992,6 @@ async function startServer() {
         };
         const state = { ...current, transactions: [submitted, ...(current.transactions ?? [])] };
         return { state, response: { transaction: submitted, approval, state } };
-      });
-      databaseCommitted = true;
       });
         databaseCommitted = true;
         const finalizedApproval = securityStore.finalizeApprovalReservation(approvalId, uid, reservationId);
