@@ -4,6 +4,7 @@ import {
   getNativeDeviceSigningPublicKey,
   getNativeDeviceMemoryExchangePublicKey,
   signNativeDeviceApprovalChallenge,
+  signNativeFirstDeviceBootstrapChallenge,
 } from './nativeDeviceSigning.ts';
 import type { DeviceApprovalChallenge } from './deviceApprovalSigningProof.ts';
 
@@ -94,5 +95,42 @@ export async function approvePendingJerryDevice(registrationId: string): Promise
   });
   if (completion.approved !== true) {
     throw new Error('Jerry did not confirm device approval.');
+  }
+}
+
+/**
+ * Establishes the first trusted owner device. Firebase must have been
+ * reauthenticated within five minutes; server also enforces this independently.
+ * Android presents a dedicated trust-this-device dialog before signing.
+ */
+export async function bootstrapFirstJerryOwnerDevice(
+  registrationId: string,
+): Promise<void> {
+  assertRegistrationId(registrationId);
+  const deviceId = getOrCreateJerryDeviceId();
+  const devices = await listJerryDeviceRegistrations();
+  const own = devices.find((device) => device.id === registrationId);
+  if (!own || own.deviceId !== deviceId || own.status !== 'pending') {
+    throw new Error('First-device bootstrap requires this installation’s pending registration.');
+  }
+  if (devices.some((device) => device.status === 'active')) {
+    throw new Error('First-device bootstrap is closed because an active owner device already exists.');
+  }
+  const result = await apiJson<{ challenge: DeviceApprovalChallenge }>(
+    '/api/devices/bootstrap/first/challenge',
+    { method: 'POST', body: JSON.stringify({ registrationId }) },
+  );
+  const challenge = result.challenge;
+  if (!challenge || challenge.targetRegistrationId !== registrationId ||
+      challenge.approverDeviceId !== deviceId) {
+    throw new Error('Jerry returned a first-device challenge for a different installation.');
+  }
+  const proof = await signNativeFirstDeviceBootstrapChallenge(challenge);
+  const completion = await apiJson<{ activated: boolean }>(
+    '/api/devices/bootstrap/first/complete',
+    { method: 'POST', body: JSON.stringify(proof) },
+  );
+  if (completion.activated !== true) {
+    throw new Error('Jerry did not confirm first-device activation.');
   }
 }
