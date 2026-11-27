@@ -7,21 +7,27 @@ export interface VisionAnalysisOptions {
   configuration: ProviderConfiguration;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 }
 export interface VisionAnalysisResult { text: string; provider: ModelProvider; model: string }
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
-async function postJson(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number, fetchImpl: typeof fetch) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetchImpl(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
+function throwIfAborted(signal?: AbortSignal): void { if (!signal?.aborted) return; throw signal.reason instanceof Error ? signal.reason : new Error('Provider request cancelled.'); }
+function createRequestAbort(signal: AbortSignal | undefined, timeoutMs: number) {
+ const controller=new AbortController();const abortFromParent=()=>controller.abort(signal?.reason??new Error('Provider request cancelled.'));
+ if(signal?.aborted)abortFromParent();else signal?.addEventListener('abort',abortFromParent,{once:true});
+ const timer=setTimeout(()=>controller.abort(new Error('Provider request timed out.')),timeoutMs);
+ return {signal:controller.signal,cleanup:()=>{clearTimeout(timer);signal?.removeEventListener('abort',abortFromParent);}};
+}
+async function postJson(url:string,headers:Record<string,string>,body:unknown,timeoutMs:number,fetchImpl:typeof fetch,parentSignal?:AbortSignal) {
+ throwIfAborted(parentSignal);const request=createRequestAbort(parentSignal,timeoutMs);
+ try {const response=await fetchImpl(url,{method:'POST',headers,body:JSON.stringify(body),signal:request.signal});
     if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}.`);
     const value: unknown = await response.json();
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Provider returned an invalid response.');
     return value as Record<string, any>;
-  } finally { clearTimeout(timer); }
+  } finally { request.cleanup(); }
 }
 
 function readText(provider: ModelProvider, body: Record<string, any>): string {
@@ -45,7 +51,9 @@ export async function analyzeImageWithModelFallback(options: VisionAnalysisOptio
   const routes = resolveModelRoute('vision', options.configuration);
   if (!routes.length) throw new Error('No vision provider is configured.');
   const failures: string[] = [];
+  throwIfAborted(options.signal);
   for (const route of routes) {
+    throwIfAborted(options.signal);
     try {
       let body: Record<string, any>;
       if (route.provider === 'google') {
@@ -55,7 +63,7 @@ export async function analyzeImageWithModelFallback(options: VisionAnalysisOptio
           `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(route.model)}:generateContent`,
           { 'content-type': 'application/json', 'x-goog-api-key': key },
           { contents: [{ role: 'user', parts: [{ inlineData: { mimeType: options.mimeType, data: options.base64Data } }, { text: prompt }] }] },
-          timeoutMs, fetchImpl
+          timeoutMs, fetchImpl, options.signal
         );
       } else if (route.provider === 'openai') {
         const key = options.configuration.openai?.apiKey;
@@ -65,10 +73,11 @@ export async function analyzeImageWithModelFallback(options: VisionAnalysisOptio
           { model: route.model, messages: [{ role: 'user', content: [
             { type: 'text', text: prompt },
             { type: 'image_url', image_url: { url: `data:${options.mimeType};base64,${options.base64Data}` } },
-          ] }] }, timeoutMs, fetchImpl);
+          ] }] }, timeoutMs, fetchImpl, options.signal);
       } else continue;
       return { text: readText(route.provider, body), provider: route.provider, model: route.model };
     } catch (error) {
+      throwIfAborted(options.signal);
       failures.push(`${route.provider}: ${error instanceof Error ? error.message : 'request failed'}`);
     }
   }
@@ -77,11 +86,11 @@ export async function analyzeImageWithModelFallback(options: VisionAnalysisOptio
 
 export interface SpeechSynthesisOptions {
   text: string; voice?: string; style?: string; configuration: ProviderConfiguration;
-  googleModel?: string; openaiModel?: string; timeoutMs?: number; fetchImpl?: typeof fetch;
+  googleModel?: string; openaiModel?: string; timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal;
 }
 export interface AudioTranscriptionOptions {
   audioBase64: string; mimeType: string; configuration: ProviderConfiguration;
-  googleModel?: string; openaiModel?: string; timeoutMs?: number; fetchImpl?: typeof fetch;
+  googleModel?: string; openaiModel?: string; timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal;
 }
 export interface AudioResult { audioBase64: string; mimeType: string; provider: ModelProvider; model: string }
 export interface TranscriptionResult { transcript: string; provider: ModelProvider; model: string }
@@ -98,19 +107,20 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = Math.min(60_000, Math.max(1_000, options.timeoutMs ?? 30_000));
   const failures: string[] = [];
+  throwIfAborted(options.signal);
   for (const route of routes) {
+    throwIfAborted(options.signal);
     try {
       if (route.provider === 'openai') {
         const key = options.configuration.openai?.apiKey;
         if (!key) continue;
         const model = options.openaiModel || 'gpt-4o-mini-tts';
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const request = createRequestAbort(options.signal, timeoutMs);
         try {
           const response = await fetchImpl('https://api.openai.com/v1/audio/speech', {
             method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
             body: JSON.stringify({ model, input: text, voice: ['alloy','ash','ballad','coral','echo','fable','onyx','nova','sage','shimmer','verse','marin','cedar'].includes(options.voice || '') ? options.voice : 'onyx', instructions: options.style || 'Speak clearly in a calm, warm, confident tone.', response_format: 'mp3' }),
-            signal: controller.signal,
+            signal: request.signal,
           });
           if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}.`);
           const bytes = new Uint8Array(await response.arrayBuffer());
@@ -118,7 +128,7 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
           let binary = '';
           for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
           return { audioBase64: btoa(binary), mimeType: 'audio/mpeg', provider: 'openai', model };
-        } finally { clearTimeout(timer); }
+        } finally { request.cleanup(); }
       }
       if (route.provider === 'google') {
         const key = options.configuration.google?.apiKey;
@@ -127,12 +137,12 @@ export async function synthesizeSpeechWithModelFallback(options: SpeechSynthesis
         const body = await postJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
           { 'content-type': 'application/json', 'x-goog-api-key': key },
           { contents: [{ parts: [{ text: `Speak in this style: ${options.style || 'calm, warm, confident'}. Text: ${text}` }] }], generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: options.voice || 'Charon' } } } } },
-          timeoutMs, fetchImpl);
+          timeoutMs, fetchImpl, options.signal);
         const part = body.candidates?.[0]?.content?.parts?.find((p: any) => typeof p.inlineData?.data === 'string');
         if (!part?.inlineData?.data || !validAudioPayload(part.inlineData.data)) throw new Error('Provider returned no valid audio.');
         return { audioBase64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'audio/wav', provider: 'google', model };
       }
-    } catch (error) { failures.push(`${route.provider}: ${error instanceof Error ? error.message : 'request failed'}`); }
+    } catch (error) { throwIfAborted(options.signal); failures.push(`${route.provider}: ${error instanceof Error ? error.message : 'request failed'}`); }
   }
   throw new Error(`All configured speech providers failed. ${failures.join(' ')}`);
 }
@@ -145,7 +155,9 @@ export async function transcribeAudioWithModelFallback(options: AudioTranscripti
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = Math.min(60_000, Math.max(1_000, options.timeoutMs ?? 30_000));
   const failures: string[] = [];
+  throwIfAborted(options.signal);
   for (const route of routes) {
+    throwIfAborted(options.signal);
     try {
       if (route.provider === 'google') {
         const key = options.configuration.google?.apiKey;
@@ -154,7 +166,7 @@ export async function transcribeAudioWithModelFallback(options: AudioTranscripti
         const body = await postJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
           { 'content-type': 'application/json', 'x-goog-api-key': key },
           { contents: [{ role: 'user', parts: [{ inlineData: { mimeType: options.mimeType, data: options.audioBase64 } }, { text: 'Transcribe the spoken audio accurately. Return only the transcript.' }] }] },
-          timeoutMs, fetchImpl);
+          timeoutMs, fetchImpl, options.signal);
         const transcript = body.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('').trim();
         if (typeof transcript !== 'string' || !transcript) throw new Error('Provider returned no transcript.');
         return { transcript, provider: 'google', model };
@@ -168,18 +180,17 @@ export async function transcribeAudioWithModelFallback(options: AudioTranscripti
         const form = new FormData();
         form.append('model', model);
         form.append('file', new Blob([bytes], { type: options.mimeType }), `recording.${extension}`);
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const request = createRequestAbort(options.signal, timeoutMs);
         try {
-          const response = await fetchImpl('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form, signal: controller.signal });
+          const response = await fetchImpl('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form, signal: request.signal });
           if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}.`);
           const body: unknown = await response.json();
           const transcript = body && typeof body === 'object' ? (body as any).text : undefined;
           if (typeof transcript !== 'string' || !transcript.trim()) throw new Error('Provider returned no transcript.');
           return { transcript: transcript.trim(), provider: 'openai', model };
-        } finally { clearTimeout(timer); }
+        } finally { request.cleanup(); }
       }
-    } catch (error) { failures.push(`${route.provider}: ${error instanceof Error ? error.message : 'request failed'}`); }
+    } catch (error) { throwIfAborted(options.signal); failures.push(`${route.provider}: ${error instanceof Error ? error.message : 'request failed'}`); }
   }
   throw new Error(`All configured transcription providers failed. ${failures.join(' ')}`);
 }
