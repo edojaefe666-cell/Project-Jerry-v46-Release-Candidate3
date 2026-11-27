@@ -180,12 +180,15 @@ class MainActivity : AppCompatActivity() {
                     val collectionRead = method == "GET" && targetPath == "/api/memory/encrypted"
                     val recordRead = method == "GET" &&
                         targetPath.matches(Regex("/api/memory/encrypted/[A-Za-z0-9_-]{16,128}"))
+                    val keyEnvelopeRead = method == "GET" &&
+                        targetPath.matches(Regex("/api/memory/key-envelopes/[1-9][0-9]{0,8}"))
                     val isWrite = method == "POST" || method == "PUT"
-                    val allowedWrite = (method == "POST" && targetPath == "/api/memory/encrypted") ||
+                    val allowedWrite = (method == "POST" &&
+                        (targetPath == "/api/memory/encrypted" || targetPath == "/api/memory/key-envelopes")) ||
                         (method == "PUT" &&
                             targetPath.matches(Regex("/api/memory/encrypted/[A-Za-z0-9_-]{16,128}")))
-                    require(collectionRead || recordRead || allowedWrite) {
-                        "Only encrypted-memory requests can be signed."
+                    require(collectionRead || recordRead || keyEnvelopeRead || allowedWrite) {
+                        "Only encrypted-memory and device key-envelope requests can be signed."
                     }
                     val signAndReply = {
                         try {
