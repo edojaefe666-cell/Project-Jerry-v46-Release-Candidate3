@@ -622,8 +622,7 @@ async function startServer() {
         configuration: providerConfigurationFromEnvironment(process.env),
         signal: execution.signal,
       });
-      if (!execution.signal.aborted && !isEmergencyStopActive()) res.json({ ...result });
-      else if (!res.headersSent) res.status(423).json({ error: 'Jerry execution stopped before response delivery.' });
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({ ...result }));
     } catch (error) {
       if (execution.signal.aborted) {
         if (!res.headersSent) res.status(423).json({ error: 'Jerry Brain request cancelled.' });
@@ -1687,7 +1686,7 @@ async function startServer() {
       if(execution.signal.aborted||await sharedStopBlocksAcceptance()){if(!res.headersSent)res.status(423).json({error:'Jerry Vision request cancelled before response delivery.'});return;}
       let parsed:{analysis?:string;extractedActions?:string[]};try{parsed=JSON.parse(result.text) as {analysis?:string;extractedActions?:string[]};}catch{res.status(502).json({error:'Vision provider returned an invalid structured response. The image analysis was not accepted.'});return;}
       if(typeof parsed.analysis!=='string'||!parsed.analysis.trim()||(parsed.extractedActions!==undefined&&(!Array.isArray(parsed.extractedActions)||parsed.extractedActions.some(item=>typeof item!=='string')))){res.status(502).json({error:'Vision provider response failed validation. The image analysis was not accepted.'});return;}
-      res.json({analysis:parsed.analysis.trim(),extractedActions:parsed.extractedActions??[],provider:result.provider,modelUsed:result.model,evidenceStatus:'model_generated_not_independently_verified'});
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({analysis:parsed.analysis.trim(),extractedActions:parsed.extractedActions??[],provider:result.provider,modelUsed:result.model,evidenceStatus:'model_generated_not_independently_verified'}));
     }catch(error){if(execution.signal.aborted){if(!res.headersSent&&!res.destroyed)res.status(423).json({error:'Jerry Vision request cancelled.'});return;}const message=error instanceof Error?error.message:'Vision analysis failed.';const unavailable=/No vision provider|All configured vision providers failed/.test(message);if(!res.headersSent&&!res.destroyed)res.status(unavailable?503:502).json({error:`Jerry Vision: ${message.slice(0,240)} The image was not accepted as analyzed.`});}
     finally{res.removeListener('close',cancelOnDisconnect);execution.release();}
   });
@@ -1702,7 +1701,7 @@ async function startServer() {
     try{
       if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry execution is stopped.'});return;}
       const result=await synthesizeSpeechWithModelFallback({text,voice:voiceName,style:voiceStyle,configuration,googleModel:process.env.JERRY_GOOGLE_TTS_MODEL,openaiModel:process.env.JERRY_OPENAI_TTS_MODEL,signal:execution.signal});
-      if(!execution.signal.aborted&&!(await sharedStopBlocksAcceptance()))res.json({audioBase64:result.audioBase64,mimeType:result.mimeType,voiceName,voiceStyle,provider:result.provider,modelUsed:result.model});else if(!res.headersSent)res.status(423).json({error:'Jerry speech request cancelled before response delivery.'});
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({audioBase64:result.audioBase64,mimeType:result.mimeType,voiceName,voiceStyle,provider:result.provider,modelUsed:result.model}));
     }catch(error){if(execution.signal.aborted){if(!res.headersSent&&!res.destroyed)res.status(423).json({error:'Jerry speech request cancelled.'});return;}const message=error instanceof Error?error.message:'Speech synthesis failed.';if(!res.headersSent&&!res.destroyed)res.status(503).json({error:`Jerry speech synthesis unavailable: ${message.slice(0,240)}`});}
     finally{res.removeListener('close',cancelOnDisconnect);execution.release();}
   });
@@ -1717,7 +1716,7 @@ async function startServer() {
     try{
       if(execution.signal.aborted||isEmergencyStopActive()){if(!res.headersSent)res.status(423).json({error:'Jerry execution is stopped.'});return;}
       const result=await transcribeAudioWithModelFallback({audioBase64,mimeType,configuration,googleModel:process.env.JERRY_GOOGLE_TRANSCRIPTION_MODEL,openaiModel:process.env.JERRY_OPENAI_TRANSCRIPTION_MODEL,signal:execution.signal});
-      if(!execution.signal.aborted&&!(await sharedStopBlocksAcceptance()))res.json({transcript:result.transcript,provider:result.provider,modelUsed:result.model,evidenceStatus:'machine_transcription_not_human_verified'});else if(!res.headersSent)res.status(423).json({error:'Jerry transcription cancelled before response delivery.'});
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({transcript:result.transcript,provider:result.provider,modelUsed:result.model,evidenceStatus:'machine_transcription_not_human_verified'}));
     }catch(error){if(execution.signal.aborted){if(!res.headersSent&&!res.destroyed)res.status(423).json({error:'Jerry transcription cancelled.'});return;}const message=error instanceof Error?error.message:'Transcription failed.';if(!res.headersSent&&!res.destroyed)res.status(502).json({error:`Jerry transcription failed: ${message.slice(0,240)}`});}
     finally{res.removeListener('close',cancelOnDisconnect);execution.release();}
   });
@@ -1747,14 +1746,14 @@ async function startServer() {
         signal: execution.signal,
       });
       if (execution.signal.aborted || await sharedStopBlocksAcceptance()) { if (!res.headersSent) res.status(423).json({ status: 'cancelled', alerts: [], error: 'Jerry research was cancelled before delivery.' }); return; }
-      res.json({
+      await deliverWithSharedExecutionLease(execution, res, () => res.json({
         status: 'completed',
         alerts: result.alerts,
         modelUsed: result.modelUsed,
         researchProvider: 'tavily',
         evidenceStatus: 'source_referenced_model_analysis_not_independently_verified',
         sources: result.sources,
-      });
+      }));
     } catch (error) {
       if (execution.signal.aborted) { if (!res.headersSent && !res.destroyed) res.status(423).json({ status: 'cancelled', alerts: [], error: 'Jerry research request cancelled.' }); return; }
       if (error instanceof OpportunityRadarError) {
