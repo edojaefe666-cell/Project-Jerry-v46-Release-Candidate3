@@ -158,3 +158,42 @@ export async function getProviderCostLedgerSnapshot(ownerUid: string, limit = 30
   ]);
   return { daily: daily.rows as ProviderCostLedgerSnapshot['daily'], reservations: reservations.rows as ProviderCostLedgerSnapshot['reservations'] };
 }
+
+
+export async function getProviderCostAudit(ownerUid: string, days = 30): Promise<{
+  daily: Array<{ day: string; dailyLimitMicroUsd: number; reservedMicroUsd: number; actualMicroUsd: number }>;
+  reservations: Array<{ reservationId: string; day: string; reservedMicroUsd: number; status: 'reserved' | 'settled'; createdAt: string; settledAt: string | null }>;
+}> {
+  if (!ownerUid.trim() || !Number.isSafeInteger(days) || days < 1 || days > 90) {
+    throw new Error('Provider cost audit scope is invalid.');
+  }
+  await ensureSchema();
+  const [dailyResult, reservationResult] = await Promise.all([
+    pool.query(
+      `SELECT usage_day::text AS day, daily_limit_micro_usd, reserved_micro_usd, actual_micro_usd
+       FROM jerry_provider_daily_cost
+       WHERE owner_uid=$1 AND usage_day >= (now() AT TIME ZONE 'UTC')::date - $2::integer
+       ORDER BY usage_day DESC LIMIT 90`,
+      [ownerUid, days],
+    ),
+    pool.query(
+      `SELECT reservation_id, usage_day::text AS day, reserved_micro_usd, status,
+              created_at, settled_at
+       FROM jerry_provider_cost_reservations
+       WHERE owner_uid=$1
+       ORDER BY created_at DESC LIMIT 100`,
+      [ownerUid],
+    ),
+  ]);
+  return {
+    daily: dailyResult.rows.map((row: any) => ({
+      day: row.day, dailyLimitMicroUsd: Number(row.daily_limit_micro_usd),
+      reservedMicroUsd: Number(row.reserved_micro_usd), actualMicroUsd: Number(row.actual_micro_usd),
+    })),
+    reservations: reservationResult.rows.map((row: any) => ({
+      reservationId: row.reservation_id, day: row.day, reservedMicroUsd: Number(row.reserved_micro_usd),
+      status: row.status, createdAt: new Date(row.created_at).toISOString(),
+      settledAt: row.settled_at ? new Date(row.settled_at).toISOString() : null,
+    })),
+  };
+}
