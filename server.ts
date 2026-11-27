@@ -50,6 +50,7 @@ import {
   consumeDeviceApprovalChallengeAndApproveForUser,
 } from './src/db/deviceApprovalChallengeStore.ts';
 import { verifyDeviceApprovalProof } from './src/lib/deviceApprovalSigningProof.ts';
+import { createFirstDeviceBootstrapChallenge, getFirstDeviceBootstrapChallenge, consumeFirstDeviceBootstrapChallenge } from './src/db/deviceFirstBootstrapStore.ts';
 import { reserveConfiguredProviderOperation } from './src/db/providerOperationStore.ts';
 import { reserveProviderTokens, settleProviderTokens, getProviderUsageAudit, type ProviderUsageReservation } from './src/db/providerUsageStore.ts';
 import { estimateProviderCostMicroUsd, reserveProviderCost, settleProviderCost, getProviderCostAudit, type ProviderCostReservation } from './src/db/providerCostStore.ts';
@@ -812,6 +813,72 @@ async function startServer() {
       res.json({ approved: true });
     } catch {
       res.status(503).json({ error: 'Secure device approval is unavailable; no device was activated.' });
+    }
+  });
+
+  // First-device bootstrap is a one-time owner recovery boundary, not ordinary
+  // self-approval. It requires fresh Firebase authentication, a pending device,
+  // zero active devices, native confirmation, and an atomic owner-row lock.
+  app.post('/api/devices/bootstrap/first/challenge', requireAuth, requireExecutionEnabled, deviceApprovalRateLimit, async (req: AuthRequest, res) => {
+    try {
+      const authTime = Number(req.user?.auth_time);
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      if (!Number.isSafeInteger(authTime) || authTime > nowSeconds + 30 || nowSeconds - authTime > 300) {
+        res.status(401).json({ error: 'Recent owner sign-in is required before first-device trust can be established.' });
+        return;
+      }
+      const registrationId = (req.body as { registrationId?: unknown })?.registrationId;
+      if (typeof registrationId !== 'string') {
+        res.status(400).json({ error: 'A pending device registration ID is required.' });
+        return;
+      }
+      const challenge = await withSharedExecutionLease(() => createFirstDeviceBootstrapChallenge(
+        req.user!.uid, req.user!.email ?? 'owner@jerry.local', registrationId,
+      ));
+      res.status(201).json({ challenge });
+    } catch (error) {
+      res.status(409).json({ error: error instanceof Error ? error.message : 'First-device bootstrap could not be started.' });
+    }
+  });
+
+  app.post('/api/devices/bootstrap/first/complete', requireAuth, requireExecutionEnabled, deviceApprovalRateLimit, async (req: AuthRequest, res) => {
+    try {
+      const authTime = Number(req.user?.auth_time);
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      if (!Number.isSafeInteger(authTime) || authTime > nowSeconds + 30 || nowSeconds - authTime > 300) {
+        res.status(401).json({ error: 'Recent owner sign-in is required to complete first-device trust.' });
+        return;
+      }
+      const body = req.body as { challengeId?: unknown; signature?: unknown };
+      if (typeof body?.challengeId !== 'string' || typeof body.signature !== 'string') {
+        res.status(400).json({ error: 'A bootstrap challenge ID and native ECDSA signature are required.' });
+        return;
+      }
+      const ownerUid = req.user!.uid;
+      const ownerEmail = req.user!.email ?? 'owner@jerry.local';
+      const challenge = await getFirstDeviceBootstrapChallenge(ownerUid, ownerEmail, body.challengeId);
+      if (!challenge?.approverSigningPublicKey) {
+        res.status(409).json({ error: 'First-device challenge is missing, expired, consumed, or bootstrap is no longer available.' });
+        return;
+      }
+      const verified = await verifyDeviceApprovalProof(
+        challenge, { challengeId: body.challengeId, signature: body.signature },
+        challenge.approverSigningPublicKey,
+      );
+      if (!verified) {
+        res.status(403).json({ error: 'The pending device native confirmation proof is invalid.' });
+        return;
+      }
+      const activated = await withSharedExecutionLease(() =>
+        consumeFirstDeviceBootstrapChallenge(ownerUid, ownerEmail, body.challengeId as string),
+      );
+      if (!activated) {
+        res.status(409).json({ error: 'First-device bootstrap lost its one-time race or device state changed.' });
+        return;
+      }
+      res.json({ activated: true });
+    } catch {
+      res.status(503).json({ error: 'First-device trust could not be confirmed; no device was activated.' });
     }
   });
 
