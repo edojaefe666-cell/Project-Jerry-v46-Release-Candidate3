@@ -111,22 +111,31 @@ export async function settleProviderCost(
   if (!Number.isSafeInteger(actualMicroUsd) || actualMicroUsd < 0 || actualMicroUsd > reservation.reservedMicroUsd) return;
   await ensureSchema(queryable);
   const result = await queryable.query(
-    `WITH claimed AS (
-       UPDATE jerry_provider_cost_reservations
-       SET status='settled', settled_at=now()
+    `WITH candidate AS MATERIALIZED (
+       SELECT reservation_id,owner_uid,usage_day,daily_limit_micro_usd,reserved_micro_usd
+       FROM jerry_provider_cost_reservations
        WHERE reservation_id=$1 AND owner_uid=$2 AND usage_day=$3::date
          AND daily_limit_micro_usd=$4 AND reserved_micro_usd=$5 AND status='reserved'
-       RETURNING owner_uid,usage_day,daily_limit_micro_usd,reserved_micro_usd
+       FOR UPDATE
+     ), budget AS (
+       UPDATE jerry_provider_daily_cost AS daily
+       SET reserved_micro_usd=daily.reserved_micro_usd-candidate.reserved_micro_usd,
+           actual_micro_usd=daily.actual_micro_usd+$6,
+           updated_at=now()
+       FROM candidate
+       WHERE daily.owner_uid=candidate.owner_uid AND daily.usage_day=candidate.usage_day
+         AND daily.daily_limit_micro_usd=candidate.daily_limit_micro_usd
+         AND daily.reserved_micro_usd >= candidate.reserved_micro_usd
+       RETURNING candidate.reservation_id
+     ), claimed AS (
+       UPDATE jerry_provider_cost_reservations AS reservation
+       SET status='settled',settled_at=now()
+       FROM budget
+       WHERE reservation.reservation_id=budget.reservation_id
+         AND reservation.status='reserved'
+       RETURNING reservation.reservation_id
      )
-     UPDATE jerry_provider_daily_cost AS daily
-     SET reserved_micro_usd=daily.reserved_micro_usd-claimed.reserved_micro_usd,
-         actual_micro_usd=daily.actual_micro_usd+$6,
-         updated_at=now()
-     FROM claimed
-     WHERE daily.owner_uid=claimed.owner_uid AND daily.usage_day=claimed.usage_day
-       AND daily.daily_limit_micro_usd=claimed.daily_limit_micro_usd
-       AND daily.reserved_micro_usd >= claimed.reserved_micro_usd
-     RETURNING daily.owner_uid`,
+     SELECT reservation_id FROM claimed`,
     [reservation.reservationId,reservation.ownerUid,reservation.day,reservation.dailyLimitMicroUsd,reservation.reservedMicroUsd,actualMicroUsd],
   );
   if (result.rowCount !== 1) throw new Error('Provider USD cost settlement was already applied or its reservation could not be verified; budget remains fail-closed.');
