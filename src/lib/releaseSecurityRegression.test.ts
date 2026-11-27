@@ -1107,3 +1107,46 @@ test('multimodal and direct SDK provider attempts consume a shared daily owner o
   assert.match(server, /researchApiKey: process\.env\.TAVILY_API_KEY,\s*ownerUid: req\.user!\.uid/);
   assert.match(opportunityRadar, /reserveConfiguredProviderOperation\(options\.ownerUid\)/);
 });
+
+test('wallet external-service operation reservations are acquired inside the shared emergency-stop lease', () => {
+  const cases = [
+    {
+      name: 'incoming Bitcoin settlement verification',
+      start: "app.post('/api/wallet/commands/record-income'",
+      end: "app.post('/api/wallet/commands/submit-transfer'",
+      count: 3,
+    },
+    {
+      name: 'on-chain wallet synchronization',
+      start: "app.post('/api/wallet/sync-onchain'",
+      end: "app.post('/api/wallet/verify-tx'",
+      count: 2,
+    },
+    {
+      name: 'Bitcoin transaction verification',
+      start: "app.post('/api/wallet/verify-tx'",
+      end: "app.get('/api/wallet/financial-truth'",
+      count: 2,
+    },
+    {
+      name: 'Bitcoin transaction reconciliation',
+      start: "app.post('/api/wallet/commands/reconcile-tx'",
+      end: "app.post('/api/jerry/chat'",
+      count: 2,
+    },
+  ];
+
+  for (const item of cases) {
+    const start = server.indexOf(item.start);
+    const end = server.indexOf(item.end, start + item.start.length);
+    assert.ok(start >= 0 && end > start, `${item.name} route boundaries must exist`);
+    const route = server.slice(start, end);
+    const lease = route.indexOf('await withSharedExecutionLease(async () =>');
+    const reservation = route.indexOf('await reserveExternalServiceOperations(');
+    const firstOutbound = route.search(/fetch\\(['\\x60]https:\\/\\//);
+    assert.ok(lease >= 0 && reservation > lease && firstOutbound > reservation,
+      `${item.name}: quota reservation and outbound request must both occur after acquiring the shared stop lease`);
+    assert.match(route.slice(reservation, reservation + 100),
+      new RegExp(`reserveExternalServiceOperations\\\\((?:uid|req\\\\.user!\\\\.uid), ${item.count}\\\\)`));
+  }
+});
