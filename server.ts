@@ -496,8 +496,13 @@ async function startServer() {
     const ownerUid = req.user!.uid;
     const ownerEmail = req.user!.email ?? 'owner@jerry.local';
     const challenge = await getDeviceHttpRequestChallengeForUser(ownerUid, ownerEmail, challengeId);
-    const rawBody = req.rawBody ?? Buffer.alloc(0);
-    if (!challenge || challenge.method !== req.method.toUpperCase() ||
+    const rawBody = req.rawBody;
+    const hasTransferEncoding = Boolean(req.headers['transfer-encoding']);
+    const declaredBodyLength = Number(req.headers['content-length'] ?? 0);
+    const isRead = req.method.toUpperCase() === 'GET';
+    if ((isRead && (hasTransferEncoding || (Number.isFinite(declaredBodyLength) && declaredBodyLength > 0) || (rawBody?.byteLength ?? 0) > 0)) ||
+        (!isRead && (!rawBody || hasTransferEncoding && !Number.isFinite(declaredBodyLength))) ||
+        !challenge || challenge.method !== req.method.toUpperCase() ||
         challenge.path !== req.originalUrl || !challenge.signingPublicKey) {
       res.status(403).json({ error: 'Device request challenge is invalid or no longer active.' });
       return;
@@ -580,7 +585,13 @@ async function startServer() {
   app.put('/api/memory/encrypted/:recordId', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
     await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
       const body = req.body as { record?: Record<string, unknown>; expectedRevision?: unknown };
-      const record = body?.record;
+      if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).some((key) => key !== 'record' && key !== 'expectedRevision') ||
+          !Object.prototype.hasOwnProperty.call(body, 'record') ||
+          !Object.prototype.hasOwnProperty.call(body, 'expectedRevision')) {
+        throw new Error('Encrypted memory update contains unexpected fields.');
+      }
+      const record = body.record;
       const expectedRevision = body?.expectedRevision;
       const validationError = validateEncryptedMemoryRecord(record);
       if (validationError || !record || record.recordId !== req.params.recordId ||
