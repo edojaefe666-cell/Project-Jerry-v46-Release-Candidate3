@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 import { createPool } from './index.ts';
 import { withSharedExecutionLease } from './executionControl.ts';
 import { ensureWalletTransactionJournaled } from './walletJournal.ts';
@@ -58,6 +59,7 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
     throw new Error('Outbox drain limit must be an integer between 1 and 500.');
   }
+  const claimToken = randomUUID();
   const pool = createPool();
   const client = await pool.connect();
   let processed = 0;
@@ -79,10 +81,10 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
          LIMIT $${uid ? 2 : 1}
        )
        UPDATE wallet_journal_outbox o
-          SET status = 'processing', attempts = attempts + 1, updated_at = now()
+          SET status = 'processing', claim_token = $${uid ? 3 : 2}, attempts = attempts + 1, updated_at = now()
         WHERE o.id IN (SELECT id FROM picked)
-       RETURNING o.id, o.user_id, o.event_key, o.tx_ref, o.payload_json`,
-      uid ? [uid, limit] : [limit],
+       RETURNING o.id, o.user_id, o.event_key, o.tx_ref, o.payload_json, o.claim_token`,
+      uid ? [uid, limit, claimToken] : [limit, claimToken],
     );
 
     const claimedRows = picked.rows as Array<{
@@ -91,6 +93,7 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
       event_key: string;
       tx_ref: string;
       payload_json: WalletTransaction;
+      claim_token: string;
     }>;
 
     for (let index = 0; index < claimedRows.length; index++) {
@@ -104,12 +107,12 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
         if (remainingIds.length > 0) {
           await client.query(
             `UPDATE wallet_journal_outbox
-                SET status = 'pending',
+                SET status = 'pending', claim_token = NULL,
                     available_at = now(),
                     last_error = 'Paused by Jerry emergency stop',
                     updated_at = now()
-              WHERE id = ANY($1::bigint[]) AND status = 'processing'`,
-            [remainingIds],
+              WHERE id = ANY($1::bigint[]) AND status = 'processing' AND claim_token = $2`,
+            [remainingIds, claimToken],
           );
         }
         break;
@@ -147,19 +150,19 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
                     available_at = now(),
                     last_error = 'Paused by Jerry emergency stop after journal operation',
                     updated_at = now()
-              WHERE id = $1 AND status = 'processing'`,
-            [row.id],
+              WHERE id = $1 AND status = 'processing' AND claim_token = $2`,
+            [row.id, claimToken],
           );
           const remainingIds = claimedRows.slice(index + 1).map((item) => item.id);
           if (remainingIds.length > 0) {
             await client.query(
               `UPDATE wallet_journal_outbox
-                  SET status = 'pending',
+                  SET status = 'pending', claim_token = NULL,
                       available_at = now(),
                       last_error = 'Paused by Jerry emergency stop',
                       updated_at = now()
-                WHERE id = ANY($1::bigint[]) AND status = 'processing'`,
-              [remainingIds],
+                WHERE id = ANY($1::bigint[]) AND status = 'processing' AND claim_token = $2`,
+              [remainingIds, claimToken],
             );
           }
           break;
@@ -167,12 +170,12 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
 
         await client.query(
           `UPDATE wallet_journal_outbox
-              SET status = 'processed',
+              SET status = 'processed', claim_token = NULL,
                   processed_at = now(),
                   last_error = NULL,
                   updated_at = now()
-            WHERE id = $1`,
-          [row.id],
+            WHERE id = $1 AND status = 'processing' AND claim_token = $2`,
+          [row.id, claimToken],
         );
 
         // Count every successfully completed outbox row, including safe no-op
@@ -193,12 +196,12 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
           if (remainingIds.length > 0) {
             await client.query(
               `UPDATE wallet_journal_outbox
-                  SET status = 'pending',
-                      last_error = $2,
+                  SET status = 'pending', claim_token = NULL,
+                      last_error = $3,
                       available_at = now(),
                       updated_at = now()
-                WHERE id = ANY($1::bigint[]) AND status = 'processing'`,
-              [remainingIds, message],
+                WHERE id = ANY($1::bigint[]) AND status = 'processing' AND claim_token = $2`,
+              [remainingIds, claimToken, message],
             );
           }
           break;
@@ -206,12 +209,12 @@ export async function drainWalletJournalOutbox(uid?: string, limit = 50, signal?
 
         await client.query(
           `UPDATE wallet_journal_outbox
-              SET status = 'pending',
-                  last_error = $2,
+              SET status = 'pending', claim_token = NULL,
+                  last_error = $3,
                   available_at = now() + interval '15 seconds',
                   updated_at = now()
-            WHERE id = $1`,
-          [row.id, message],
+            WHERE id = $1 AND status = 'processing' AND claim_token = $2`,
+          [row.id, claimToken, message],
         );
 
         failed++;
