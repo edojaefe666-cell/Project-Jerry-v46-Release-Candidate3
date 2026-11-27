@@ -281,3 +281,16 @@ test('financial workspace mutations hold the shared stop lease through durable s
   assert.ok(reconcileRoute.indexOf('ensureWalletTransactionJournaled') > reconcileRoute.indexOf('withSharedExecutionLease'),
     'journal synchronization must complete before releasing the reconciliation lease');
 });
+
+
+test('approved destructive workspace reset cannot race the shared emergency stop', () => {
+  const start = server.indexOf("app.post('/api/state/reset'");
+  const end = server.indexOf('// Cloud SQL PostgreSQL Protected Routes', start);
+  const route = server.slice(start, end);
+  assert.match(route.split('=>')[0], /requireAuth, requireExecutionEnabled/);
+  const lease = route.indexOf('withSharedExecutionLease(async () =>');
+  const reset = route.indexOf('updateWorkspaceForUserAtomic', lease);
+  const finalize = route.indexOf('securityStore.finalizeApprovalReservation', lease);
+  assert.ok(lease >= 0 && reset > lease && finalize > reset,
+    'workspace reset and approval finalization must stay inside the shared lease');
+});
