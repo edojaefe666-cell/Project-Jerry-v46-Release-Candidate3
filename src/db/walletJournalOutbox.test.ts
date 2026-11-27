@@ -89,6 +89,9 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
   const concurrentTx = makeTransaction(`concurrent-${suffix}`, 'a');
   const staleTx = makeTransaction(`stale-${suffix}`, 'b');
   const duplicateDeliveryTx = makeTransaction(`duplicate-delivery-${suffix}`, 'c');
+  const crashReplayTx = makeTransaction(`crash-replay-${suffix}`, 'f');
+  const { ensureWalletTransactionJournaled } = await import('../db/walletJournal.ts');
+
   const { getWalletJournalEventKey } = await import('../lib/walletJournalPolicy.ts');
   const insertOutbox = async (tx: WalletTransaction, status: 'pending' | 'processing') => {
     await pool.query(
@@ -100,6 +103,27 @@ test('PostgreSQL outbox workers claim each event once and recover stale processi
       [user.id, getWalletJournalEventKey(tx), tx.id, JSON.stringify(tx), status],
     );
   };
+
+  // Simulate a worker crash after the journal transaction commits but before
+  // the outbox row is marked processed. A later drain must replay idempotently.
+  await insertOutbox(crashReplayTx, 'pending');
+  const firstPosting = await ensureWalletTransactionJournaled(uid, crashReplayTx);
+  assert.ok(firstPosting.journalEntryId, 'the simulated pre-crash journal operation must commit');
+  assert.equal(firstPosting.action, 'posted');
+
+  const replayDrain = await drainWalletJournalOutbox(uid, 1);
+  assert.equal(replayDrain.processed, 1, 'the replay must finish the durable outbox marker');
+  const replayOutbox = await pool.query(
+    'SELECT status FROM wallet_journal_outbox WHERE user_id = $1 AND event_key = $2',
+    [user.id, getWalletJournalEventKey(crashReplayTx)],
+  );
+  assert.equal(replayOutbox.rows[0].status, 'processed');
+  const replayJournal = await pool.query(
+    'SELECT count(*)::int AS count FROM journal_entries WHERE user_id = $1 AND id = $2 AND status = \'posted\'',
+    [user.id, firstPosting.journalEntryId],
+  );
+  assert.equal(Number(replayJournal.rows[0].count), 1,
+    'replaying after a crash must leave exactly one posted journal entry');
 
   await insertOutbox(concurrentTx, 'pending');
   await insertOutbox(staleTx, 'processing');
