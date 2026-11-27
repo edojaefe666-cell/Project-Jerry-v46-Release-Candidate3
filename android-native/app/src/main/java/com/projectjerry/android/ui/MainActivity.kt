@@ -11,6 +11,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.credentials.CredentialManager
@@ -129,8 +130,46 @@ class MainActivity : AppCompatActivity() {
                 "signDeviceApprovalChallenge" -> {
                     val challenge = message.optJSONObject("challenge")
                         ?: throw IllegalArgumentException("Approval challenge is required.")
-                    val result = deviceSigningKeyStore.signApprovalChallenge(challenge.toString())
-                    replyProxy.postMessage(JSONObject().put("ok", true).put("requestId", requestId).put("proof", result).toString())
+                    val targetRegistrationId = challenge.optString("targetRegistrationId")
+                    require(targetRegistrationId.matches(Regex("[A-Za-z0-9_-]{16,128}"))) {
+                        "Target device registration is invalid."
+                    }
+                    AlertDialog.Builder(this)
+                        .setTitle("Approve another Jerry device?")
+                        .setMessage(
+                            "A new device is requesting access to your Jerry account. " +
+                                "Approve registration " + targetRegistrationId + "? " +
+                                "Only continue if you initiated this enrollment."
+                        )
+                        .setNegativeButton("Cancel") { dialog, _ ->
+                            dialog.dismiss()
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Device approval was cancelled by the owner.").toString()
+                            )
+                        }
+                        .setPositiveButton("Approve device") { dialog, _ ->
+                            dialog.dismiss()
+                            try {
+                                val result = deviceSigningKeyStore.signApprovalChallenge(challenge.toString())
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", true).put("requestId", requestId)
+                                        .put("proof", result).toString()
+                                )
+                            } catch (error: Exception) {
+                                replyProxy.postMessage(
+                                    JSONObject().put("ok", false).put("requestId", requestId)
+                                        .put("error", error.message ?: "Device approval signing failed.").toString()
+                                )
+                            }
+                        }
+                        .setOnCancelListener {
+                            replyProxy.postMessage(
+                                JSONObject().put("ok", false).put("requestId", requestId)
+                                    .put("error", "Device approval was cancelled by the owner.").toString()
+                            )
+                        }
+                        .show()
                     true
                 }
                 "deleteDeviceSigningKey" -> {
