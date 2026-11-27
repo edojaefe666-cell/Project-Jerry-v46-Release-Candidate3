@@ -494,9 +494,9 @@ async function startServer() {
       // lease closes the race where an owner stop commits after that check
       // but before this security-state mutation begins.
       await withSharedExecutionLease(async () => {
-        const snapshot = decryptSecurityBackup(String(body.backup ?? ''), String(body.passphrase));
+        const snapshot = decryptSecurityBackup(String(body.backup ?? ''), String(body.passphrase)) as Parameters<typeof restoreSharedSecuritySnapshot>[0];
         securityStore.validateSnapshot(snapshot);
-         await restoreSharedSecuritySnapshot(snapshot, req.user!.uid, String(body.approvalId ?? '').trim());
+        await restoreSharedSecuritySnapshot(snapshot, req.user!.uid, String(body.approvalId ?? '').trim());
       });
       res.json({ restored: true, message: 'Jerry security records restored successfully.' });
     } catch (error) {
