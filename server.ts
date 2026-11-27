@@ -728,7 +728,7 @@ async function startServer() {
     }
     // Reserve the exact, owner-approved reset scope before touching workspace
     // data. A reservation prevents concurrent sessions or replay from reusing it.
-    const reservationId = randomBytes(32).toString('hex');
+    const reservationId = createHash('sha256').update(`${uid}:${approvalId}:workspace_reset`).digest('hex');
     const approval = securityStore.reserveApproval(
       approvalId,
       'high_impact_change',
