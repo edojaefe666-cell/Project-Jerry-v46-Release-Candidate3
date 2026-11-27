@@ -368,25 +368,30 @@ class DeviceMemoryExchangeKeyStore(
         val targetContext = canonicalContextJson(expectedOwnerUid, targetDeviceId, expectedKeyVersion)
         val expectedRecoveryContext = canonicalRecoveryContextJson(expectedOwnerUid, expectedKeyVersion)
         val recoveryKey = decodeBase64Url(recoveryKeyEncoded, 32, "recovery key")
-        val envelope = JSONObject(envelopeJson)
-        require(envelope.optInt("version", -1) == 1) { "Owner recovery envelope version is unsupported." }
-        require(envelope.optString("algorithm") == "HKDF-SHA256-AES-256-GCM") {
-            "Owner recovery envelope algorithm is unsupported."
-        }
-        val context = envelope.getJSONObject("context")
-        val ownerUid = context.getString("ownerUid")
-        val keyVersion = context.getInt("keyVersion")
-        require(canonicalRecoveryContextJson(ownerUid, keyVersion) == expectedRecoveryContext) {
-            "Owner recovery envelope does not match this owner and key version."
-        }
-        val salt = decodeBase64Url(envelope.getString("salt"), 32, "recovery salt")
-        val iv = decodeBase64Url(envelope.getString("iv"), GCM_IV_BYTES, "recovery IV")
-        val ciphertext = decodeBase64Url(envelope.getString("ciphertext"), 48, "recovery ciphertext")
-        val contextBytes = expectedRecoveryContext.toByteArray(Charsets.UTF_8)
-        val info = ("Jerry owner memory recovery v1\u0000" + expectedRecoveryContext).toByteArray(Charsets.UTF_8)
+        var salt: ByteArray? = null
+        var iv: ByteArray? = null
+        var ciphertext: ByteArray? = null
+        var contextBytes: ByteArray? = null
+        var info: ByteArray? = null
         var wrappingKey: ByteArray? = null
         var rawMemoryKey: ByteArray? = null
         try {
+            val envelope = JSONObject(envelopeJson)
+            require(envelope.optInt("version", -1) == 1) { "Owner recovery envelope version is unsupported." }
+            require(envelope.optString("algorithm") == "HKDF-SHA256-AES-256-GCM") {
+                "Owner recovery envelope algorithm is unsupported."
+            }
+            val context = envelope.getJSONObject("context")
+            val ownerUid = context.getString("ownerUid")
+            val keyVersion = context.getInt("keyVersion")
+            require(canonicalRecoveryContextJson(ownerUid, keyVersion) == expectedRecoveryContext) {
+                "Owner recovery envelope does not match this owner and key version."
+            }
+            salt = decodeBase64Url(envelope.getString("salt"), 32, "recovery salt")
+            iv = decodeBase64Url(envelope.getString("iv"), GCM_IV_BYTES, "recovery IV")
+            ciphertext = decodeBase64Url(envelope.getString("ciphertext"), 48, "recovery ciphertext")
+            contextBytes = expectedRecoveryContext.toByteArray(Charsets.UTF_8)
+            info = ("Jerry owner memory recovery v1\\u0000" + expectedRecoveryContext).toByteArray(Charsets.UTF_8)
             wrappingKey = hkdfSha256(recoveryKey, salt, info, 32)
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(wrappingKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
@@ -397,11 +402,11 @@ class DeviceMemoryExchangeKeyStore(
             return true
         } finally {
             recoveryKey.fill(0)
-            salt.fill(0)
-            iv.fill(0)
-            ciphertext.fill(0)
-            contextBytes.fill(0)
-            info.fill(0)
+            salt?.fill(0)
+            iv?.fill(0)
+            ciphertext?.fill(0)
+            contextBytes?.fill(0)
+            info?.fill(0)
             wrappingKey?.fill(0)
             rawMemoryKey?.fill(0)
         }
