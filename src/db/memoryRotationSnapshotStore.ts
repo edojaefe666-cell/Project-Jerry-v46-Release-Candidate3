@@ -68,7 +68,7 @@ export async function createMemoryRotationSnapshotForUser(
     }
     return { snapshotId: header.id, rotationId: header.rotationId, fromKeyVersion: header.fromKeyVersion,
       totalRecords: header.totalRecords, manifestSha256: header.manifestSha256, createdAt: header.createdAt.toISOString() };
-  });
+  }, { isolationLevel: 'repeatable read' });
 }
 
 /** Reads immutable manifest pages for the authenticated owner; live records cannot reorder the manifest. */
@@ -99,4 +99,26 @@ export async function getMemoryRotationSnapshotPageForUser(
       revision: row.revision, createdAt: row.createdAt.toISOString() })),
     nextOffset: hasMore ? offset + page.length : null,
   };
+}
+
+/** Recomputes the immutable manifest digest and record count before rotation proceeds. */
+export async function verifyMemoryRotationSnapshotForUser(
+  uid: string, email: string, rotationId: string,
+): Promise<boolean> {
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(rotationId)) return false;
+  const user = await getOrCreateUser(uid, email);
+  const [header] = await db.select().from(memoryRotationSnapshots).where(and(
+    eq(memoryRotationSnapshots.userId, user.id),
+    eq(memoryRotationSnapshots.rotationId, rotationId),
+  )).limit(1);
+  if (!header) return false;
+  const rows = await db.select().from(memoryRotationSnapshotRecords).where(and(
+    eq(memoryRotationSnapshotRecords.userId, user.id),
+    eq(memoryRotationSnapshotRecords.snapshotId, header.id),
+  )).orderBy(asc(memoryRotationSnapshotRecords.ordinal));
+  if (rows.length !== header.totalRecords) return false;
+  const canonical = rows.map(row =>
+    [row.recordId, row.keyVersion, row.revision, row.createdAt.toISOString()].join('|'),
+  ).join('\n');
+  return createHash('sha256').update(canonical, 'utf8').digest('base64url') === header.manifestSha256;
 }
