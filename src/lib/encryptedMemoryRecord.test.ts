@@ -57,3 +57,28 @@ test('rejects payloads whose opaque ID or encrypted metadata is invalid', async 
   await assert.rejects(encryptMemoryRecord({ ...payload, tags: ['x'.repeat(81)] }, key, context, cryptoProvider), /payload fields/);
   await assert.rejects(encryptMemoryRecord({ ...payload, deleted: 'false' as unknown as boolean }, key, context, cryptoProvider), /payload fields/);
 });
+
+test('re-encrypts a record under the next key version and verifies the result', async () => {
+  const oldKey = await createKey();
+  const newKey = await createKey();
+  const original = await encryptMemoryRecord(payload, oldKey, context, cryptoProvider);
+  const { reencryptMemoryRecordForKeyRotation } = await import('./encryptedMemoryRecord.ts');
+  const rotated = await reencryptMemoryRecordForKeyRotation(original, oldKey, newKey, context, cryptoProvider);
+  const nextContext = { ...context, keyVersion: 2, revision: 2 };
+  assert.equal(rotated.recordId, original.recordId);
+  assert.equal(rotated.keyVersion, 2);
+  assert.equal(rotated.revision, 2);
+  assert.notEqual(rotated.iv, original.iv);
+  assert.notEqual(rotated.ciphertext, original.ciphertext);
+  assert.deepEqual(await decryptMemoryRecord(rotated, newKey, nextContext, cryptoProvider), payload);
+  await assert.rejects(decryptMemoryRecord(rotated, oldKey, nextContext, cryptoProvider));
+  await assert.rejects(decryptMemoryRecord(original, newKey, context, cryptoProvider));
+});
+
+test('rejects rotation when source context is stale or malformed', async () => {
+  const oldKey = await createKey();
+  const newKey = await createKey();
+  const original = await encryptMemoryRecord(payload, oldKey, context, cryptoProvider);
+  const { reencryptMemoryRecordForKeyRotation } = await import('./encryptedMemoryRecord.ts');
+  await assert.rejects(reencryptMemoryRecordForKeyRotation(original, oldKey, newKey, { ...context, revision: 2 }, cryptoProvider), /source record/);
+});

@@ -162,6 +162,42 @@ export async function decryptMemoryRecord(
 }
 
 /**
+ * Re-encrypts one already-downloaded record for a higher key version.
+ * This is a local cryptographic primitive only: it does not upload records,
+ * change the active key, create recovery envelopes, or authorize a rotation.
+ * Callers must verify every rotated record before switching key versions.
+ */
+export async function reencryptMemoryRecordForKeyRotation(
+  record: EncryptedMemoryRecord,
+  oldKey: CryptoKey,
+  newKey: CryptoKey,
+  oldContext: MemoryRecordContext,
+  cryptoProvider: Crypto = globalThis.crypto,
+): Promise<EncryptedMemoryRecord> {
+  validateContext(oldContext);
+  if (!record || record.keyVersion !== oldContext.keyVersion ||
+      record.revision !== oldContext.revision ||
+      !Number.isSafeInteger(oldContext.revision + 1) ||
+      !Number.isSafeInteger(oldContext.keyVersion + 1)) {
+    throw new Error('Memory key rotation source record is invalid.');
+  }
+  const nextContext: MemoryRecordContext = {
+    ownerUid: oldContext.ownerUid,
+    recordId: oldContext.recordId,
+    keyVersion: oldContext.keyVersion + 1,
+    revision: oldContext.revision + 1,
+  };
+  const payload = await decryptMemoryRecord(record, oldKey, oldContext, cryptoProvider);
+  const rotated = await encryptMemoryRecord(payload, newKey, nextContext, cryptoProvider);
+  // Verify the new ciphertext before returning it to a persistence layer.
+  const verified = await decryptMemoryRecord(rotated, newKey, nextContext, cryptoProvider);
+  if (JSON.stringify(verified) !== JSON.stringify(payload)) {
+    throw new Error('Memory key rotation verification failed.');
+  }
+  return rotated;
+}
+
+/**
  * Android 10 path: AES key operations remain in native code and the key is
  * never returned to JavaScript. The serialized memory payload necessarily
  * crosses the trusted WebView bridge so the UI can store/display its content.
