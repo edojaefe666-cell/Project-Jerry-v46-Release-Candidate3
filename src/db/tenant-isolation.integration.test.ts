@@ -135,11 +135,11 @@ test('PostgreSQL tenant isolation: workspace, approvals, idempotency, tasks, led
     assert.equal('recoveryKey' in storedRecovery, false,
       'The owner-held recovery secret must never be returned by persistence.');
     assert.equal('memoryKey' in storedRecovery, false);
-    const [recoveryA, recoveryB] = await Promise.all([
+    const [storedRecoveryA, recoveryB] = await Promise.all([
       getOwnerMemoryRecoveryEnvelopeForUser(userA.uid, userA.email, 1),
       getOwnerMemoryRecoveryEnvelopeForUser(userB.uid, userB.email, 1),
     ]);
-    assert.deepEqual(recoveryA, storedRecovery,
+    assert.deepEqual(storedRecoveryA, storedRecovery,
       'The correct owner must retrieve the exact immutable ciphertext envelope.');
     assert.equal(recoveryB, null,
       'A different tenant must not retrieve another owner recovery envelope.');
