@@ -14,3 +14,26 @@ test('memory page cursor rejects malformed, oversized and unsupported values', (
   const unsupported = Buffer.from(JSON.stringify({ v: 2, createdAt: '2026-11-26T12:00:00Z', id: 'x' })).toString('base64url');
   assert.equal(decodeMemoryPageCursor(unsupported), null);
 });
+
+import {
+  decodeEncryptedMemorySnapshotCursor,
+  encodeEncryptedMemorySnapshotCursor,
+} from './memoryCursor.ts';
+
+test('encrypted memory snapshot cursor round-trips watermark and keyset position', () => {
+  const value = {
+    snapshotAt: '2026-11-28T12:00:00.000Z',
+    lastCreatedAt: '2026-11-28T11:59:00.000Z',
+    lastId: 'record_1234567890ab',
+  };
+  assert.deepEqual(decodeEncryptedMemorySnapshotCursor(encodeEncryptedMemorySnapshotCursor(value)), value);
+});
+
+test('encrypted memory snapshot cursor rejects tampered shapes and dates after watermark', () => {
+  const afterWatermark = Buffer.from(JSON.stringify({
+    v: 2, snapshotAt: '2026-11-28T12:00:00.000Z',
+    lastCreatedAt: '2026-11-28T12:01:00.000Z', lastId: 'record_1234567890ab',
+  })).toString('base64url');
+  assert.equal(decodeEncryptedMemorySnapshotCursor(afterWatermark), null);
+  assert.equal(decodeEncryptedMemorySnapshotCursor('not-valid!'), null);
+});

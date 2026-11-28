@@ -35,7 +35,7 @@ import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { requestDeviceRegistrationForUser, listDeviceRegistrationsForUser, isActiveDeviceForUser } from './src/db/deviceRegistrationStore.ts';
-import { users, encryptedMemoryRecords, deviceRegistrations, deviceMemoryKeyEnvelopes } from './src/db/schema.ts';
+import { users, encryptedMemoryRecords, deviceRegistrations, deviceMemoryKeyEnvelopes, memoryRotationSnapshots, memoryRotationSnapshotRecords } from './src/db/schema.ts';
 import {
   createDeviceHttpRequestChallengeForUser,
   getDeviceHttpRequestChallengeForUser,
@@ -60,10 +60,10 @@ import { parseProviderPricingFromEnvironment } from './src/lib/providerAdapters.
 import { assertHostedProviderSpendEnabled } from './src/lib/providerSpendPolicy.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
-import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
+import { decodeMemoryPageCursor, encodeMemoryPageCursor, decodeEncryptedMemorySnapshotCursor, encodeEncryptedMemorySnapshotCursor } from './src/lib/memoryCursor.ts';
 import { applyLearningEnhancement, createOwnerLearningEntry } from './src/lib/learningMemory.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, lt, lte, or, sql } from 'drizzle-orm';
 import {
   getWorkspaceForUser,
   saveDailySummaryForUser,
@@ -713,17 +713,194 @@ async function startServer() {
     });
   });
 
+  // Backwards-compatible first-page read for existing clients. Rotation clients
+  // must follow nextCursor until complete=true and verify totalRecords.
   app.get('/api/memory/encrypted', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
     await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
-      const rows = await tx.select().from(encryptedMemoryRecords)
+      const snapshotAt = new Date();
+      const base = and(eq(encryptedMemoryRecords.userId, ownerId), lte(encryptedMemoryRecords.createdAt, snapshotAt));
+      const [{ totalRecords }] = await tx.select({ totalRecords: count() }).from(encryptedMemoryRecords).where(base);
+      const rows = await tx.select().from(encryptedMemoryRecords).where(base)
+        .orderBy(desc(encryptedMemoryRecords.createdAt), desc(encryptedMemoryRecords.id)).limit(101);
+      const hasMore = rows.length > 100;
+      const page = hasMore ? rows.slice(0, 100) : rows;
+      const last = page[page.length - 1];
+      const nextCursor = hasMore && last ? encodeEncryptedMemorySnapshotCursor({
+        snapshotAt: snapshotAt.toISOString(), lastCreatedAt: last.createdAt.toISOString(), lastId: last.id,
+      }) : null;
+      return {
+        snapshot: { snapshotAt: snapshotAt.toISOString(), totalRecords, pageSize: 100, ordering: 'createdAt_desc_recordId_desc' },
+        records: page.map((row) => ({
+          schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+          revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+          createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+        })),
+        nextCursor,
+        complete: nextCursor === null,
+      };
+    });
+  });
+
+  // Build a durable, immutable manifest while holding the same owner row lock
+  // used by encrypted-record writes. This gives the manifest a complete boundary:
+  // every API insert/update is wholly before or after this snapshot.
+  app.post('/api/memory/rotation-snapshots', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const body = req.body as Record<string, unknown>;
+      if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).some(key => key !== 'rotationId' && key !== 'fromKeyVersion') ||
+          typeof body.rotationId !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(body.rotationId) ||
+          !Number.isSafeInteger(body.fromKeyVersion) || (body.fromKeyVersion as number) < 1) {
+        throw new Error('Rotation snapshot request is invalid.');
+      }
+      const fromKeyVersion = body.fromKeyVersion as number;
+      const [activeSnapshot] = await tx.select({ id: memoryRotationSnapshots.id }).from(memoryRotationSnapshots).where(and(
+        eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.status, 'active'),
+      )).limit(1);
+      if (activeSnapshot) throw new Error('Another memory-key rotation is already active for this owner.');
+      const existing = await tx.select({ id: memoryRotationSnapshots.id })
+        .from(memoryRotationSnapshots)
+        .where(and(eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.rotationId, body.rotationId)))
+        .limit(1);
+      if (existing.length) throw new Error('A snapshot already exists for this rotation.');
+      const records = await tx.select({
+        id: encryptedMemoryRecords.id,
+        keyVersion: encryptedMemoryRecords.keyVersion,
+        revision: encryptedMemoryRecords.revision,
+        createdAt: encryptedMemoryRecords.createdAt,
+      }).from(encryptedMemoryRecords)
         .where(eq(encryptedMemoryRecords.userId, ownerId))
-        .orderBy(desc(encryptedMemoryRecords.updatedAt), desc(encryptedMemoryRecords.id))
-        .limit(100);
-      return { records: rows.map((row) => ({
-        schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
-        revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
-        createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
-      })) };
+        .orderBy(encryptedMemoryRecords.createdAt, encryptedMemoryRecords.id);
+      if (records.length < 1 || records.length > 100_000 || records.some(record => record.keyVersion !== fromKeyVersion)) {
+        throw new Error('The encrypted-memory set is empty, too large, or contains a different key version.');
+      }
+      const manifestSha256 = createHash('sha256').update(JSON.stringify(records.map((record, ordinal) => ({
+        ordinal, recordId: record.id, keyVersion: record.keyVersion,
+        revision: record.revision, createdAt: record.createdAt.toISOString(),
+      })))).digest('base64url');
+      const snapshotId = randomUUID();
+      const [snapshot] = await tx.insert(memoryRotationSnapshots).values({
+        id: snapshotId, userId: ownerId, rotationId: body.rotationId,
+        fromKeyVersion, totalRecords: records.length, manifestSha256,
+      }).returning();
+      if (!snapshot) throw new Error('Rotation snapshot could not be persisted.');
+      for (let start = 0; start < records.length; start += 500) {
+        const chunk = records.slice(start, start + 500);
+        await tx.insert(memoryRotationSnapshotRecords).values(chunk.map((record, index) => ({
+          id: randomUUID(), snapshotId, userId: ownerId, ordinal: start + index,
+          recordId: record.id, keyVersion: record.keyVersion,
+          revision: record.revision, createdAt: record.createdAt,
+        })));
+      }
+      return {
+        snapshotId, rotationId: snapshot.rotationId,
+        fromKeyVersion: snapshot.fromKeyVersion, totalRecords: snapshot.totalRecords,
+        manifestSha256: snapshot.manifestSha256, createdAt: snapshot.createdAt.toISOString(),
+        pageSize: 100, status: 'sealed',
+      };
+    }, true);
+  });
+
+  // Snapshot pages read only the immutable manifest, never the live memory table.
+  app.get('/api/memory/rotation-snapshots/:snapshotId/:offset', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const snapshotId = req.params.snapshotId;
+      const offset = Number(req.params.offset);
+      if (!/^[0-9a-f-]{36}$/i.test(snapshotId) || !Number.isSafeInteger(offset) ||
+          offset < 0 || offset > 100_000 || offset % 100 !== 0) {
+        throw new Error('Rotation snapshot page request is invalid.');
+      }
+      const [snapshot] = await tx.select().from(memoryRotationSnapshots).where(and(
+        eq(memoryRotationSnapshots.userId, ownerId),
+        eq(memoryRotationSnapshots.id, snapshotId),
+      )).limit(1);
+      if (!snapshot) throw new Error('Rotation snapshot was not found.');
+      const records = await tx.select({
+        ordinal: memoryRotationSnapshotRecords.ordinal,
+        recordId: memoryRotationSnapshotRecords.recordId,
+        keyVersion: memoryRotationSnapshotRecords.keyVersion,
+        revision: memoryRotationSnapshotRecords.revision,
+        createdAt: memoryRotationSnapshotRecords.createdAt,
+      }).from(memoryRotationSnapshotRecords).where(and(
+        eq(memoryRotationSnapshotRecords.userId, ownerId),
+        eq(memoryRotationSnapshotRecords.snapshotId, snapshotId),
+      )).orderBy(memoryRotationSnapshotRecords.ordinal).limit(100).offset(offset);
+      const nextOffset = offset + records.length < snapshot.totalRecords ? offset + 100 : null;
+      return {
+        snapshotId, rotationId: snapshot.rotationId,
+        fromKeyVersion: snapshot.fromKeyVersion, totalRecords: snapshot.totalRecords,
+        manifestSha256: snapshot.manifestSha256, pageSize: 100,
+        records: records.map(record => ({
+          ordinal: record.ordinal, recordId: record.recordId,
+          keyVersion: record.keyVersion, revision: record.revision,
+          createdAt: record.createdAt.toISOString(),
+        })),
+        nextOffset, complete: nextOffset === null,
+      };
+    });
+  });
+
+  // An owner-signed abort releases the write freeze without changing any memory record.
+  app.post('/api/memory/rotation-snapshots/:snapshotId/abort', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    const snapshotId = req.params.snapshotId;
+    if (!/^[0-9a-f-]{36}$/i.test(snapshotId) || !req.body || Object.keys(req.body).length !== 0) {
+      res.status(400).json({ error: 'A valid snapshot ID and empty abort command are required.' }); return;
+    }
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const [snapshot] = await tx.update(memoryRotationSnapshots).set({ status: 'aborted', completedAt: new Date() })
+        .where(and(eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.id, snapshotId), eq(memoryRotationSnapshots.status, 'active')))
+        .returning({ id: memoryRotationSnapshots.id, status: memoryRotationSnapshots.status });
+      if (!snapshot) throw new Error('No active rotation snapshot was found to abort.');
+      return { snapshotId: snapshot.id, status: snapshot.status, writesResumed: true };
+    }, true);
+  });
+
+  // Snapshot pagination is pinned to created_at (immutable) rather than updated_at.
+  // New records after the first-page watermark are excluded from every page.
+  // Revision CAS during rotation detects concurrent edits to existing records.
+  app.get('/api/memory/encrypted/page/:cursor', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const token = req.params.cursor;
+      const decoded = token === 'start' ? null : decodeEncryptedMemorySnapshotCursor(token);
+      if (token !== 'start' && !decoded) throw new Error('Encrypted memory snapshot cursor is invalid.');
+      const snapshotAt = decoded ? new Date(decoded.snapshotAt) : new Date();
+      const baseConditions = and(
+        eq(encryptedMemoryRecords.userId, ownerId),
+        lte(encryptedMemoryRecords.createdAt, snapshotAt),
+      );
+      const [{ totalRecords }] = await tx.select({ totalRecords: count() })
+        .from(encryptedMemoryRecords).where(baseConditions);
+      const pageConditions = decoded
+        ? and(baseConditions, or(
+            lt(encryptedMemoryRecords.createdAt, new Date(decoded.lastCreatedAt)),
+            and(
+              eq(encryptedMemoryRecords.createdAt, new Date(decoded.lastCreatedAt)),
+              lt(encryptedMemoryRecords.id, decoded.lastId),
+            ),
+          ))
+        : baseConditions;
+      const rows = await tx.select().from(encryptedMemoryRecords)
+        .where(pageConditions)
+        .orderBy(desc(encryptedMemoryRecords.createdAt), desc(encryptedMemoryRecords.id))
+        .limit(101);
+      const hasMore = rows.length > 100;
+      const page = hasMore ? rows.slice(0, 100) : rows;
+      const last = page[page.length - 1];
+      const nextCursor = hasMore && last ? encodeEncryptedMemorySnapshotCursor({
+        snapshotAt: snapshotAt.toISOString(),
+        lastCreatedAt: last.createdAt.toISOString(),
+        lastId: last.id,
+      }) : null;
+      return {
+        snapshot: { snapshotAt: snapshotAt.toISOString(), totalRecords, pageSize: 100, ordering: 'createdAt_desc_recordId_desc' },
+        records: page.map((row) => ({
+          schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+          revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+          createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+        })),
+        nextCursor,
+        complete: nextCursor === null,
+      };
     });
   });
 
@@ -806,6 +983,11 @@ async function startServer() {
       const record = req.body as Record<string, unknown>;
       const validationError = validateEncryptedMemoryRecord(record);
       if (validationError || record.revision !== 1) throw new Error('Encrypted memory envelope is invalid.');
+      const [activeRotation] = await tx.select({ id: memoryRotationSnapshots.id }).from(memoryRotationSnapshots).where(and(
+        eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.status, 'active'),
+      )).limit(1);
+      if (activeRotation) throw new Error('Encrypted memory writes are paused during owner-authorized key rotation.');
+
       const [row] = await tx.insert(encryptedMemoryRecords).values({
         id: record.recordId as string, userId: ownerId,
         keyVersion: record.keyVersion as number, revision: 1,
@@ -817,7 +999,7 @@ async function startServer() {
         revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
         createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
       } };
-    });
+    }, true);
   });
 
   app.get('/api/memory/encrypted/:recordId', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
@@ -846,6 +1028,11 @@ async function startServer() {
       }
       const record = body.record;
       const expectedRevision = body?.expectedRevision;
+      const [activeRotation] = await tx.select({ id: memoryRotationSnapshots.id }).from(memoryRotationSnapshots).where(and(
+        eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.status, 'active'),
+      )).limit(1);
+      if (activeRotation) throw new Error('Encrypted memory writes are paused during owner-authorized key rotation.');
+
       const validationError = validateEncryptedMemoryRecord(record);
       if (validationError || !record || record.recordId !== req.params.recordId ||
           !Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 1 ||
@@ -869,7 +1056,7 @@ async function startServer() {
         revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
         createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
       } };
-    });
+    }, true);
   });
 
   const deviceApprovalRateLimit = createSharedOwnerRateLimiter('device-approval', 8, 60_000);

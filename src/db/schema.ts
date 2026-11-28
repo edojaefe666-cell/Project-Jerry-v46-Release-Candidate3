@@ -1,4 +1,4 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
   boolean,
   doublePrecision,
@@ -208,6 +208,66 @@ export const encryptedMemoryRecords = pgTable('encrypted_memory_records', {
   ownerUpdatedIndex: index('encrypted_memory_records_owner_updated_idx').on(table.userId, table.updatedAt, table.id),
 }));
 
+export const memoryRotationCheckpoints = pgTable('memory_rotation_checkpoints', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  rotationId: text('rotation_id').notNull(),
+  fromKeyVersion: integer('from_key_version').notNull(),
+  toKeyVersion: integer('to_key_version').notNull(),
+  checkpointRevision: integer('checkpoint_revision').notNull().default(1),
+  phase: text('phase').notNull(),
+  checkpointJson: jsonb('checkpoint_json').notNull().$type<{
+    schemaVersion: 1;
+    rotationId: string;
+    ownerUid: string;
+    fromKeyVersion: number;
+    toKeyVersion: number;
+    phase: string;
+    recordIds: string[];
+    writtenRecordIds: string[];
+    verifiedRecordIds: string[];
+    createdAt: string;
+    updatedAt: string;
+  }>(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  ownerRotationUnique: uniqueIndex('memory_rotation_checkpoints_owner_rotation_unique').on(table.userId, table.rotationId),
+  ownerUpdatedIndex: index('memory_rotation_checkpoints_owner_updated_idx').on(table.userId, table.updatedAt),
+}));
+
+export const memoryRotationSnapshots = pgTable('memory_rotation_snapshots', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  rotationId: text('rotation_id').notNull(),
+  fromKeyVersion: integer('from_key_version').notNull(),
+  totalRecords: integer('total_records').notNull(),
+  manifestSha256: text('manifest_sha256').notNull(),
+  status: text('status').notNull().default('active'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+}, (table) => ({
+  ownerRotationUnique: uniqueIndex('memory_rotation_snapshots_owner_rotation_unique').on(table.userId, table.rotationId),
+  ownerCreatedIndex: index('memory_rotation_snapshots_owner_created_idx').on(table.userId, table.createdAt),
+  oneActiveRotationPerOwner: uniqueIndex('memory_rotation_snapshots_one_active_owner_unique')
+    .on(table.userId).where(sql`${table.status} = 'active'`),
+}));
+
+export const memoryRotationSnapshotRecords = pgTable('memory_rotation_snapshot_records', {
+  id: text('id').primaryKey(),
+  snapshotId: text('snapshot_id').references(() => memoryRotationSnapshots.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  ordinal: integer('ordinal').notNull(),
+  recordId: text('record_id').notNull(),
+  keyVersion: integer('key_version').notNull(),
+  revision: integer('revision').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+}, (table) => ({
+  snapshotOrdinalUnique: uniqueIndex('memory_rotation_snapshot_records_ordinal_unique').on(table.snapshotId, table.ordinal),
+  snapshotRecordUnique: uniqueIndex('memory_rotation_snapshot_records_record_unique').on(table.snapshotId, table.recordId),
+  ownerSnapshotIndex: index('memory_rotation_snapshot_records_owner_snapshot_idx').on(table.userId, table.snapshotId, table.ordinal),
+}));
+
 export const memoryEntries = pgTable('memory_entries', {
   id: text('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
@@ -240,6 +300,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   deviceRegistrations: many(deviceRegistrations),
   deviceMemoryKeyEnvelopes: many(deviceMemoryKeyEnvelopes),
   memoryRecoveryEnvelopes: many(memoryRecoveryEnvelopes),
+  memoryRotationCheckpoints: many(memoryRotationCheckpoints),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ one }) => ({

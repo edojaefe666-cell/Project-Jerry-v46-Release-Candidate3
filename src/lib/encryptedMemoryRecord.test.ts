@@ -57,3 +57,61 @@ test('rejects payloads whose opaque ID or encrypted metadata is invalid', async 
   await assert.rejects(encryptMemoryRecord({ ...payload, tags: ['x'.repeat(81)] }, key, context, cryptoProvider), /payload fields/);
   await assert.rejects(encryptMemoryRecord({ ...payload, deleted: 'false' as unknown as boolean }, key, context, cryptoProvider), /payload fields/);
 });
+
+test('re-encrypts a record under the next key version and verifies the result', async () => {
+  const oldKey = await createKey();
+  const newKey = await createKey();
+  const original = await encryptMemoryRecord(payload, oldKey, context, cryptoProvider);
+  const { reencryptMemoryRecordForKeyRotation } = await import('./encryptedMemoryRecord.ts');
+  const rotated = await reencryptMemoryRecordForKeyRotation(original, oldKey, newKey, context, cryptoProvider);
+  const nextContext = { ...context, keyVersion: 2, revision: 2 };
+  assert.equal(rotated.recordId, original.recordId);
+  assert.equal(rotated.keyVersion, 2);
+  assert.equal(rotated.revision, 2);
+  assert.notEqual(rotated.iv, original.iv);
+  assert.notEqual(rotated.ciphertext, original.ciphertext);
+  assert.deepEqual(await decryptMemoryRecord(rotated, newKey, nextContext, cryptoProvider), payload);
+  await assert.rejects(decryptMemoryRecord(rotated, oldKey, nextContext, cryptoProvider));
+  await assert.rejects(decryptMemoryRecord(original, newKey, context, cryptoProvider));
+});
+
+test('rejects rotation when source context is stale or malformed', async () => {
+  const oldKey = await createKey();
+  const newKey = await createKey();
+  const original = await encryptMemoryRecord(payload, oldKey, context, cryptoProvider);
+  const { reencryptMemoryRecordForKeyRotation } = await import('./encryptedMemoryRecord.ts');
+  await assert.rejects(reencryptMemoryRecordForKeyRotation(original, oldKey, newKey, { ...context, revision: 2 }, cryptoProvider), /source record/);
+});
+
+test('prepares a complete, ordered, verified rotation batch without persisting it', async () => {
+  const oldKey = await createKey();
+  const newKey = await createKey();
+  const { prepareEncryptedMemoryKeyRotationBatch, reencryptMemoryRecordForKeyRotation } = await import('./encryptedMemoryRecord.ts');
+  const secondPayload = { ...payload, id: 'record_abcdef1234567890', title: 'Second record' };
+  const secondContext = { ...context, recordId: secondPayload.id };
+  const first = await encryptMemoryRecord(payload, oldKey, context, cryptoProvider);
+  const second = await encryptMemoryRecord(secondPayload, oldKey, secondContext, cryptoProvider);
+  const batch = await prepareEncryptedMemoryKeyRotationBatch(
+    context.ownerUid, 1, [second, first], true,
+    (record, recordContext) => reencryptMemoryRecordForKeyRotation(record, oldKey, newKey, recordContext, cryptoProvider),
+  );
+  assert.equal(batch.sourceCount, 2);
+  assert.equal(batch.fromKeyVersion, 1);
+  assert.equal(batch.toKeyVersion, 2);
+  assert.deepEqual(batch.records.map(record => record.recordId), [first.recordId, second.recordId]);
+  assert.equal(batch.records.every(record => record.keyVersion === 2 && record.revision === 2), true);
+});
+
+test('refuses incomplete snapshots, mixed key versions, duplicates, and invalid rotated output', async () => {
+  const oldKey = await createKey();
+  const newKey = await createKey();
+  const { prepareEncryptedMemoryKeyRotationBatch, reencryptMemoryRecordForKeyRotation } = await import('./encryptedMemoryRecord.ts');
+  const first = await encryptMemoryRecord(payload, oldKey, context, cryptoProvider);
+  const rotate = (record: typeof first, recordContext: typeof context) =>
+    reencryptMemoryRecordForKeyRotation(record, oldKey, newKey, recordContext, cryptoProvider);
+  await assert.rejects(prepareEncryptedMemoryKeyRotationBatch(context.ownerUid, 1, [first], false, rotate), /complete/);
+  await assert.rejects(prepareEncryptedMemoryKeyRotationBatch(context.ownerUid, 2, [first], true, rotate), /mixed-version/);
+  await assert.rejects(prepareEncryptedMemoryKeyRotationBatch(context.ownerUid, 1, [first, first], true, rotate), /duplicate/);
+  await assert.rejects(prepareEncryptedMemoryKeyRotationBatch(context.ownerUid, 1, [first], true,
+    async record => ({ ...record, keyVersion: 1 })), /transition verification/);
+});

@@ -48,6 +48,10 @@ export function isAllowedEncryptedMemoryTarget(method: string, path: string): bo
       path.includes('\\') || path.includes('%') || path.includes('//') ||
       path.split('/').some((part) => part === '.' || part === '..')) return false;
   if (path === '/api/memory/encrypted') return method === 'GET' || method === 'POST';
+  if (/^\/api\/memory\/encrypted\/page\/(?:start|[A-Za-z0-9_-]{8,768})$/.test(path)) return method === 'GET';
+  if (path === '/api/memory/rotation-snapshots') return method === 'POST';
+  if (/^\/api\/memory\/rotation-snapshots\/[0-9a-f-]{36}\/\d{1,6}$/i.test(path)) return method === 'GET';
+  if (/^\/api\/memory\/rotation-snapshots\/[0-9a-f-]{36}\/abort$/i.test(path)) return method === 'POST';
   if (/^\/api\/devices\/[A-Za-z0-9_-]{16,128}\/revoke$/.test(path)) return method === 'POST';
   if (path === '/api/memory/key-envelopes') return method === 'POST';
   if (/^\/api\/memory\/key-envelopes\/[1-9][0-9]{0,8}$/.test(path)) return method === 'GET';
