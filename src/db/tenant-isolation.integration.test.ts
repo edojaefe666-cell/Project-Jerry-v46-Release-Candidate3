@@ -145,7 +145,16 @@ test('PostgreSQL tenant isolation: workspace, approvals, idempotency, tasks, led
       'A different tenant must not retrieve another owner recovery envelope.');
     await assert.rejects(
       createOwnerMemoryRecoveryEnvelopeForUser(userA.uid, userA.email, recoveryEnvelope),
-      /unique|duplicate|conflict/i,
+      (error: unknown) => {
+        let candidate: unknown = error;
+        for (let depth = 0; depth < 4 && candidate && typeof candidate === 'object'; depth += 1) {
+          const details = candidate as { code?: unknown; constraint?: unknown; cause?: unknown };
+          if (details.code === '23505' &&
+              details.constraint === 'memory_recovery_envelopes_owner_key_version_unique') return true;
+          candidate = details.cause;
+        }
+        return false;
+      },
       'An existing owner/key-version recovery envelope must not be overwritten.',
     );
 
