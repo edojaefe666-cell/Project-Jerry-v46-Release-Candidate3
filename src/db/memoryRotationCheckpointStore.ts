@@ -29,7 +29,7 @@ function toStored(row: typeof memoryRotationCheckpoints.$inferSelect): StoredMem
   return {
     id: row.id,
     checkpointRevision: row.checkpointRevision,
-    checkpoint: row.checkpointJson,
+    checkpoint: row.checkpointJson as MemoryRotationCheckpoint,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
