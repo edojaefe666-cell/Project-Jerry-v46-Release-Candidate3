@@ -597,37 +597,9 @@ class DeviceMemoryExchangeKeyStore(
         return decoded
     }
 
-    /** RFC 5869 HKDF-SHA256; output is limited to the SHA-256 255-block bound. */
-    private fun hkdfSha256(ikm: ByteArray, salt: ByteArray, info: ByteArray, length: Int): ByteArray {
-        require(length in 1..(255 * 32)) { "HKDF output length is invalid." }
-        val mac = Mac.getInstance("HmacSHA256")
-        val effectiveSalt = if (salt.isEmpty()) ByteArray(32) else salt
-        mac.init(SecretKeySpec(effectiveSalt, "HmacSHA256"))
-        val prk = mac.doFinal(ikm)
-        try {
-            val output = ByteArray(length)
-            var previous = ByteArray(0)
-            var offset = 0
-            var counter = 1
-            while (offset < length) {
-                mac.init(SecretKeySpec(prk, "HmacSHA256"))
-                mac.update(previous)
-                mac.update(info)
-                mac.update(counter.toByte())
-                val block = mac.doFinal()
-                previous.fill(0)
-                previous = block
-                val count = minOf(block.size, length - offset)
-                block.copyInto(output, offset, 0, count)
-                offset += count
-                counter++
-            }
-            previous.fill(0)
-            return output
-        } finally {
-            prk.fill(0)
-        }
-    }
+    /** RFC 5869 HKDF-SHA256; implementation is shared with the deterministic crypto tests. */
+    private fun hkdfSha256(ikm: ByteArray, salt: ByteArray, info: ByteArray, length: Int): ByteArray =
+        JerryHkdfSha256.derive(ikm, salt, info, length)
 
     /** Removes this device's wrapped exchange key and locally installed data keys. */
     @Synchronized
