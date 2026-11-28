@@ -197,6 +197,80 @@ export async function reencryptMemoryRecordForKeyRotation(
   return rotated;
 }
 
+export interface PreparedMemoryKeyRotationBatch {
+  ownerUid: string;
+  fromKeyVersion: number;
+  toKeyVersion: number;
+  sourceCount: number;
+  records: EncryptedMemoryRecord[];
+}
+
+/**
+ * Builds a fully verified, deterministic local rotation batch from a complete
+ * ciphertext snapshot. It performs no network writes and never changes the
+ * active key. The caller must prove that the snapshot is complete (all pages
+ * fetched) and must persist each output with revision compare-and-swap.
+ */
+export async function prepareEncryptedMemoryKeyRotationBatch(
+  ownerUid: string,
+  currentKeyVersion: number,
+  sourceRecords: EncryptedMemoryRecord[],
+  completeSnapshot: boolean,
+  rotateRecord: (
+    record: EncryptedMemoryRecord,
+    context: MemoryRecordContext,
+  ) => Promise<EncryptedMemoryRecord>,
+): Promise<PreparedMemoryKeyRotationBatch> {
+  if (typeof ownerUid !== 'string' || !ownerUid.trim() || ownerUid.length > 160 ||
+      !Number.isSafeInteger(currentKeyVersion) || currentKeyVersion < 1 ||
+      !Array.isArray(sourceRecords) || sourceRecords.length > 500 ||
+      completeSnapshot !== true || typeof rotateRecord !== 'function') {
+    throw new Error('A complete, valid encrypted memory snapshot is required for key rotation.');
+  }
+  if (!Number.isSafeInteger(currentKeyVersion + 1)) {
+    throw new Error('Next memory key version is out of range.');
+  }
+  const seen = new Set<string>();
+  for (const record of sourceRecords) {
+    if (!record || record.schemaVersion !== 1 ||
+        typeof record.recordId !== 'string' ||
+        !/^[A-Za-z0-9_-]{16,128}$/.test(record.recordId) ||
+        record.keyVersion !== currentKeyVersion ||
+        !Number.isSafeInteger(record.revision) || record.revision < 1 ||
+        typeof record.iv !== 'string' || typeof record.ciphertext !== 'string' ||
+        seen.has(record.recordId)) {
+      throw new Error('Rotation snapshot contains an invalid, duplicate, or mixed-version record.');
+    }
+    seen.add(record.recordId);
+  }
+  const ordered = [...sourceRecords].sort((a, b) => a.recordId.localeCompare(b.recordId));
+  const rotated: EncryptedMemoryRecord[] = [];
+  for (const record of ordered) {
+    if (!Number.isSafeInteger(record.revision + 1)) {
+      throw new Error('Memory record revision is out of range for rotation.');
+    }
+    const context: MemoryRecordContext = {
+      ownerUid, recordId: record.recordId,
+      keyVersion: currentKeyVersion, revision: record.revision,
+    };
+    const next = await rotateRecord(record, context);
+    if (!next || next.schemaVersion !== 1 || next.recordId !== record.recordId ||
+        next.keyVersion !== currentKeyVersion + 1 ||
+        next.revision !== record.revision + 1 ||
+        typeof next.iv !== 'string' || next.iv === record.iv ||
+        typeof next.ciphertext !== 'string' || next.ciphertext === record.ciphertext) {
+      throw new Error('A rotated memory record failed envelope transition verification.');
+    }
+    rotated.push(next);
+  }
+  return {
+    ownerUid, fromKeyVersion: currentKeyVersion,
+    toKeyVersion: currentKeyVersion + 1,
+    sourceCount: sourceRecords.length,
+    records: rotated,
+  };
+}
+
 /**
  * Android 10 path: AES key operations remain in native code and the key is
  * never returned to JavaScript. The serialized memory payload necessarily
