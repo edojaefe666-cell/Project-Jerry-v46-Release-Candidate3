@@ -67,3 +67,10 @@ test('verifies ECDSA proof only for the exact challenge and body bytes', async (
   assert.equal(await verifyDeviceHttpRequestProof(valid, { ...proof, challengeId: 'challenge_other_12345' }, publicKey, body, now, cryptoProvider), false);
   assert.equal(await verifyDeviceHttpRequestProof(valid, proof, publicKey, body, now + 31_000, cryptoProvider), false);
 });
+
+test('allows only exact signed encrypted-memory snapshot page paths', () => {
+  assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/encrypted/page/start'), true);
+  assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/encrypted/page/eyJ2IjoyfQ'), true);
+  assert.equal(isAllowedEncryptedMemoryTarget('POST', '/api/memory/encrypted/page/start'), false);
+  assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/encrypted/page/start?limit=500'), false);
+});
