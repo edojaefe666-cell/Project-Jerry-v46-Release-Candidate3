@@ -8,6 +8,12 @@ function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
 function fromHex(value: string): Uint8Array {
   return Uint8Array.from(value.match(/.{2}/g) ?? [], (part) => Number.parseInt(part, 16));
 }
@@ -16,12 +22,12 @@ test('WebCrypto HKDF-SHA256 matches RFC 5869 test case one used by native Androi
   const ikm = new Uint8Array(22).fill(0x0b);
   const salt = fromHex('000102030405060708090a0b0c');
   const info = fromHex('f0f1f2f3f4f5f6f7f8f9');
-  const key = await cryptoProvider.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+  const key = await cryptoProvider.subtle.importKey('raw', toArrayBuffer(ikm), 'HKDF', false, ['deriveBits']);
   const output = new Uint8Array(await cryptoProvider.subtle.deriveBits({
     name: 'HKDF',
     hash: 'SHA-256',
-    salt,
-    info,
+    salt: toArrayBuffer(salt),
+    info: toArrayBuffer(info),
   }, key, 42 * 8));
   assert.equal(
     hex(output),
