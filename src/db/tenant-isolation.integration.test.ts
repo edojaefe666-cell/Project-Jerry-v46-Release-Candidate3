@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { INITIAL_JERRY_STATE } from '../lib/seedData.ts';
 import type { ApprovalRequest, DailySummaryReport, JerryState, WalletTransaction } from '../lib/types';
+import { createOwnerMemoryRecoveryEnvelopeForUser, getOwnerMemoryRecoveryEnvelopeForUser } from './memoryRecoveryEnvelopeStore.ts';
 
 const databaseOptIn = process.env.JERRY_TENANT_TEST_DATABASE === '1';
 const databaseName = process.env.SQL_DB_NAME ?? '';
@@ -118,6 +119,47 @@ test('PostgreSQL tenant isolation: workspace, approvals, idempotency, tasks, led
     assert.equal(knowledgeAFromB.some((entry) => entry.id === memoryA.id), false,
       'Area-filtered memory search must remain tenant-scoped.');
 
+    const recoveryEnvelope = {
+      version: 1 as const,
+      algorithm: 'HKDF-SHA256-AES-256-GCM' as const,
+      context: { ownerUid: userA.uid, keyVersion: 1 },
+      salt: 'A'.repeat(43),
+      iv: 'B'.repeat(16),
+      ciphertext: 'C'.repeat(64),
+    };
+    const storedRecovery = await createOwnerMemoryRecoveryEnvelopeForUser(
+      userA.uid, userA.email, recoveryEnvelope,
+    );
+    assert.equal(storedRecovery.context.ownerUid, userA.uid);
+    assert.equal(storedRecovery.context.keyVersion, 1);
+    assert.equal('recoveryKey' in storedRecovery, false,
+      'The owner-held recovery secret must never be returned by persistence.');
+    assert.equal('memoryKey' in storedRecovery, false);
+    const [storedRecoveryA, recoveryB] = await Promise.all([
+      getOwnerMemoryRecoveryEnvelopeForUser(userA.uid, userA.email, 1),
+      getOwnerMemoryRecoveryEnvelopeForUser(userB.uid, userB.email, 1),
+    ]);
+    assert.deepEqual(storedRecoveryA, storedRecovery,
+      'The correct owner must retrieve the exact immutable ciphertext envelope.');
+    assert.equal(recoveryB, null,
+      'A different tenant must not retrieve another owner recovery envelope.');
+    await assert.rejects(
+      createOwnerMemoryRecoveryEnvelopeForUser(userA.uid, userA.email, recoveryEnvelope),
+      (error: unknown) => {
+        // Drizzle wraps PostgreSQL errors; inspect the cause rather than relying on
+        // the outer "Failed query" message, which omits the unique-violation text.
+        let candidate: unknown = error;
+        for (let depth = 0; depth < 4 && candidate && typeof candidate === 'object'; depth += 1) {
+          const details = candidate as { code?: unknown; constraint?: unknown; cause?: unknown };
+          if (details.code === '23505' &&
+              details.constraint === 'memory_recovery_envelopes_owner_key_version_unique') return true;
+          candidate = details.cause;
+        }
+        return false;
+      },
+      'An existing owner/key-version recovery envelope must not be overwritten.',
+    );
+
     await saveWorkspaceForUser(userA.uid, userA.email, makeState('Tenant A', [approval]));
     await saveWorkspaceForUser(userB.uid, userB.email, makeState('Tenant B', [approvalB]));
 
@@ -213,6 +255,7 @@ test('PostgreSQL tenant isolation: workspace, approvals, idempotency, tasks, led
       await client.query('DELETE FROM task_executions WHERE user_id IN (SELECT id FROM users WHERE uid = ANY($1::text[]))', [[userA.uid, userB.uid]]);
       await client.query('DELETE FROM idempotency_keys WHERE user_id IN (SELECT id FROM users WHERE uid = ANY($1::text[]))', [[userA.uid, userB.uid]]);
       await client.query('DELETE FROM ledger_transactions WHERE user_id IN (SELECT id FROM users WHERE uid = ANY($1::text[]))', [[userA.uid, userB.uid]]);
+      await client.query('DELETE FROM memory_recovery_envelopes WHERE user_id IN (SELECT id FROM users WHERE uid = ANY($1::text[]))', [[userA.uid, userB.uid]]);
       await client.query('DELETE FROM daily_summary_reports WHERE user_id IN (SELECT id FROM users WHERE uid = ANY($1::text[]))', [[userA.uid, userB.uid]]);
       await client.query('DELETE FROM workspaces WHERE user_id IN (SELECT id FROM users WHERE uid = ANY($1::text[]))', [[userA.uid, userB.uid]]);
       await client.query('DELETE FROM users WHERE uid = ANY($1::text[])', [[userA.uid, userB.uid]]);
