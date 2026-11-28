@@ -81,3 +81,9 @@ test('allows only exact signed encrypted-memory snapshot page paths', () => {
   assert.equal(isAllowedEncryptedMemoryTarget('POST', '/api/memory/encrypted/page/start'), false);
   assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/encrypted/page/start?limit=500'), false);
 });
+
+test('allows only signed owner abort for a rotation snapshot', () => {
+  assert.equal(isAllowedEncryptedMemoryTarget('POST', '/api/memory/rotation-snapshots/123e4567-e89b-12d3-a456-426614174000/abort'), true);
+  assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/rotation-snapshots/123e4567-e89b-12d3-a456-426614174000/abort'), false);
+  assert.equal(isAllowedEncryptedMemoryTarget('POST', '/api/memory/rotation-snapshots/123e4567-e89b-12d3-a456-426614174000/abort?force=true'), false);
+});

@@ -243,10 +243,14 @@ export const memoryRotationSnapshots = pgTable('memory_rotation_snapshots', {
   fromKeyVersion: integer('from_key_version').notNull(),
   totalRecords: integer('total_records').notNull(),
   manifestSha256: text('manifest_sha256').notNull(),
+  status: text('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
 }, (table) => ({
   ownerRotationUnique: uniqueIndex('memory_rotation_snapshots_owner_rotation_unique').on(table.userId, table.rotationId),
   ownerCreatedIndex: index('memory_rotation_snapshots_owner_created_idx').on(table.userId, table.createdAt),
+  oneActiveRotationPerOwner: uniqueIndex('memory_rotation_snapshots_one_active_owner_unique')
+    .on(table.userId).where(sql`${table.status} = 'active'`),
 }));
 
 export const memoryRotationSnapshotRecords = pgTable('memory_rotation_snapshot_records', {
@@ -338,3 +342,28 @@ export const deviceRegistrationsRelations = relations(deviceRegistrations, ({ on
 
 
 /** Immutable owner-scoped manifest of encrypted records captured for one rotation. */
+export const memoryRotationSnapshots = pgTable('memory_rotation_snapshots', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  rotationId: text('rotation_id').notNull(),
+  fromKeyVersion: integer('from_key_version').notNull(),
+  totalRecords: integer('total_records').notNull(),
+  manifestHash: text('manifest_hash').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  ownerRotationUnique: uniqueIndex('memory_rotation_snapshots_owner_rotation_unique').on(table.userId, table.rotationId),
+  ownerCreatedIndex: index('memory_rotation_snapshots_owner_created_idx').on(table.userId, table.createdAt),
+}));
+
+export const memoryRotationSnapshotItems = pgTable('memory_rotation_snapshot_items', {
+  snapshotId: text('snapshot_id').references(() => memoryRotationSnapshots.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  recordId: text('record_id').notNull(),
+  keyVersion: integer('key_version').notNull(),
+  revision: integer('revision').notNull(),
+  recordCreatedAt: timestamp('record_created_at', { withTimezone: true }).notNull(),
+}, (table) => ({
+  snapshotRecordUnique: uniqueIndex('memory_rotation_snapshot_items_snapshot_record_unique').on(table.snapshotId, table.recordId),
+  snapshotOrderIndex: index('memory_rotation_snapshot_items_snapshot_order_idx').on(table.snapshotId, table.recordId),
+  ownerSnapshotIndex: index('memory_rotation_snapshot_items_owner_snapshot_idx').on(table.userId, table.snapshotId),
+}));

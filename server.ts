@@ -754,6 +754,10 @@ async function startServer() {
         throw new Error('Rotation snapshot request is invalid.');
       }
       const fromKeyVersion = body.fromKeyVersion as number;
+      const [activeSnapshot] = await tx.select({ id: memoryRotationSnapshots.id }).from(memoryRotationSnapshots).where(and(
+        eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.status, 'active'),
+      )).limit(1);
+      if (activeSnapshot) throw new Error('Another memory-key rotation is already active for this owner.');
       const existing = await tx.select({ id: memoryRotationSnapshots.id })
         .from(memoryRotationSnapshots)
         .where(and(eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.rotationId, body.rotationId)))
@@ -834,6 +838,21 @@ async function startServer() {
         nextOffset, complete: nextOffset === null,
       };
     });
+  });
+
+  // An owner-signed abort releases the write freeze without changing any memory record.
+  app.post('/api/memory/rotation-snapshots/:snapshotId/abort', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    const snapshotId = req.params.snapshotId;
+    if (!/^[0-9a-f-]{36}$/i.test(snapshotId) || !req.body || Object.keys(req.body).length !== 0) {
+      res.status(400).json({ error: 'A valid snapshot ID and empty abort command are required.' }); return;
+    }
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const [snapshot] = await tx.update(memoryRotationSnapshots).set({ status: 'aborted', completedAt: new Date() })
+        .where(and(eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.id, snapshotId), eq(memoryRotationSnapshots.status, 'active')))
+        .returning({ id: memoryRotationSnapshots.id, status: memoryRotationSnapshots.status });
+      if (!snapshot) throw new Error('No active rotation snapshot was found to abort.');
+      return { snapshotId: snapshot.id, status: snapshot.status, writesResumed: true };
+    }, true);
   });
 
   // Snapshot pagination is pinned to created_at (immutable) rather than updated_at.
@@ -964,6 +983,11 @@ async function startServer() {
       const record = req.body as Record<string, unknown>;
       const validationError = validateEncryptedMemoryRecord(record);
       if (validationError || record.revision !== 1) throw new Error('Encrypted memory envelope is invalid.');
+      const [activeRotation] = await tx.select({ id: memoryRotationSnapshots.id }).from(memoryRotationSnapshots).where(and(
+        eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.status, 'active'),
+      )).limit(1);
+      if (activeRotation) throw new Error('Encrypted memory writes are paused during owner-authorized key rotation.');
+
       const [row] = await tx.insert(encryptedMemoryRecords).values({
         id: record.recordId as string, userId: ownerId,
         keyVersion: record.keyVersion as number, revision: 1,
@@ -1004,6 +1028,11 @@ async function startServer() {
       }
       const record = body.record;
       const expectedRevision = body?.expectedRevision;
+      const [activeRotation] = await tx.select({ id: memoryRotationSnapshots.id }).from(memoryRotationSnapshots).where(and(
+        eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.status, 'active'),
+      )).limit(1);
+      if (activeRotation) throw new Error('Encrypted memory writes are paused during owner-authorized key rotation.');
+
       const validationError = validateEncryptedMemoryRecord(record);
       if (validationError || !record || record.recordId !== req.params.recordId ||
           !Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 1 ||
