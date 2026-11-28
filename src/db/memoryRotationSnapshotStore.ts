@@ -1,113 +1,102 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, eq, gt } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { db } from './index.ts';
-import { encryptedMemoryRecords, memoryRotationSnapshots, memoryRotationSnapshotItems } from './schema.ts';
+import { encryptedMemoryRecords, memoryRotationSnapshots, memoryRotationSnapshotRecords } from './schema.ts';
 import { getOrCreateUser } from './users.ts';
 
-const ID_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
-const MAX_SNAPSHOT_RECORDS = 100_000;
-
-export interface MemoryRotationSnapshotItem {
-  recordId: string; keyVersion: number; revision: number; createdAt: string;
-}
-export interface StoredMemoryRotationSnapshot {
-  id: string; rotationId: string; fromKeyVersion: number;
-  totalRecords: number; manifestHash: string; createdAt: string;
+export interface MemoryRotationSnapshot {
+  snapshotId: string;
+  rotationId: string;
+  fromKeyVersion: number;
+  totalRecords: number;
+  manifestSha256: string;
+  createdAt: string;
 }
 export interface MemoryRotationSnapshotPage {
-  snapshot: StoredMemoryRotationSnapshot; items: MemoryRotationSnapshotItem[];
-  nextAfterRecordId: string | null; complete: boolean;
-}
-function manifestDigest(items: MemoryRotationSnapshotItem[]): string {
-  const canonical = items.map(item => [item.recordId, item.keyVersion, item.revision, item.createdAt]);
-  return createHash('sha256').update(JSON.stringify(canonical), 'utf8').digest('base64url');
+  snapshot: MemoryRotationSnapshot;
+  entries: Array<{ ordinal: number; recordId: string; keyVersion: number; revision: number; createdAt: string }>;
+  nextOffset: number | null;
 }
 
-/** Captures the full identity/version/revision set under one PostgreSQL MVCC snapshot. */
+/** Captures an immutable, owner-scoped manifest of record IDs and expected revisions. */
 export async function createMemoryRotationSnapshotForUser(
   uid: string, email: string, rotationId: string, fromKeyVersion: number,
-): Promise<StoredMemoryRotationSnapshot> {
-  if (!ID_PATTERN.test(rotationId) || !Number.isSafeInteger(fromKeyVersion) || fromKeyVersion < 1)
+): Promise<MemoryRotationSnapshot> {
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(rotationId) ||
+      !Number.isSafeInteger(fromKeyVersion) || fromKeyVersion < 1) {
     throw new Error('Memory rotation snapshot request is invalid.');
+  }
   const user = await getOrCreateUser(uid, email);
-  return db.transaction(async tx => {
+  return db.transaction(async (tx) => {
     const existing = await tx.select().from(memoryRotationSnapshots).where(and(
-      eq(memoryRotationSnapshots.userId, user.id), eq(memoryRotationSnapshots.rotationId, rotationId),
+      eq(memoryRotationSnapshots.userId, user.id),
+      eq(memoryRotationSnapshots.rotationId, rotationId),
     )).limit(1);
     if (existing[0]) {
       const row = existing[0];
-      if (row.fromKeyVersion !== fromKeyVersion) throw new Error('Rotation snapshot already exists for a different source key version.');
-      return { id: row.id, rotationId: row.rotationId, fromKeyVersion: row.fromKeyVersion,
-        totalRecords: row.totalRecords, manifestHash: row.manifestHash, createdAt: row.createdAt.toISOString() };
+      if (row.fromKeyVersion !== fromKeyVersion) throw new Error('Rotation ID is already bound to another source key version.');
+      return { snapshotId: row.id, rotationId: row.rotationId, fromKeyVersion: row.fromKeyVersion,
+        totalRecords: row.totalRecords, manifestSha256: row.manifestSha256, createdAt: row.createdAt.toISOString() };
     }
-    const records = await tx.select({
-      recordId: encryptedMemoryRecords.id, keyVersion: encryptedMemoryRecords.keyVersion,
-      revision: encryptedMemoryRecords.revision, createdAt: encryptedMemoryRecords.createdAt,
+    const rows = await tx.select({
+      recordId: encryptedMemoryRecords.id,
+      keyVersion: encryptedMemoryRecords.keyVersion,
+      revision: encryptedMemoryRecords.revision,
+      createdAt: encryptedMemoryRecords.createdAt,
     }).from(encryptedMemoryRecords).where(eq(encryptedMemoryRecords.userId, user.id))
       .orderBy(asc(encryptedMemoryRecords.id));
-    if (records.length > MAX_SNAPSHOT_RECORDS) throw new Error('Encrypted memory snapshot exceeds the current safe manifest limit.');
-    const items = records.map(row => ({ recordId: row.recordId, keyVersion: row.keyVersion,
-      revision: row.revision, createdAt: row.createdAt.toISOString() }));
-    const id = randomUUID(), manifestHash = manifestDigest(items);
-    const [snapshot] = await tx.insert(memoryRotationSnapshots).values({
-      id, userId: user.id, rotationId, fromKeyVersion, totalRecords: items.length, manifestHash,
+    if (rows.length > 100_000) throw new Error('Encrypted memory set exceeds the supported rotation manifest limit.');
+    if (rows.some(row => row.keyVersion !== fromKeyVersion)) {
+      throw new Error('Encrypted memory contains records outside the requested source key version; rotation must be reconciled first.');
+    }
+    const canonical = rows.map(row =>
+      [row.recordId, row.keyVersion, row.revision, row.createdAt.toISOString()].join('|'),
+    ).join('\n');
+    const manifestSha256 = createHash('sha256').update(canonical, 'utf8').digest('base64url');
+    const snapshotId = randomUUID();
+    const [header] = await tx.insert(memoryRotationSnapshots).values({
+      id: snapshotId, userId: user.id, rotationId, fromKeyVersion,
+      totalRecords: rows.length, manifestSha256,
     }).returning();
-    if (!snapshot) throw new Error('Memory rotation snapshot could not be persisted.');
-    for (let offset = 0; offset < records.length; offset += 500) {
-      const chunk = records.slice(offset, offset + 500);
-      if (chunk.length) await tx.insert(memoryRotationSnapshotItems).values(chunk.map(row => ({
-        snapshotId: id, userId: user.id, recordId: row.recordId, keyVersion: row.keyVersion,
-        revision: row.revision, recordCreatedAt: row.createdAt,
+    if (!header) throw new Error('Memory rotation snapshot could not be created.');
+    for (let offset = 0; offset < rows.length; offset += 500) {
+      const chunk = rows.slice(offset, offset + 500);
+      if (chunk.length) await tx.insert(memoryRotationSnapshotRecords).values(chunk.map((row, index) => ({
+        id: randomUUID(), snapshotId, userId: user.id, ordinal: offset + index,
+        recordId: row.recordId, keyVersion: row.keyVersion, revision: row.revision, createdAt: row.createdAt,
       })));
     }
-    return { id: snapshot.id, rotationId: snapshot.rotationId, fromKeyVersion: snapshot.fromKeyVersion,
-      totalRecords: snapshot.totalRecords, manifestHash: snapshot.manifestHash, createdAt: snapshot.createdAt.toISOString() };
-  }, { isolationLevel: 'repeatable read' });
+    return { snapshotId: header.id, rotationId: header.rotationId, fromKeyVersion: header.fromKeyVersion,
+      totalRecords: header.totalRecords, manifestSha256: header.manifestSha256, createdAt: header.createdAt.toISOString() };
+  });
 }
 
-/** Owner-scoped, immutable keyset pagination over a persisted snapshot manifest. */
+/** Reads immutable manifest pages for the authenticated owner; live records cannot reorder the manifest. */
 export async function getMemoryRotationSnapshotPageForUser(
-  uid: string, email: string, snapshotId: string, afterRecordId?: string, limit = 100,
+  uid: string, email: string, rotationId: string, offset = 0, limit = 100,
 ): Promise<MemoryRotationSnapshotPage | null> {
-  if (!/^[0-9a-f-]{36}$/i.test(snapshotId) ||
-      (afterRecordId !== undefined && !ID_PATTERN.test(afterRecordId)) ||
-      !Number.isSafeInteger(limit) || limit < 1 || limit > 500)
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(rotationId) ||
+      !Number.isSafeInteger(offset) || offset < 0 ||
+      !Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
     throw new Error('Memory rotation snapshot page request is invalid.');
+  }
   const user = await getOrCreateUser(uid, email);
-  const [row] = await db.select().from(memoryRotationSnapshots).where(and(
-    eq(memoryRotationSnapshots.userId, user.id), eq(memoryRotationSnapshots.id, snapshotId),
+  const [header] = await db.select().from(memoryRotationSnapshots).where(and(
+    eq(memoryRotationSnapshots.userId, user.id),
+    eq(memoryRotationSnapshots.rotationId, rotationId),
   )).limit(1);
-  if (!row) return null;
-  const where = afterRecordId
-    ? and(eq(memoryRotationSnapshotItems.userId, user.id), eq(memoryRotationSnapshotItems.snapshotId, snapshotId),
-        gt(memoryRotationSnapshotItems.recordId, afterRecordId))
-    : and(eq(memoryRotationSnapshotItems.userId, user.id), eq(memoryRotationSnapshotItems.snapshotId, snapshotId));
-  const rows = await db.select().from(memoryRotationSnapshotItems).where(where)
-    .orderBy(asc(memoryRotationSnapshotItems.recordId)).limit(limit + 1);
-  const hasMore = rows.length > limit, page = hasMore ? rows.slice(0, limit) : rows;
-  const last = page[page.length - 1];
+  if (!header) return null;
+  const rows = await db.select().from(memoryRotationSnapshotRecords).where(and(
+    eq(memoryRotationSnapshotRecords.userId, user.id),
+    eq(memoryRotationSnapshotRecords.snapshotId, header.id),
+  )).orderBy(asc(memoryRotationSnapshotRecords.ordinal)).limit(limit + 1).offset(offset);
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
   return {
-    snapshot: { id: row.id, rotationId: row.rotationId, fromKeyVersion: row.fromKeyVersion,
-      totalRecords: row.totalRecords, manifestHash: row.manifestHash, createdAt: row.createdAt.toISOString() },
-    items: page.map(item => ({ recordId: item.recordId, keyVersion: item.keyVersion,
-      revision: item.revision, createdAt: item.recordCreatedAt.toISOString() })),
-    nextAfterRecordId: hasMore && last ? last.recordId : null, complete: !hasMore,
+    snapshot: { snapshotId: header.id, rotationId: header.rotationId, fromKeyVersion: header.fromKeyVersion,
+      totalRecords: header.totalRecords, manifestSha256: header.manifestSha256, createdAt: header.createdAt.toISOString() },
+    entries: page.map(row => ({ ordinal: row.ordinal, recordId: row.recordId, keyVersion: row.keyVersion,
+      revision: row.revision, createdAt: row.createdAt.toISOString() })),
+    nextOffset: hasMore ? offset + page.length : null,
   };
-}
-
-/** Recomputes count and digest; detects missing or altered manifest entries. */
-export async function verifyMemoryRotationSnapshotForUser(uid: string, email: string, snapshotId: string): Promise<boolean> {
-  if (!/^[0-9a-f-]{36}$/i.test(snapshotId)) return false;
-  const user = await getOrCreateUser(uid, email);
-  const [snapshot] = await db.select().from(memoryRotationSnapshots).where(and(
-    eq(memoryRotationSnapshots.userId, user.id), eq(memoryRotationSnapshots.id, snapshotId),
-  )).limit(1);
-  if (!snapshot) return false;
-  const rows = await db.select().from(memoryRotationSnapshotItems).where(and(
-    eq(memoryRotationSnapshotItems.userId, user.id), eq(memoryRotationSnapshotItems.snapshotId, snapshotId),
-  )).orderBy(asc(memoryRotationSnapshotItems.recordId));
-  if (rows.length !== snapshot.totalRecords) return false;
-  const items = rows.map(row => ({ recordId: row.recordId, keyVersion: row.keyVersion,
-    revision: row.revision, createdAt: row.recordCreatedAt.toISOString() }));
-  return manifestDigest(items) === snapshot.manifestHash;
 }

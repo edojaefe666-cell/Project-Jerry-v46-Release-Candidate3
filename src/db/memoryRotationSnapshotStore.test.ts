@@ -1,19 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-function digest(items: Array<{recordId:string;keyVersion:number;revision:number;createdAt:string}>): string {
- return createHash('sha256').update(JSON.stringify(items.map(x=>[x.recordId,x.keyVersion,x.revision,x.createdAt]))).digest('base64url');
+
+function digest(rows: Array<[string, number, number, string]>): string {
+  return createHash('sha256').update(
+    rows.map(row => row.join('|')).join('\n'), 'utf8',
+  ).digest('base64url');
 }
-test('manifest digest is deterministic and commits identity, key version, revision and creation time',()=>{
- const items=[
-  {recordId:'record_1234567890ab',keyVersion:1,revision:4,createdAt:'2026-11-28T12:00:00.000Z'},
-  {recordId:'record_1234567890ac',keyVersion:1,revision:2,createdAt:'2026-11-28T12:01:00.000Z'},
- ];
- assert.equal(digest(items),digest([...items]));
- assert.notEqual(digest(items),digest([{...items[0],revision:5},items[1]]));
- assert.notEqual(digest(items),digest([items[1],items[0]]));
-});
-test('manifest entries contain no ciphertext, plaintext or key material',()=>{
- const item={recordId:'record_1234567890ab',keyVersion:1,revision:1,createdAt:'2026-11-28T12:00:00.000Z'};
- assert.deepEqual(Object.keys(item).sort(),['createdAt','keyVersion','recordId','revision']);
+
+test('snapshot manifest digest binds IDs, key versions, revisions and immutable creation times', () => {
+  const rows: Array<[string, number, number, string]> = [
+    ['record_aaaaaaaaaaaaaaaa', 1, 4, '2026-11-28T10:00:00.000Z'],
+    ['record_bbbbbbbbbbbbbbbb', 1, 2, '2026-11-28T11:00:00.000Z'],
+  ];
+  assert.equal(digest(rows).length, 43);
+  assert.notEqual(digest(rows), digest([[rows[0][0], 1, 5, rows[0][3]], rows[1]]));
+  assert.notEqual(digest(rows), digest([[rows[0][0], 1, 4, '2026-11-28T10:00:01.000Z'], rows[1]]));
+  assert.notEqual(digest(rows), digest([rows[1], rows[0]]));
+  assert.notEqual(digest(rows), digest([rows[0]]));
 });
