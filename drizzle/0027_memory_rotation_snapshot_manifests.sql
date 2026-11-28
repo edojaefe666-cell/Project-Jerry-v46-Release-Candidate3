@@ -5,11 +5,15 @@ CREATE TABLE IF NOT EXISTS memory_rotation_snapshots (
   from_key_version integer NOT NULL CHECK (from_key_version >= 1),
   total_records integer NOT NULL CHECK (total_records >= 0),
   manifest_sha256 text NOT NULL CHECK (manifest_sha256 ~ '^[A-Za-z0-9_-]{43}$'),
+  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'aborted', 'completed')),
   created_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz,
   CONSTRAINT memory_rotation_snapshots_owner_rotation_unique UNIQUE (user_id, rotation_id)
 );
 CREATE INDEX IF NOT EXISTS memory_rotation_snapshots_owner_created_idx
   ON memory_rotation_snapshots (user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS memory_rotation_snapshots_one_active_owner_unique
+  ON memory_rotation_snapshots (user_id) WHERE status = 'active';
 
 CREATE TABLE IF NOT EXISTS memory_rotation_snapshot_records (
   id text PRIMARY KEY,
