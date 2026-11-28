@@ -178,6 +178,11 @@ export function DeviceManagement() {
     const ownerUid = user.uid;
     setBusy(true); setError(null); setMessage(null);
     try {
+      // The owner may spend several minutes writing down the one-time secret.
+      // Reauthenticate immediately before the server write so auth_time is fresh
+      // for the backend's five-minute sensitive-action requirement.
+      await reauthenticateWithGoogle();
+      if (activeOwnerUidRef.current !== ownerUid) throw new Error('The signed-in owner account changed. Recovery storage was cancelled.');
       await storeOwnerMemoryRecoveryEnvelope(recoveryEnvelope, ownerUid, 1);
       if (activeOwnerUidRef.current !== ownerUid) throw new Error('The signed-in owner account changed during recovery storage.');
       setRecoverySecret(''); setRecoveryEnvelope(null); setRecoveryBackupAcknowledged(false); setRecoveryConfigured(true);
