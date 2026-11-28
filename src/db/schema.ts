@@ -236,6 +236,34 @@ export const memoryRotationCheckpoints = pgTable('memory_rotation_checkpoints', 
   ownerUpdatedIndex: index('memory_rotation_checkpoints_owner_updated_idx').on(table.userId, table.updatedAt),
 }));
 
+export const memoryRotationSnapshots = pgTable('memory_rotation_snapshots', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  rotationId: text('rotation_id').notNull(),
+  fromKeyVersion: integer('from_key_version').notNull(),
+  totalRecords: integer('total_records').notNull(),
+  manifestSha256: text('manifest_sha256').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  ownerRotationUnique: uniqueIndex('memory_rotation_snapshots_owner_rotation_unique').on(table.userId, table.rotationId),
+  ownerCreatedIndex: index('memory_rotation_snapshots_owner_created_idx').on(table.userId, table.createdAt),
+}));
+
+export const memoryRotationSnapshotRecords = pgTable('memory_rotation_snapshot_records', {
+  id: text('id').primaryKey(),
+  snapshotId: text('snapshot_id').references(() => memoryRotationSnapshots.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  ordinal: integer('ordinal').notNull(),
+  recordId: text('record_id').notNull(),
+  keyVersion: integer('key_version').notNull(),
+  revision: integer('revision').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+}, (table) => ({
+  snapshotOrdinalUnique: uniqueIndex('memory_rotation_snapshot_records_ordinal_unique').on(table.snapshotId, table.ordinal),
+  snapshotRecordUnique: uniqueIndex('memory_rotation_snapshot_records_record_unique').on(table.snapshotId, table.recordId),
+  ownerSnapshotIndex: index('memory_rotation_snapshot_records_owner_snapshot_idx').on(table.userId, table.snapshotId, table.ordinal),
+}));
+
 export const memoryEntries = pgTable('memory_entries', {
   id: text('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),

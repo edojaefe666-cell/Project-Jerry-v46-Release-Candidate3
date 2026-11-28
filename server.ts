@@ -35,7 +35,7 @@ import { analyzeImageWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { synthesizeSpeechWithModelFallback, transcribeAudioWithModelFallback } from './src/lib/multimodalAdapters.ts';
 import { createSharedOwnerRateLimiter } from './src/db/rateLimitStore.ts';
 import { requestDeviceRegistrationForUser, listDeviceRegistrationsForUser, isActiveDeviceForUser } from './src/db/deviceRegistrationStore.ts';
-import { users, encryptedMemoryRecords, deviceRegistrations, deviceMemoryKeyEnvelopes } from './src/db/schema.ts';
+import { users, encryptedMemoryRecords, deviceRegistrations, deviceMemoryKeyEnvelopes, memoryRotationSnapshots, memoryRotationSnapshotRecords } from './src/db/schema.ts';
 import {
   createDeviceHttpRequestChallengeForUser,
   getDeviceHttpRequestChallengeForUser,
@@ -741,6 +741,101 @@ async function startServer() {
     });
   });
 
+  // Build a durable, immutable manifest while holding the same owner row lock
+  // used by encrypted-record writes. This gives the manifest a complete boundary:
+  // every API insert/update is wholly before or after this snapshot.
+  app.post('/api/memory/rotation-snapshots', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const body = req.body as Record<string, unknown>;
+      if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).some(key => key !== 'rotationId' && key !== 'fromKeyVersion') ||
+          typeof body.rotationId !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(body.rotationId) ||
+          !Number.isSafeInteger(body.fromKeyVersion) || (body.fromKeyVersion as number) < 1) {
+        throw new Error('Rotation snapshot request is invalid.');
+      }
+      const fromKeyVersion = body.fromKeyVersion as number;
+      const existing = await tx.select({ id: memoryRotationSnapshots.id })
+        .from(memoryRotationSnapshots)
+        .where(and(eq(memoryRotationSnapshots.userId, ownerId), eq(memoryRotationSnapshots.rotationId, body.rotationId)))
+        .limit(1);
+      if (existing.length) throw new Error('A snapshot already exists for this rotation.');
+      const records = await tx.select({
+        id: encryptedMemoryRecords.id,
+        keyVersion: encryptedMemoryRecords.keyVersion,
+        revision: encryptedMemoryRecords.revision,
+        createdAt: encryptedMemoryRecords.createdAt,
+      }).from(encryptedMemoryRecords)
+        .where(eq(encryptedMemoryRecords.userId, ownerId))
+        .orderBy(encryptedMemoryRecords.createdAt, encryptedMemoryRecords.id);
+      if (records.length > 100_000 || records.some(record => record.keyVersion !== fromKeyVersion)) {
+        throw new Error('The encrypted-memory set is too large or contains a different key version.');
+      }
+      const manifestSha256 = createHash('sha256').update(JSON.stringify(records.map((record, ordinal) => ({
+        ordinal, recordId: record.id, keyVersion: record.keyVersion,
+        revision: record.revision, createdAt: record.createdAt.toISOString(),
+      })))).digest('base64url');
+      const snapshotId = randomUUID();
+      const [snapshot] = await tx.insert(memoryRotationSnapshots).values({
+        id: snapshotId, userId: ownerId, rotationId: body.rotationId,
+        fromKeyVersion, totalRecords: records.length, manifestSha256,
+      }).returning();
+      if (!snapshot) throw new Error('Rotation snapshot could not be persisted.');
+      for (let start = 0; start < records.length; start += 500) {
+        const chunk = records.slice(start, start + 500);
+        await tx.insert(memoryRotationSnapshotRecords).values(chunk.map((record, index) => ({
+          id: randomUUID(), snapshotId, userId: ownerId, ordinal: start + index,
+          recordId: record.id, keyVersion: record.keyVersion,
+          revision: record.revision, createdAt: record.createdAt,
+        })));
+      }
+      return {
+        snapshotId, rotationId: snapshot.rotationId,
+        fromKeyVersion: snapshot.fromKeyVersion, totalRecords: snapshot.totalRecords,
+        manifestSha256: snapshot.manifestSha256, createdAt: snapshot.createdAt.toISOString(),
+        pageSize: 100, status: 'sealed',
+      };
+    }, true);
+  });
+
+  // Snapshot pages read only the immutable manifest, never the live memory table.
+  app.get('/api/memory/rotation-snapshots/:snapshotId/:offset', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const snapshotId = req.params.snapshotId;
+      const offset = Number(req.params.offset);
+      if (!/^[0-9a-f-]{36}$/i.test(snapshotId) || !Number.isSafeInteger(offset) ||
+          offset < 0 || offset > 100_000 || offset % 100 !== 0) {
+        throw new Error('Rotation snapshot page request is invalid.');
+      }
+      const [snapshot] = await tx.select().from(memoryRotationSnapshots).where(and(
+        eq(memoryRotationSnapshots.userId, ownerId),
+        eq(memoryRotationSnapshots.id, snapshotId),
+      )).limit(1);
+      if (!snapshot) throw new Error('Rotation snapshot was not found.');
+      const records = await tx.select({
+        ordinal: memoryRotationSnapshotRecords.ordinal,
+        recordId: memoryRotationSnapshotRecords.recordId,
+        keyVersion: memoryRotationSnapshotRecords.keyVersion,
+        revision: memoryRotationSnapshotRecords.revision,
+        createdAt: memoryRotationSnapshotRecords.createdAt,
+      }).from(memoryRotationSnapshotRecords).where(and(
+        eq(memoryRotationSnapshotRecords.userId, ownerId),
+        eq(memoryRotationSnapshotRecords.snapshotId, snapshotId),
+      )).orderBy(memoryRotationSnapshotRecords.ordinal).limit(100).offset(offset);
+      const nextOffset = offset + records.length < snapshot.totalRecords ? offset + 100 : null;
+      return {
+        snapshotId, rotationId: snapshot.rotationId,
+        fromKeyVersion: snapshot.fromKeyVersion, totalRecords: snapshot.totalRecords,
+        manifestSha256: snapshot.manifestSha256, pageSize: 100,
+        records: records.map(record => ({
+          ordinal: record.ordinal, recordId: record.recordId,
+          keyVersion: record.keyVersion, revision: record.revision,
+          createdAt: record.createdAt.toISOString(),
+        })),
+        nextOffset, complete: nextOffset === null,
+      };
+    });
+  });
+
   // Snapshot pagination is pinned to created_at (immutable) rather than updated_at.
   // New records after the first-page watermark are excluded from every page.
   // Revision CAS during rotation detects concurrent edits to existing records.
@@ -880,7 +975,7 @@ async function startServer() {
         revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
         createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
       } };
-    });
+    }, true);
   });
 
   app.get('/api/memory/encrypted/:recordId', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
@@ -932,7 +1027,7 @@ async function startServer() {
         revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
         createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
       } };
-    });
+    }, true);
   });
 
   const deviceApprovalRateLimit = createSharedOwnerRateLimiter('device-approval', 8, 60_000);

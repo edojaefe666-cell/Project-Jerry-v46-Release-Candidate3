@@ -68,6 +68,13 @@ test('verifies ECDSA proof only for the exact challenge and body bytes', async (
   assert.equal(await verifyDeviceHttpRequestProof(valid, proof, publicKey, body, now + 31_000, cryptoProvider), false);
 });
 
+test('allows only owner-signed rotation manifest creation and exact page paths', () => {
+  assert.equal(isAllowedEncryptedMemoryTarget('POST', '/api/memory/rotation-snapshots'), true);
+  assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/rotation-snapshots/123e4567-e89b-12d3-a456-426614174000/0'), true);
+  assert.equal(isAllowedEncryptedMemoryTarget('POST', '/api/memory/rotation-snapshots/123e4567-e89b-12d3-a456-426614174000/0'), false);
+  assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/rotation-snapshots/123e4567-e89b-12d3-a456-426614174000/0?limit=500'), false);
+});
+
 test('allows only exact signed encrypted-memory snapshot page paths', () => {
   assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/encrypted/page/start'), true);
   assert.equal(isAllowedEncryptedMemoryTarget('GET', '/api/memory/encrypted/page/eyJ2IjoyfQ'), true);
