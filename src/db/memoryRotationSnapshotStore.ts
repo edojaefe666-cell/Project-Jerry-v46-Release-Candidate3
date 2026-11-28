@@ -49,9 +49,10 @@ export async function createMemoryRotationSnapshotForUser(
     if (rows.some(row => row.keyVersion !== fromKeyVersion)) {
       throw new Error('Encrypted memory contains records outside the requested source key version; rotation must be reconciled first.');
     }
-    const canonical = rows.map(row =>
-      [row.recordId, row.keyVersion, row.revision, row.createdAt.toISOString()].join('|'),
-    ).join('\n');
+    const canonical = JSON.stringify(rows.map((row, ordinal) => ({
+      ordinal, recordId: row.recordId, keyVersion: row.keyVersion,
+      revision: row.revision, createdAt: row.createdAt.toISOString(),
+    })));
     const manifestSha256 = createHash('sha256').update(canonical, 'utf8').digest('base64url');
     const snapshotId = randomUUID();
     const [header] = await tx.insert(memoryRotationSnapshots).values({
@@ -117,8 +118,9 @@ export async function verifyMemoryRotationSnapshotForUser(
     eq(memoryRotationSnapshotRecords.snapshotId, header.id),
   )).orderBy(asc(memoryRotationSnapshotRecords.ordinal));
   if (rows.length !== header.totalRecords) return false;
-  const canonical = rows.map(row =>
-    [row.recordId, row.keyVersion, row.revision, row.createdAt.toISOString()].join('|'),
-  ).join('\n');
+  const canonical = JSON.stringify(rows.map(row => ({
+    ordinal: row.ordinal, recordId: row.recordId, keyVersion: row.keyVersion,
+    revision: row.revision, createdAt: row.createdAt.toISOString(),
+  })));
   return createHash('sha256').update(canonical, 'utf8').digest('base64url') === header.manifestSha256;
 }
