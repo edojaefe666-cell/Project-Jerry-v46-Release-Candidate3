@@ -44,7 +44,7 @@ export async function createMemoryRotationSnapshotForUser(
       revision: encryptedMemoryRecords.revision,
       createdAt: encryptedMemoryRecords.createdAt,
     }).from(encryptedMemoryRecords).where(eq(encryptedMemoryRecords.userId, user.id))
-      .orderBy(asc(encryptedMemoryRecords.id));
+      .orderBy(asc(encryptedMemoryRecords.createdAt), asc(encryptedMemoryRecords.id));
     if (rows.length > 100_000) throw new Error('Encrypted memory set exceeds the supported rotation manifest limit.');
     if (rows.some(row => row.keyVersion !== fromKeyVersion)) {
       throw new Error('Encrypted memory contains records outside the requested source key version; rotation must be reconciled first.');
