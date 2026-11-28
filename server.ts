@@ -771,8 +771,8 @@ async function startServer() {
       }).from(encryptedMemoryRecords)
         .where(eq(encryptedMemoryRecords.userId, ownerId))
         .orderBy(encryptedMemoryRecords.createdAt, encryptedMemoryRecords.id);
-      if (records.length > 100_000 || records.some(record => record.keyVersion !== fromKeyVersion)) {
-        throw new Error('The encrypted-memory set is too large or contains a different key version.');
+      if (records.length < 1 || records.length > 100_000 || records.some(record => record.keyVersion !== fromKeyVersion)) {
+        throw new Error('The encrypted-memory set is empty, too large, or contains a different key version.');
       }
       const manifestSha256 = createHash('sha256').update(JSON.stringify(records.map((record, ordinal) => ({
         ordinal, recordId: record.id, keyVersion: record.keyVersion,
