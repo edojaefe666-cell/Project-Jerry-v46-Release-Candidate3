@@ -46,10 +46,10 @@ export function decodeEncryptedMemorySnapshotCursor(value: unknown): EncryptedMe
 function isValidEncryptedSnapshotCursor(value: unknown): value is EncryptedMemorySnapshotCursor {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
-  const validDate = (x: unknown) => typeof x === 'string' && !Number.isNaN(Date.parse(x)) &&
+  const validDate = (x: unknown): x is string => typeof x === 'string' && !Number.isNaN(Date.parse(x)) &&
     new Date(x).toISOString() === x;
-  return Object.keys(v).every(k => ['snapshotAt','lastCreatedAt','lastId'].includes(k)) &&
-    validDate(v.snapshotAt) && validDate(v.lastCreatedAt) &&
-    typeof v.lastId === 'string' && /^[A-Za-z0-9_-]{16,128}$/.test(v.lastId) &&
-    Date.parse(v.lastCreatedAt) <= Date.parse(v.snapshotAt);
+  if (!Object.keys(v).every(k => ['snapshotAt','lastCreatedAt','lastId'].includes(k)) ||
+      !validDate(v.snapshotAt) || !validDate(v.lastCreatedAt) ||
+      typeof v.lastId !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(v.lastId)) return false;
+  return Date.parse(v.lastCreatedAt) <= Date.parse(v.snapshotAt);
 }
