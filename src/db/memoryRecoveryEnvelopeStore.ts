@@ -98,3 +98,10 @@ export async function getOwnerMemoryRecoveryEnvelopeForUser(
     createdAt: row.createdAt.toISOString(),
   };
 }
+
+
+/** Identifies only PostgreSQL unique-constraint conflicts; transient failures remain distinguishable. */
+export function isOwnerMemoryRecoveryEnvelopeConflict(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' &&
+    'code' in error && (error as { code?: unknown }).code === '23505');
+}

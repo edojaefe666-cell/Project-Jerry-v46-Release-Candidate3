@@ -39,3 +39,12 @@ test('rejects malformed context and non-object payloads', () => {
   assert.notEqual(validateOwnerMemoryRecoveryEnvelope({ ...valid, context: { ...valid.context, recoveryKey: 'extra' } }, ownerUid), null);
   assert.notEqual(validateOwnerMemoryRecoveryEnvelope(null, ownerUid), null);
 });
+
+
+test('classifies only PostgreSQL unique-constraint violations as immutable-envelope conflicts', async () => {
+  const { isOwnerMemoryRecoveryEnvelopeConflict } = await import('./memoryRecoveryEnvelopeStore.ts');
+  assert.equal(isOwnerMemoryRecoveryEnvelopeConflict({ code: '23505' }), true);
+  assert.equal(isOwnerMemoryRecoveryEnvelopeConflict({ code: '08006' }), false);
+  assert.equal(isOwnerMemoryRecoveryEnvelopeConflict(new Error('database unavailable')), false);
+  assert.equal(isOwnerMemoryRecoveryEnvelopeConflict(null), false);
+});

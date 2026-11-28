@@ -43,7 +43,7 @@ import {
 } from './src/db/deviceHttpRequestChallengeStore.ts';
 import { verifyDeviceHttpRequestProof, isAllowedEncryptedMemoryTarget } from './src/lib/deviceHttpRequestProof.ts';
 import { validateEncryptedMemoryRecord } from './src/db/encryptedMemoryStore.ts';
-import { createOwnerMemoryRecoveryEnvelopeForUser, getOwnerMemoryRecoveryEnvelopeForUser, validateOwnerMemoryRecoveryEnvelope } from './src/db/memoryRecoveryEnvelopeStore.ts';
+import { createOwnerMemoryRecoveryEnvelopeForUser, getOwnerMemoryRecoveryEnvelopeForUser, isOwnerMemoryRecoveryEnvelopeConflict, validateOwnerMemoryRecoveryEnvelope } from './src/db/memoryRecoveryEnvelopeStore.ts';
 import { validateDeviceMemoryKeyEnvelope } from './src/db/deviceMemoryKeyEnvelopeStore.ts';
 import {
   createDeviceApprovalChallengeForUser,
@@ -497,9 +497,14 @@ async function startServer() {
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Pragma', 'no-cache');
       res.status(201).json({ envelope: stored });
-    } catch {
-      // The unique owner/key-version constraint makes setup create-once.
-      res.status(409).json({ error: 'A recovery envelope already exists for this memory-key version, or storage is unavailable. Existing recovery data was not overwritten.' });
+    } catch (error) {
+      // Only a unique-key conflict means this version already has an immutable envelope.
+      // Infrastructure failures are reported separately so clients can safely retry.
+      if (isOwnerMemoryRecoveryEnvelopeConflict(error)) {
+        res.status(409).json({ error: 'A recovery envelope already exists for this memory-key version. Existing recovery data was not overwritten.' });
+      } else {
+        res.status(503).json({ error: 'Owner memory recovery storage is temporarily unavailable. No existing recovery data was changed.' });
+      }
     }
   });
 
