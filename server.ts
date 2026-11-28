@@ -713,6 +713,34 @@ async function startServer() {
     });
   });
 
+  // Backwards-compatible first-page read for existing clients. Rotation clients
+  // must follow nextCursor until complete=true and verify totalRecords.
+  app.get('/api/memory/encrypted', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+    await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const snapshotAt = new Date();
+      const base = and(eq(encryptedMemoryRecords.userId, ownerId), lte(encryptedMemoryRecords.createdAt, snapshotAt));
+      const [{ totalRecords }] = await tx.select({ totalRecords: count() }).from(encryptedMemoryRecords).where(base);
+      const rows = await tx.select().from(encryptedMemoryRecords).where(base)
+        .orderBy(desc(encryptedMemoryRecords.createdAt), desc(encryptedMemoryRecords.id)).limit(101);
+      const hasMore = rows.length > 100;
+      const page = hasMore ? rows.slice(0, 100) : rows;
+      const last = page[page.length - 1];
+      const nextCursor = hasMore && last ? encodeEncryptedMemorySnapshotCursor({
+        snapshotAt: snapshotAt.toISOString(), lastCreatedAt: last.createdAt.toISOString(), lastId: last.id,
+      }) : null;
+      return {
+        snapshot: { snapshotAt: snapshotAt.toISOString(), totalRecords, pageSize: 100, ordering: 'createdAt_desc_recordId_desc' },
+        records: page.map((row) => ({
+          schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+          revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+          createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+        })),
+        nextCursor,
+        complete: nextCursor === null,
+      };
+    });
+  });
+
   // Snapshot pagination is pinned to created_at (immutable) rather than updated_at.
   // New records after the first-page watermark are excluded from every page.
   // Revision CAS during rotation detects concurrent edits to existing records.
@@ -757,7 +785,7 @@ async function startServer() {
           createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
         })),
         nextCursor,
-        complete: nextCursor === null && (decoded ? true : true),
+        complete: nextCursor === null,
       };
     });
   });
