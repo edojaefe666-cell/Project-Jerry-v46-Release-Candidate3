@@ -31,6 +31,8 @@ function validIso(value: string): boolean {
 export function validateMemoryRotationCheckpoint(value: unknown): value is MemoryRotationCheckpoint {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
+  const allowed = new Set(['schemaVersion','rotationId','ownerUid','fromKeyVersion','toKeyVersion','phase','recordIds','writtenRecordIds','verifiedRecordIds','createdAt','updatedAt']);
+  if (Object.keys(v).some(key => !allowed.has(key))) return false;
   if (v.schemaVersion !== 1 ||
       typeof v.rotationId !== 'string' || !ID_PATTERN.test(v.rotationId) ||
       typeof v.ownerUid !== 'string' || !v.ownerUid.trim() || v.ownerUid.length > 160 ||
@@ -38,7 +40,7 @@ export function validateMemoryRotationCheckpoint(value: unknown): value is Memor
       !Number.isSafeInteger(v.toKeyVersion) || v.toKeyVersion !== (v.fromKeyVersion as number) + 1 ||
       !['prepared','applying','verifying','ready_for_owner_approval','paused','aborted'].includes(String(v.phase)) ||
       !Array.isArray(v.recordIds) || !Array.isArray(v.writtenRecordIds) ||
-      !Array.isArray(v.verifiedRecordIds) ||
+      !Array.isArray(v.verifiedRecordIds) || (v.recordIds as unknown[]).length < 1 || (v.recordIds as unknown[]).length > 500 ||
       !v.recordIds.every(id => typeof id === 'string' && ID_PATTERN.test(id)) ||
       !v.writtenRecordIds.every(id => typeof id === 'string' && ID_PATTERN.test(id)) ||
       !v.verifiedRecordIds.every(id => typeof id === 'string' && ID_PATTERN.test(id)) ||
