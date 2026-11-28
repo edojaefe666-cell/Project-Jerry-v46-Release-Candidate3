@@ -214,7 +214,7 @@ export async function shareAndroidMemoryKeyWithApprovedDevice(
   );
 }
 
-export interface StoredOwnerMemoryRecoveryEnvelope {
+export interface OwnerMemoryRecoveryEnvelopePayload {
   version: 1;
   algorithm: 'HKDF-SHA256-AES-256-GCM';
   context: { ownerUid: string; keyVersion: number };
@@ -223,8 +223,13 @@ export interface StoredOwnerMemoryRecoveryEnvelope {
   ciphertext: string;
 }
 
+export interface StoredOwnerMemoryRecoveryEnvelope extends OwnerMemoryRecoveryEnvelopePayload {
+  id: string;
+  createdAt: string;
+}
+
 function assertOwnerMemoryRecoveryEnvelope(
-  envelope: StoredOwnerMemoryRecoveryEnvelope,
+  envelope: OwnerMemoryRecoveryEnvelopePayload,
   ownerUid: string,
   keyVersion: number,
 ): void {
@@ -250,7 +255,7 @@ function assertOwnerMemoryRecoveryEnvelope(
  * Firebase recent reauthentication is enforced by the server.
  */
 export async function storeOwnerMemoryRecoveryEnvelope(
-  envelope: StoredOwnerMemoryRecoveryEnvelope,
+  envelope: OwnerMemoryRecoveryEnvelopePayload,
   ownerUid: string,
   keyVersion: number,
 ): Promise<void> {
@@ -259,12 +264,12 @@ export async function storeOwnerMemoryRecoveryEnvelope(
     throw new Error('Memory recovery owner or key version is invalid.');
   }
   assertOwnerMemoryRecoveryEnvelope(envelope, ownerUid, keyVersion);
-  const result = await apiJson<{ stored: true }>('/api/memory/recovery-envelope', {
+  const result = await apiJson<{ envelope: StoredOwnerMemoryRecoveryEnvelope }>('/api/memory/recovery-envelope', {
     method: 'POST',
     body: JSON.stringify({ envelope }),
     cache: 'no-store',
   });
-  if (result.stored !== true) throw new Error('Jerry did not confirm recovery-envelope storage.');
+  assertStoredOwnerMemoryRecoveryEnvelope(result.envelope, ownerUid, keyVersion);
 }
 
 /**
@@ -283,6 +288,29 @@ export async function getOwnerMemoryRecoveryEnvelope(
     `/api/memory/recovery-envelope/${keyVersion}`,
     { method: 'GET', cache: 'no-store' },
   );
-  assertOwnerMemoryRecoveryEnvelope(result.envelope, ownerUid, keyVersion);
+  assertStoredOwnerMemoryRecoveryEnvelope(result.envelope, ownerUid, keyVersion);
   return result.envelope;
+}
+
+function assertStoredOwnerMemoryRecoveryEnvelope(
+  envelope: StoredOwnerMemoryRecoveryEnvelope,
+  ownerUid: string,
+  keyVersion: number,
+): void {
+  if (!envelope || typeof envelope !== 'object' ||
+      typeof envelope.id !== 'string' || !envelope.id ||
+      typeof envelope.createdAt !== 'string' || !Number.isFinite(Date.parse(envelope.createdAt)) ||
+      Object.keys(envelope).some((key) =>
+        !['id', 'createdAt', 'version', 'algorithm', 'context', 'salt', 'iv', 'ciphertext'].includes(key),
+      )) {
+    throw new Error('Jerry returned an invalid stored owner memory recovery record.');
+  }
+  assertOwnerMemoryRecoveryEnvelope({
+    version: envelope.version,
+    algorithm: envelope.algorithm,
+    context: envelope.context,
+    salt: envelope.salt,
+    iv: envelope.iv,
+    ciphertext: envelope.ciphertext,
+  }, ownerUid, keyVersion);
 }
