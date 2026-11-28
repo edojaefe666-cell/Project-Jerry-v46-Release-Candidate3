@@ -60,10 +60,10 @@ import { parseProviderPricingFromEnvironment } from './src/lib/providerAdapters.
 import { assertHostedProviderSpendEnabled } from './src/lib/providerSpendPolicy.ts';
 import { runOpportunityRadar, OpportunityRadarError } from './src/lib/opportunityRadar.ts';
 import { parseOpportunityScanRequest } from './src/lib/opportunityScanRequest.ts';
-import { decodeMemoryPageCursor, encodeMemoryPageCursor } from './src/lib/memoryCursor.ts';
+import { decodeMemoryPageCursor, encodeMemoryPageCursor, decodeEncryptedMemorySnapshotCursor, encodeEncryptedMemorySnapshotCursor } from './src/lib/memoryCursor.ts';
 import { applyLearningEnhancement, createOwnerLearningEntry } from './src/lib/learningMemory.ts';
 import { reconcileFinancialTruth, backfillHistoricalWalletJournal, getAuthoritativeWalletBtcSatoshis } from './src/db/financialReconciliation.ts';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, lt, lte, or, sql } from 'drizzle-orm';
 import {
   getWorkspaceForUser,
   saveDailySummaryForUser,
@@ -713,17 +713,52 @@ async function startServer() {
     });
   });
 
-  app.get('/api/memory/encrypted', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
+  // Snapshot pagination is pinned to created_at (immutable) rather than updated_at.
+  // New records after the first-page watermark are excluded from every page.
+  // Revision CAS during rotation detects concurrent edits to existing records.
+  app.get('/api/memory/encrypted/page/:cursor', requireAuth, requireExecutionEnabled, encryptedMemoryRateLimit, async (req: RawBodyAuthRequest, res) => {
     await executeEncryptedMemoryRequest(req, res, async (tx, ownerId) => {
+      const token = req.params.cursor;
+      const decoded = token === 'start' ? null : decodeEncryptedMemorySnapshotCursor(token);
+      if (token !== 'start' && !decoded) throw new Error('Encrypted memory snapshot cursor is invalid.');
+      const snapshotAt = decoded ? new Date(decoded.snapshotAt) : new Date();
+      const baseConditions = and(
+        eq(encryptedMemoryRecords.userId, ownerId),
+        lte(encryptedMemoryRecords.createdAt, snapshotAt),
+      );
+      const [{ totalRecords }] = await tx.select({ totalRecords: count() })
+        .from(encryptedMemoryRecords).where(baseConditions);
+      const pageConditions = decoded
+        ? and(baseConditions, or(
+            lt(encryptedMemoryRecords.createdAt, new Date(decoded.lastCreatedAt)),
+            and(
+              eq(encryptedMemoryRecords.createdAt, new Date(decoded.lastCreatedAt)),
+              lt(encryptedMemoryRecords.id, decoded.lastId),
+            ),
+          ))
+        : baseConditions;
       const rows = await tx.select().from(encryptedMemoryRecords)
-        .where(eq(encryptedMemoryRecords.userId, ownerId))
-        .orderBy(desc(encryptedMemoryRecords.updatedAt), desc(encryptedMemoryRecords.id))
-        .limit(100);
-      return { records: rows.map((row) => ({
-        schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
-        revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
-        createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
-      })) };
+        .where(pageConditions)
+        .orderBy(desc(encryptedMemoryRecords.createdAt), desc(encryptedMemoryRecords.id))
+        .limit(101);
+      const hasMore = rows.length > 100;
+      const page = hasMore ? rows.slice(0, 100) : rows;
+      const last = page[page.length - 1];
+      const nextCursor = hasMore && last ? encodeEncryptedMemorySnapshotCursor({
+        snapshotAt: snapshotAt.toISOString(),
+        lastCreatedAt: last.createdAt.toISOString(),
+        lastId: last.id,
+      }) : null;
+      return {
+        snapshot: { snapshotAt: snapshotAt.toISOString(), totalRecords, pageSize: 100, ordering: 'createdAt_desc_recordId_desc' },
+        records: page.map((row) => ({
+          schemaVersion: 1, recordId: row.id, keyVersion: row.keyVersion,
+          revision: row.revision, iv: row.iv, ciphertext: row.ciphertext,
+          createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+        })),
+        nextCursor,
+        complete: nextCursor === null && (decoded ? true : true),
+      };
     });
   });
 
